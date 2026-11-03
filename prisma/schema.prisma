@@ -1,0 +1,365 @@
+generator client {
+  provider      = "prisma-client-js"
+  // Generated once at install into node_modules, which Next bundles for the server as it does any
+  // package. The second target is the one Vercel runs on.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Permission {
+  CATALOG_READ
+  CATALOG_CREATE
+  CATALOG_UPDATE
+  ENTRIES_READ
+  ENTRIES_CREATE
+  PRODUCTION_READ
+  PRODUCTION_CREATE
+  SALES_READ
+  SALES_CREATE
+  REPORTS_READ
+  LOSSES_CREATE
+  LOSSES_UPDATE
+  ACCESS_READ
+  ACCESS_CREATE
+  ACCESS_UPDATE
+
+  @@map("permission")
+}
+
+model Role {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  name        String       @unique
+  permissions Permission[]
+  users       User[]
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("roles")
+}
+
+model User {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  name             String
+  username         String          @unique
+  passwordHash     String          @map("password_hash")
+  roleId           String?         @map("role_id") @db.Uuid
+  role             Role?           @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  extraPermissions Permission[]    @map("extra_permissions")
+  isActive         Boolean         @default(true) @map("is_active")
+  refreshTokens    RefreshToken[]
+  sessions         Session[]
+  stockMovements   StockMovement[]
+  stockLosses      StockLoss[]
+  preWeighings     PreWeighing[]
+  productions      Production[]
+  tableLayouts     TableLayout[]
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  replacedById String?   @map("replaced_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId], map: "idx_refresh_tokens_user_id")
+  @@map("refresh_tokens")
+}
+
+// A signed-in browser. The web keeps its session here, in an httpOnly cookie that carries only the
+// token, while the mobile app keeps using the refresh tokens above; revoking a user's access ends both.
+model Session {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId], map: "idx_sessions_user_id")
+  @@map("sessions")
+}
+
+// How a user arranged the columns of a table: their order and the widths dragged by hand. It is
+// kept on the server so the arrangement follows the user to any device.
+model TableLayout {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tableKey  String   @map("table_key")
+  order     String[]
+  widths    Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([userId, tableKey], map: "uq_table_layouts_user_id_table_key")
+  @@map("table_layouts")
+}
+
+enum ProductKind {
+  GOODS
+  MANUFACTURED
+
+  @@map("product_kind")
+}
+
+enum MeasurementUnit {
+  UNIT
+  KILOGRAM
+  GRAM
+  LITER
+  MILLILITER
+
+  @@map("measurement_unit")
+}
+
+model Product {
+  sku              String                @id @default(uuid(7)) @db.Uuid
+  gtin             String?               @unique
+  description      String                @unique
+  kind             ProductKind
+  unit             MeasurementUnit
+  stock            ProductStock?
+  lots             StockLot[]
+  movements        StockMovement[]
+  recipe           Recipe?
+  usedIn           RecipeIngredient[]
+  preWeighings     PreWeighing[]
+  preWeighingItems PreWeighingItem[]
+  productionItems  ProductionItem[]
+  productionInputs ProductionItemInput[]
+  isActive         Boolean               @default(true) @map("is_active")
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("products")
+}
+
+model Supplier {
+  id        String     @id @default(uuid(7)) @db.Uuid
+  name      String     @unique
+  lots      StockLot[]
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("suppliers")
+}
+
+model ProductStock {
+  productSku      String   @id @map("product_sku") @db.Uuid
+  product         Product  @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  quantity        Decimal  @default(0) @db.Decimal(18, 6)
+  lastEntryCost   Decimal? @map("last_entry_cost") @db.Decimal(18, 6)
+  averageCost     Decimal? @map("average_cost") @db.Decimal(18, 6)
+  minimumQuantity Decimal? @map("minimum_quantity") @db.Decimal(18, 6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("product_stocks")
+}
+
+enum StockMovementType {
+  ENTRY
+  PRODUCTION_CONSUMPTION
+  PRODUCTION_OUTPUT
+  BALANCE_ADJUSTMENT
+  LOSS
+
+  @@map("stock_movement_type")
+}
+
+model StockMovement {
+  id          String            @id @default(uuid(7)) @db.Uuid
+  productSku  String            @map("product_sku") @db.Uuid
+  product     Product           @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  lotId       String?           @map("lot_id") @db.Uuid
+  lot         StockLot?         @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  loss        StockLoss?
+  type        StockMovementType
+  quantity    Decimal           @db.Decimal(18, 6)
+  unitCost    Decimal           @map("unit_cost") @db.Decimal(18, 6)
+  createdById String            @map("created_by_id") @db.Uuid
+  createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([productSku, createdAt(sort: Desc), id(sort: Desc)], map: "idx_stock_movements_product_sku_created_at")
+  @@index([lotId], map: "idx_stock_movements_lot_id")
+  @@map("stock_movements")
+}
+
+// What came into the stock together: one entry, one lot. `quantity` is what is left of it, and the
+// lots of a product add up to its balance whenever that balance is not negative. `expiresAt` is a
+// calendar day, kept as its midnight in UTC.
+model StockLot {
+  id              String          @id @default(uuid(7)) @db.Uuid
+  productSku      String          @map("product_sku") @db.Uuid
+  product         Product         @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  supplierId      String?         @map("supplier_id") @db.Uuid
+  supplier        Supplier?       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  expiresAt       DateTime?       @map("expires_at") @db.Timestamptz(3)
+  initialQuantity Decimal         @map("initial_quantity") @db.Decimal(18, 6)
+  quantity        Decimal         @db.Decimal(18, 6)
+  unitCost        Decimal         @map("unit_cost") @db.Decimal(18, 6)
+  movements       StockMovement[]
+  losses          StockLoss[]
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([productSku, expiresAt, createdAt], map: "idx_stock_lots_product_sku_expires_at")
+  @@index([supplierId], map: "idx_stock_lots_supplier_id")
+  @@map("stock_lots")
+}
+
+// Why stock is written off. A reason that is no longer used is deactivated, never deleted: the
+// losses already recorded under it still say why.
+model LossReason {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  name        String      @unique
+  description String?
+  isActive    Boolean     @default(true) @map("is_active")
+  losses      StockLoss[]
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("loss_reasons")
+}
+
+// What was written off a lot, and why. The movement it made in the stock is the one it points to.
+model StockLoss {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  lotId       String        @map("lot_id") @db.Uuid
+  lot         StockLot      @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  reasonId    String        @map("reason_id") @db.Uuid
+  reason      LossReason    @relation(fields: [reasonId], references: [id], onDelete: Restrict)
+  movementId  String        @unique @map("movement_id") @db.Uuid
+  movement    StockMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  note        String?
+  createdById String        @map("created_by_id") @db.Uuid
+  createdBy   User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([lotId], map: "idx_stock_losses_lot_id")
+  @@index([reasonId], map: "idx_stock_losses_reason_id")
+  @@index([createdById], map: "idx_stock_losses_created_by_id")
+  @@map("stock_losses")
+}
+
+model Recipe {
+  id            String             @id @default(uuid(7)) @db.Uuid
+  productSku    String             @unique @map("product_sku") @db.Uuid
+  product       Product            @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  yieldQuantity Decimal            @map("yield_quantity") @db.Decimal(18, 6)
+  ingredients   RecipeIngredient[]
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  recipeId   String  @map("recipe_id") @db.Uuid
+  recipe     Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  productSku String  @map("product_sku") @db.Uuid
+  product    Product @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  quantity   Decimal @db.Decimal(18, 6)
+
+  @@unique([recipeId, productSku], map: "uq_recipe_ingredients_recipe_id_product_sku")
+  @@index([productSku], map: "idx_recipe_ingredients_product_sku")
+  @@map("recipe_ingredients")
+}
+
+model PreWeighing {
+  id          String            @id @default(uuid(7)) @db.Uuid
+  productSku  String            @map("product_sku") @db.Uuid
+  product     Product           @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  quantity    Decimal           @db.Decimal(18, 6)
+  items       PreWeighingItem[]
+  production  ProductionItem?
+  createdById String            @map("created_by_id") @db.Uuid
+  createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([productSku, createdAt(sort: Desc), id(sort: Desc)], map: "idx_pre_weighings_product_sku_created_at")
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_pre_weighings_created_at")
+  @@map("pre_weighings")
+}
+
+model PreWeighingItem {
+  id              String      @id @default(uuid(7)) @db.Uuid
+  preWeighingId   String      @map("pre_weighing_id") @db.Uuid
+  preWeighing     PreWeighing @relation(fields: [preWeighingId], references: [id], onDelete: Restrict)
+  productSku      String      @map("product_sku") @db.Uuid
+  product         Product     @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  plannedQuantity Decimal     @map("planned_quantity") @db.Decimal(18, 6)
+  weighedQuantity Decimal     @map("weighed_quantity") @db.Decimal(18, 6)
+
+  @@unique([preWeighingId, productSku], map: "uq_pre_weighing_items_pre_weighing_id_product_sku")
+  @@index([productSku], map: "idx_pre_weighing_items_product_sku")
+  @@map("pre_weighing_items")
+}
+
+enum ProductionStatus {
+  IN_PROGRESS
+  FINISHED
+  CANCELED
+
+  @@map("production_status")
+}
+
+model Production {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  status      ProductionStatus @default(IN_PROGRESS)
+  items       ProductionItem[]
+  createdById String           @map("created_by_id") @db.Uuid
+  createdBy   User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  finishedAt  DateTime?        @map("finished_at") @db.Timestamptz(3)
+  canceledAt  DateTime?        @map("canceled_at") @db.Timestamptz(3)
+
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_productions_created_at")
+  @@map("productions")
+}
+
+model ProductionItem {
+  id               String                @id @default(uuid(7)) @db.Uuid
+  productionId     String                @map("production_id") @db.Uuid
+  production       Production            @relation(fields: [productionId], references: [id], onDelete: Restrict)
+  productSku       String                @map("product_sku") @db.Uuid
+  product          Product               @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  preWeighingId    String?               @unique @map("pre_weighing_id") @db.Uuid
+  preWeighing      PreWeighing?          @relation(fields: [preWeighingId], references: [id], onDelete: Restrict)
+  expectedQuantity Decimal               @map("expected_quantity") @db.Decimal(18, 6)
+  producedQuantity Decimal?              @map("produced_quantity") @db.Decimal(18, 6)
+  unitCost         Decimal?              @map("unit_cost") @db.Decimal(18, 6)
+  inputs           ProductionItemInput[]
+
+  @@index([productionId], map: "idx_production_items_production_id")
+  @@index([productSku], map: "idx_production_items_product_sku")
+  @@map("production_items")
+}
+
+model ProductionItemInput {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  productionItemId String         @map("production_item_id") @db.Uuid
+  productionItem   ProductionItem @relation(fields: [productionItemId], references: [id], onDelete: Restrict)
+  productSku       String         @map("product_sku") @db.Uuid
+  product          Product        @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  quantity         Decimal        @db.Decimal(18, 6)
+  unitCost         Decimal?       @map("unit_cost") @db.Decimal(18, 6)
+
+  @@unique([productionItemId, productSku], map: "uq_production_item_inputs_production_item_id_product_sku")
+  @@index([productSku], map: "idx_production_item_inputs_product_sku")
+  @@map("production_item_inputs")
+}

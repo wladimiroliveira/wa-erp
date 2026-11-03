@@ -1,0 +1,63 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { can, getCurrentUser, requireUser } from "@/server/auth/current-user";
+import { SESSION_COOKIE } from "@/server/auth/session";
+
+const USER = { id: "0199a1f0-0000-7000-8000-000000000001", permissions: ["SALES_READ" as const] };
+
+const cookieJar = new Map<string, string>();
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: (name: string) => (cookieJar.has(name) ? { value: cookieJar.get(name) } : undefined) }),
+}));
+
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => {
+    throw new Error(`NEXT_REDIRECT ${url}`);
+  },
+}));
+
+vi.mock("@/server/auth/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/session")>()),
+  findSessionUser: async (token: string) => (token === "valid" ? USER : null),
+}));
+
+beforeEach(() => {
+  cookieJar.clear();
+});
+
+describe("getCurrentUser", () => {
+  it("answers nobody without the session cookie", async () => {
+    expect(await getCurrentUser()).toBeNull();
+  });
+
+  it("answers nobody for a cookie the session store does not know", async () => {
+    cookieJar.set(SESSION_COOKIE, "stale");
+
+    expect(await getCurrentUser()).toBeNull();
+  });
+
+  it("answers the user the cookie belongs to", async () => {
+    cookieJar.set(SESSION_COOKIE, "valid");
+
+    expect(await getCurrentUser()).toEqual(USER);
+  });
+});
+
+describe("requireUser", () => {
+  it("sends an anonymous visitor to the sign-in screen", async () => {
+    await expect(requireUser()).rejects.toThrow("NEXT_REDIRECT /login");
+  });
+
+  it("hands back the signed-in user", async () => {
+    cookieJar.set(SESSION_COOKIE, "valid");
+
+    expect(await requireUser()).toEqual(USER);
+  });
+});
+
+describe("can", () => {
+  it("answers whether the user holds the permission", () => {
+    expect(can(USER, "SALES_READ")).toBe(true);
+    expect(can(USER, "REPORTS_READ")).toBe(false);
+  });
+});

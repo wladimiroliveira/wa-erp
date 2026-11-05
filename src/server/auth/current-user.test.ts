@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { can, getCurrentUser, requireUser } from "@/server/auth/current-user";
-import { SESSION_COOKIE } from "@/server/auth/session";
+import { REQUEST_PATH_HEADER, SESSION_COOKIE } from "@/server/auth/proxy-contract";
 
 const USER = { id: "0199a1f0-0000-7000-8000-000000000001", permissions: ["SALES_READ" as const] };
 
 const cookieJar = new Map<string, string>();
+const requestHeaders = new Map<string, string>();
 
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: (name: string) => (cookieJar.has(name) ? { value: cookieJar.get(name) } : undefined) }),
+  headers: async () => ({ get: (name: string) => requestHeaders.get(name) ?? null }),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -23,6 +25,7 @@ vi.mock("@/server/auth/session", async (importOriginal) => ({
 
 beforeEach(() => {
   cookieJar.clear();
+  requestHeaders.clear();
 });
 
 describe("getCurrentUser", () => {
@@ -46,6 +49,13 @@ describe("getCurrentUser", () => {
 describe("requireUser", () => {
   it("sends an anonymous visitor to the sign-in screen", async () => {
     await expect(requireUser()).rejects.toThrow("NEXT_REDIRECT /login");
+  });
+
+  it("keeps the way back when a stale cookie is found out", async () => {
+    cookieJar.set(SESSION_COOKIE, "stale");
+    requestHeaders.set(REQUEST_PATH_HEADER, "/stock/sku-1?tab=2");
+
+    await expect(requireUser()).rejects.toThrow("NEXT_REDIRECT /login?from=%2Fstock%2Fsku-1%3Ftab%3D2");
   });
 
   it("hands back the signed-in user", async () => {

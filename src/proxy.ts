@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SIGN_IN_RETURN_PARAM } from "@/features/auth/LoginPage";
-import { SESSION_COOKIE } from "@/server/auth/session";
-
-const SIGN_IN_PATH = "/login";
+import { REQUEST_PATH_HEADER, SESSION_COOKIE } from "@/server/auth/proxy-contract";
+import { SIGN_IN_PATH, signInUrl } from "@/shared/sign-in";
 
 /**
  * Keeps anonymous visitors out of the screens and signed-in ones out of the sign-in screen. It
@@ -17,13 +15,16 @@ export function proxy(request: NextRequest): NextResponse {
     return hasCookie ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
   }
 
-  if (hasCookie) return NextResponse.next();
+  const requestedPath = `${pathname}${search}`;
 
-  const signIn = new URL(SIGN_IN_PATH, request.url);
+  if (!hasCookie) return NextResponse.redirect(new URL(signInUrl(requestedPath), request.url));
 
-  signIn.searchParams.set(SIGN_IN_RETURN_PARAM, `${pathname}${search}`);
+  // Set here, over whatever the client sent, so the render can trust it as the way back.
+  const headers = new Headers(request.headers);
 
-  return NextResponse.redirect(signIn);
+  headers.set(REQUEST_PATH_HEADER, requestedPath);
+
+  return NextResponse.next({ request: { headers } });
 }
 
 export const config = {

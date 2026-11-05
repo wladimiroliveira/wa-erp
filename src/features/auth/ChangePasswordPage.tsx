@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { changeOwnPassword } from "@/features/auth/actions";
 import { messageForFailure } from "@/lib/form-errors";
+import { SIGN_IN_PATH } from "@/shared/sign-in";
 import { PageTitle } from "@/components/layout/PageTitle";
 
 const changePasswordSchema = z
@@ -52,7 +53,7 @@ export function ChangePasswordPage() {
       // cookie. Going to the sign-in screen here is telling the truth; waiting for the next
       // request would drop the operator there with no reason given.
       toast.success("Senha trocada. Entre de novo com a senha nova.");
-      router.replace("/login");
+      router.replace(SIGN_IN_PATH);
     } catch (error) {
       setFailure(messageForFailure(error));
     }

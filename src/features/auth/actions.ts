@@ -4,7 +4,8 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { z } from "zod";
 import { requireUser } from "@/server/auth/current-user";
-import { endSession, SESSION_COOKIE, sessionCookie, startSession } from "@/server/auth/session";
+import { SESSION_COOKIE } from "@/server/auth/proxy-contract";
+import { endSession, sessionCookie, startSession } from "@/server/auth/session";
 import { rateLimiter } from "@/server/http/rate-limit";
 import { changeOwnPasswordBodySchema, loginBodySchema } from "@/server/modules/auth/auth.schemas";
 import {
@@ -13,6 +14,7 @@ import {
   SIGN_IN_RATE_LIMIT,
 } from "@/server/modules/auth/auth.service";
 import { fail, type Failure } from "@/server/lib/result";
+import { SIGN_IN_PATH } from "@/shared/sign-in";
 
 export type ActionResult = { ok: true } | Failure;
 
@@ -61,7 +63,7 @@ export async function signOut(): Promise<never> {
 
   if (token !== undefined) await endSession(token);
 
-  redirect("/login");
+  redirect(SIGN_IN_PATH);
 }
 
 export async function changeOwnPassword(input: z.input<typeof changeOwnPasswordBodySchema>): Promise<ActionResult> {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { changeOwnPassword, signIn, signOut } from "@/features/auth/actions";
 import { rateLimiter } from "@/server/http/rate-limit";
-import { SESSION_COOKIE } from "@/server/auth/session";
+import { SESSION_COOKIE } from "@/server/auth/proxy-contract";
 
 const USER = { id: "0199a1f0-0000-7000-8000-000000000001", permissions: [] };
 

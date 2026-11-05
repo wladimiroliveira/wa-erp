@@ -9,10 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signIn } from "@/features/auth/actions";
+import { returnPathOf } from "@/shared/sign-in";
 import { messageForFailure } from "@/lib/form-errors";
-
-/** Where the sign-in screen sends the operator back to, once they are in. */
-export const SIGN_IN_RETURN_PARAM = "from";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Informe o usuário."),
@@ -29,14 +27,6 @@ const SIGN_IN_MESSAGES = {
   // must not read as "try again right now" — that just fails a sixth time.
   429: "Muitas tentativas. Espere um minuto e tente de novo.",
 };
-
-// Only a path of this application is a place to go back to. An absolute address written into
-// the query by someone else would turn the sign-in screen into a redirect to anywhere.
-export function returnPathOf(params: URLSearchParams): string {
-  const from = params.get(SIGN_IN_RETURN_PARAM);
-
-  return from !== null && from.startsWith("/") && !from.startsWith("//") ? from : "/";
-}
 
 export function LoginPage() {
   const router = useRouter();

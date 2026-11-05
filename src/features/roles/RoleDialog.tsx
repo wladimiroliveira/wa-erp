@@ -7,14 +7,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PermissionCheckboxes } from "@/features/permissions/PermissionCheckboxes";
 import { createRole, updateRole } from "@/features/roles/actions";
 import type { Permission, Role } from "@/lib/api";
 import { messageForFailure } from "@/lib/form-errors";
-import { labelFor, PERMISSION_GROUPS, PERMISSIONS } from "@/lib/permissions";
+import { PERMISSIONS } from "@/lib/permissions";
 
 const roleFormSchema = z.object({
   name: z.string().min(1, "Informe o nome do papel.").max(60, "O nome pode ter no máximo 60 caracteres."),
@@ -105,29 +105,7 @@ export function RoleDialog({ role, open, onOpenChange }: RoleDialogProps) {
           <fieldset className="flex flex-col gap-4">
             <legend className="text-sm font-medium">Permissões</legend>
 
-            {PERMISSION_GROUPS.map((group) => (
-              <div key={group.title} className="flex flex-col">
-                <p className="text-sm text-muted-foreground">{group.title}</p>
-
-                {group.permissions.map((permission) => (
-                  // `min-h-8` is not decoration. The Checkbox carries a 32px invisible hit
-                  // area around a 16px box, so in a row only as tall as its text the hit
-                  // areas of neighbouring rows overlap — a tap between two of them toggles
-                  // whichever wins the z-order, a wrong permission granted, silently.
-                  // Sizing the row to the target makes them tile instead.
-                  <div key={permission} className="flex min-h-8 items-center gap-2">
-                    <Checkbox
-                      id={`permission-${permission}`}
-                      checked={selected.includes(permission)}
-                      onCheckedChange={(checked) => toggle(permission, checked === true)}
-                    />
-                    <Label htmlFor={`permission-${permission}`} className="flex-1 py-1.5">
-                      {labelFor(permission)}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-            ))}
+            <PermissionCheckboxes idPrefix="permission" selected={selected} onToggle={toggle} />
 
             {form.formState.errors.permissions ? (
               <p className="text-sm text-destructive">{form.formState.errors.permissions.message}</p>

@@ -28,6 +28,13 @@ describe("AppShell", () => {
     expect(await screen.findByRole("link", { name: "Papéis" })).toHaveAttribute("href", "/roles");
   });
 
+  it("offers the users and the permissions to whoever may read the access control", async () => {
+    renderWithProviders(<AppShell>{null}</AppShell>, { user: aCurrentUser({ permissions: ["ACCESS_READ"] }) });
+
+    expect(await screen.findByRole("link", { name: "Usuários" })).toHaveAttribute("href", "/users");
+    expect(await screen.findByRole("link", { name: "Permissões" })).toHaveAttribute("href", "/permissions");
+  });
+
   it("offers the entries screen to whoever may record an entry", async () => {
     renderWithProviders(<AppShell>{null}</AppShell>, { user: aCurrentUser({ permissions: ["ENTRIES_CREATE"] }) });
 

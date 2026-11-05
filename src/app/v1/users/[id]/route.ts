@@ -28,10 +28,10 @@ export const PATCH = apiHandler(
     summary: "Edita papel, permissões avulsas, nome e situação",
     params: userIdParamsSchema,
     body: updateUserBodySchema,
-    response: { 200: userSchema, 404: messageSchema },
+    response: { 200: userSchema, 404: messageSchema, 409: messageSchema },
   },
   async (request, reply) => {
-    const result = await editUser(request.params.id, request.body);
+    const result = await editUser(request.params.id, request.body, request.currentUser!.id);
 
     if (!result.ok) return reply.code(result.status).send({ message: result.message });
 

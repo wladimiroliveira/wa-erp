@@ -7,9 +7,7 @@ import {
   revokeSession,
 } from "@/server/modules/auth/auth.repository";
 import { createOpaqueToken, expirationFrom, hashOpaqueToken } from "./opaque-token";
-
-/** The one cookie of the web: it carries the session token and nothing else. */
-export const SESSION_COOKIE = "wa_session";
+import { SESSION_COOKIE } from "./proxy-contract";
 
 export type StartedSession = { token: string; expiresAt: Date };
 

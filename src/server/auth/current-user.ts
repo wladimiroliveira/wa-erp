@@ -1,10 +1,12 @@
 import { cache } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { Permission } from "@prisma/client";
 import type { AuthenticatedUser } from "@/server/modules/auth/auth.access";
 import { hasPermission } from "@/server/modules/auth/auth.permissions";
-import { findSessionUser, SESSION_COOKIE } from "./session";
+import { signInUrl } from "@/shared/sign-in";
+import { REQUEST_PATH_HEADER, SESSION_COOKIE } from "./proxy-contract";
+import { findSessionUser } from "./session";
 
 /**
  * Who the request's cookie belongs to. Cached per request, so the layout, the page and every
@@ -18,11 +20,14 @@ export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> 
   return findSessionUser(token);
 });
 
-/** The signed-in user, or the sign-in screen. The proxy already sends away whoever has no cookie; this catches a cookie that no longer opens a session. */
+/**
+ * The signed-in user, or the sign-in screen. The proxy already sends away whoever has no cookie;
+ * this catches a cookie that no longer opens a session, and keeps the way back the proxy handed on.
+ */
 export async function requireUser(): Promise<AuthenticatedUser> {
   const user = await getCurrentUser();
 
-  if (user === null) redirect("/login");
+  if (user === null) redirect(signInUrl((await headers()).get(REQUEST_PATH_HEADER)));
 
   return user;
 }

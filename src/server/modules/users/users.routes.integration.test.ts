@@ -176,6 +176,35 @@ describe("PATCH /v1/users/:id", () => {
     expect((await inject(me, { method: "GET", url: "/v1/sessions/me", headers: target.headers })).statusCode).toBe(401);
   });
 
+  it("answers 409 to whoever tries to deactivate their own account, and leaves it active", async () => {
+    const { headers, userId } = await authenticateAs([Permission.ACCESS_UPDATE], "admin");
+
+    const response = await inject(userById, {
+      method: "PATCH",
+      url: `/v1/users/${userId}`,
+      params: { id: userId },
+      headers,
+      payload: { isActive: false },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect((await testPrisma.user.findUnique({ where: { id: userId } }))?.isActive).toBe(true);
+  });
+
+  it("answers 409 to whoever tries to drop their own ACCESS_UPDATE", async () => {
+    const { headers, userId } = await authenticateAs([Permission.ACCESS_UPDATE], "admin");
+
+    const response = await inject(userById, {
+      method: "PATCH",
+      url: `/v1/users/${userId}`,
+      params: { id: userId },
+      headers,
+      payload: { extraPermissions: [Permission.ACCESS_READ] },
+    });
+
+    expect(response.statusCode).toBe(409);
+  });
+
   it("answers 403 without ACCESS_UPDATE", async () => {
     const { headers } = await authenticateAs([Permission.ACCESS_READ], "admin");
     const user = await testPrisma.user.create({

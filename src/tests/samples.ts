@@ -15,6 +15,7 @@ import type {
   StockMovement,
   StockPosition,
   Supplier,
+  User,
 } from "@/lib/api";
 
 // These factories are the contract test. They are typed by the server's own schemas, so a
@@ -36,6 +37,19 @@ export function aRole(over: Partial<Role> = {}): Role {
     id: "018f0000-0000-7000-8000-000000000010",
     name: "Gerente",
     permissions: ["ACCESS_READ", "ACCESS_CREATE"],
+    ...over,
+  };
+}
+
+export function aUser(over: Partial<User> = {}): User {
+  return {
+    id: "018f0000-0000-7000-8000-000000000002",
+    name: "Maria Souza",
+    username: "maria",
+    roleId: null,
+    extraPermissions: [],
+    permissions: [],
+    isActive: true,
     ...over,
   };
 }

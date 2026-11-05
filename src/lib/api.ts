@@ -34,6 +34,12 @@ import type {
 } from "@/server/modules/stock/stock.schemas";
 import type { createSupplierBodySchema, supplierSchema } from "@/server/modules/suppliers/suppliers.schemas";
 import type { tableLayoutBodySchema, tableLayoutSchema } from "@/server/modules/table-layouts/table-layouts.schemas";
+import type {
+  createUserBodySchema,
+  resetPasswordBodySchema,
+  updateUserBodySchema,
+  userSchema,
+} from "@/server/modules/users/users.schemas";
 
 // The only module of the front end that names the server's shapes. They are read off the zod
 // schemas the server validates with, as types only, so a screen never bundles server code and a
@@ -50,6 +56,11 @@ export type TableLayoutBody = z.input<typeof tableLayoutBodySchema>;
 export type Role = z.output<typeof roleSchema>;
 export type CreateRoleBody = z.input<typeof createRoleBodySchema>;
 export type UpdateRoleBody = z.input<typeof updateRoleBodySchema>;
+
+export type User = z.output<typeof userSchema>;
+export type CreateUserBody = z.input<typeof createUserBodySchema>;
+export type UpdateUserBody = z.input<typeof updateUserBodySchema>;
+export type ResetPasswordBody = z.input<typeof resetPasswordBodySchema>;
 
 export type Product = z.output<typeof productSchema>;
 export type CreateProductBody = z.input<typeof createProductBodySchema>;

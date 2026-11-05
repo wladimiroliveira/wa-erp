@@ -9,12 +9,14 @@ import {
   updatePasswordHash,
 } from "@/server/modules/auth/auth.repository";
 import { findRoleById } from "@/server/modules/roles/roles.repository";
+import { removesOwnAccess } from "./users.lockout";
 import { insertUser, listUsers as listUserRecords, updateUser } from "./users.repository";
 
 type UserWithRole = User & { role: Role | null };
 
 const USER_NOT_FOUND = "User not found.";
 const ROLE_NOT_FOUND = "Role not found.";
+const LOCKS_OUT_SELF = "You cannot deactivate yourself or remove your own ACCESS_UPDATE.";
 
 export function presentUser(user: UserWithRole) {
   return {
@@ -66,12 +68,23 @@ export async function createUser(input: {
 export async function editUser(
   id: string,
   changes: { name?: string; roleId?: string | null; extraPermissions?: Permission[]; isActive?: boolean },
-): Promise<Result<PresentedUser, 404>> {
+  actorId: string,
+): Promise<Result<PresentedUser, 404 | 409>> {
   const user = await findUserById(id);
 
   if (user === null) return fail(404, USER_NOT_FOUND);
 
-  if (changes.roleId != null && (await findRoleById(changes.roleId)) === null) return fail(404, ROLE_NOT_FOUND);
+  const role = changes.roleId == null ? null : await findRoleById(changes.roleId);
+
+  if (changes.roleId != null && role === null) return fail(404, ROLE_NOT_FOUND);
+
+  const after = {
+    isActive: changes.isActive ?? user.isActive,
+    rolePermissions: changes.roleId === undefined ? (user.role?.permissions ?? []) : (role?.permissions ?? []),
+    extraPermissions: changes.extraPermissions ?? user.extraPermissions,
+  };
+
+  if (removesOwnAccess(actorId, id, after)) return fail(409, LOCKS_OUT_SELF);
 
   const updated = await updateUser(id, changes);
 

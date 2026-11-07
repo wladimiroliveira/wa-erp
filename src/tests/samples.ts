@@ -6,6 +6,8 @@ import type {
   PreWeighing,
   PreWeighingPlan,
   Product,
+  Production,
+  ProductionItem,
   Recipe,
   RecipeSummary,
   Role,
@@ -184,6 +186,37 @@ export function aPreWeighing(over: Partial<PreWeighing> = {}): PreWeighing {
         weighedQuantity: "6.05",
       },
     ],
+    ...over,
+  };
+}
+
+export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionItem {
+  return {
+    id: "018f0000-0000-7000-8000-0000000000b1",
+    product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
+    preWeighingId: null,
+    expectedQuantity: "10",
+    producedQuantity: null,
+    unitCost: null,
+    inputs: [
+      {
+        product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM" },
+        quantity: "6",
+        unitCost: null,
+      },
+    ],
+    ...over,
+  };
+}
+
+export function aProduction(over: Partial<Production> = {}): Production {
+  return {
+    id: "018f0000-0000-7000-8000-0000000000b0",
+    status: "IN_PROGRESS",
+    createdAt: "2026-10-14T12:00:00.000Z",
+    finishedAt: null,
+    canceledAt: null,
+    items: [aProductionItem()],
     ...over,
   };
 }

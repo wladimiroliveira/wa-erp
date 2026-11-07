@@ -19,6 +19,12 @@ import type {
   preWeighingSchema,
 } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import type {
+  finishProductionBodySchema,
+  productionPageSchema,
+  productionSchema,
+  startProductionBodySchema,
+} from "@/server/modules/productions/productions.schemas";
+import type {
   createProductBodySchema,
   listProductsQuerySchema,
   productSchema,
@@ -95,6 +101,12 @@ export type PreWeighingPlan = z.output<typeof preWeighingPlanSchema>;
 export type CreatePreWeighingBody = z.input<typeof createPreWeighingBodySchema>;
 export type PreWeighing = z.output<typeof preWeighingSchema>;
 export type PreWeighingPage = z.output<typeof preWeighingPageSchema>;
+
+export type Production = z.output<typeof productionSchema>;
+export type ProductionItem = Production["items"][number];
+export type ProductionPage = z.output<typeof productionPageSchema>;
+export type StartProductionBody = z.input<typeof startProductionBodySchema>;
+export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
 
 export type Recipe = z.output<typeof recipeSchema>;
 export type SaveRecipeBody = z.input<typeof saveRecipeBodySchema>;

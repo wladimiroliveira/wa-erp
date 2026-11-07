@@ -83,6 +83,12 @@ describe("AppShell", () => {
     expect(await screen.findByRole("link", { name: "Pré-pesagens" })).toHaveAttribute("href", "/pre-weighings");
   });
 
+  it("offers the productions to whoever may read the production", async () => {
+    renderWithProviders(<AppShell>{null}</AppShell>, { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
+
+    expect(await screen.findByRole("link", { name: "Produções" })).toHaveAttribute("href", "/productions");
+  });
+
   it("folds the menu away on request, widening the workspace", async () => {
     const { container } = renderWithProviders(<AppShell>{null}</AppShell>, { user: aCurrentUser() });
     const sidebar = container.querySelector('[data-slot="sidebar"]');

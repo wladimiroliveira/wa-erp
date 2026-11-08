@@ -3,9 +3,10 @@ import type { z } from "zod";
 import { isUniqueViolation } from "@/server/lib/prisma-errors";
 import { fail, succeed, type Result } from "@/server/lib/result";
 import { decimalSchema } from "@/shared/decimal";
-import { convert, IncompatibleUnitsError } from "@/shared/units";
+import { convert, IncompatibleUnitsError, normalizeDecimal } from "@/shared/units";
 import {
   findPackagingByGtin,
+  findPackagingsWithLots,
   findProductByDescription,
   findProductBySku,
   insertProduct,
@@ -128,9 +129,24 @@ export async function editProduct(
       return fail(404, "Packaging not found.");
     }
 
+    const listed = new Set(packagings.flatMap(({ id }) => (id === undefined ? [] : [id.toLowerCase()])));
+    const withLots = await findPackagingsWithLots(product.sku);
+
+    if (withLots.some((id) => !listed.has(id))) return fail(409, PRODUCT_CONFLICTS.inUse);
+
     const contents = contentsIn(product.unit, packagings);
 
     if (!contents.ok) return contents;
+
+    // The lots it came in read their packagings by this content: changing it would rewrite them.
+    const changesLockedContent = packagings.some(
+      ({ id }, index) =>
+        id !== undefined &&
+        withLots.includes(id.toLowerCase()) &&
+        normalizeDecimal(stored.get(id.toLowerCase())!.content) !== contents.data[index],
+    );
+
+    if (changesLockedContent) return fail(409, PRODUCT_CONFLICTS.contentLocked);
 
     writes = packagings.map(({ id, gtin, isActive }, index) => ({
       ...(id === undefined ? {} : { id: id.toLowerCase() }),

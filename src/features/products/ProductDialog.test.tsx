@@ -170,6 +170,11 @@ describe("ProductDialog", () => {
     [PRODUCT_CONFLICTS.description, "Já existe um produto com essa descrição."],
     [PRODUCT_CONFLICTS.gtin, "Esse GTIN já está em outra embalagem."],
     [PRODUCT_CONFLICTS.content, "O produto já tem uma embalagem com esse conteúdo."],
+    [PRODUCT_CONFLICTS.inUse, "Essa embalagem já recebeu entradas e não pode ser removida; inative-a."],
+    [
+      PRODUCT_CONFLICTS.contentLocked,
+      "Essa embalagem já recebeu entradas e o conteúdo dela não pode mudar; cadastre uma nova embalagem.",
+    ],
   ])("says what the conflict %j is, in Portuguese, and keeps the dialog open", async (message, shown) => {
     const onOpenChange = vi.fn();
     createMock.mockResolvedValue({ ok: false, status: 409, message });

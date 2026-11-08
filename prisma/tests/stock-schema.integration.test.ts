@@ -89,3 +89,21 @@ describe("stock_movements", () => {
     await expect(testPrisma.user.delete({ where: { id: input.createdById } })).rejects.toThrow();
   });
 });
+
+describe("stock lot packaging", () => {
+  it("refuses a lot that names a packaging without a count, or a count without a packaging", async () => {
+    const product = await createProduct();
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
+    const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
+
+    await expect(testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id } })).rejects.toThrow(
+      /ck_stock_lots_packaging_count_together/,
+    );
+    await expect(testPrisma.stockLot.create({ data: { ...lot, packageCount: 2 } })).rejects.toThrow(
+      /ck_stock_lots_packaging_count_together/,
+    );
+    await expect(
+      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packageCount: 2 } }),
+    ).resolves.toBeDefined();
+  });
+});

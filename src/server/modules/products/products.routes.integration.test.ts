@@ -530,6 +530,59 @@ describe("PATCH /v1/products/:sku", () => {
     ]);
   });
 
+  it("answers 409 when the list leaves out a packaging stock lots came in, and writes nothing", async () => {
+    const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
+    const flour = await createFlour();
+    const [bag, sack] = await testPrisma.productPackaging.createManyAndReturn({
+      data: [
+        { productSku: flour.sku, content: "1" },
+        { productSku: flour.sku, content: "5" },
+      ],
+    });
+    await testPrisma.stockLot.create({
+      data: {
+        productSku: flour.sku,
+        packagingId: sack!.id,
+        packageCount: 1,
+        initialQuantity: "5",
+        quantity: "5",
+        unitCost: "1",
+      },
+    });
+
+    const response = await patchProduct(headers, flour.sku, {
+      packagings: [{ id: bag!.id, content: "1", unit: "KILOGRAM" }],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "A packaging with stock lots cannot be removed." });
+    expect(await packagingsOf(flour.sku)).toHaveLength(2);
+  });
+
+  it("answers 409 for a new content on a packaging stock lots came in, and writes nothing", async () => {
+    const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
+    const flour = await createFlour();
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: flour.sku, content: "1" } });
+    await testPrisma.stockLot.create({
+      data: {
+        productSku: flour.sku,
+        packagingId: bag.id,
+        packageCount: 2,
+        initialQuantity: "2",
+        quantity: "2",
+        unitCost: "1",
+      },
+    });
+
+    const response = await patchProduct(headers, flour.sku, {
+      packagings: [{ id: bag.id, content: "2", unit: "KILOGRAM" }],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "A packaging with stock lots cannot change its content." });
+    expect(String((await testPrisma.productPackaging.findUniqueOrThrow({ where: { id: bag.id } })).content)).toBe("1");
+  });
+
   it("answers 404 for a product that does not exist", async () => {
     const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
 

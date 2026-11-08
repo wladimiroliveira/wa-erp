@@ -441,3 +441,80 @@ describe("POST /v1/entries", () => {
     expect(await testPrisma.stockMovement.count()).toBe(1);
   });
 });
+
+describe("POST /v1/entries in packagings", () => {
+  const createPackaged = async (packaging: { content: string; isActive?: boolean } = { content: "0.38" }) => {
+    const product = await createProduct();
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, ...packaging } });
+
+    return { product, bag };
+  };
+
+  it("records the packagings in the product's unit and keeps them on the lot", async () => {
+    const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const { product, bag } = await createPackaged();
+
+    const response = await postEntry(headers, {
+      productSku: product.sku,
+      packagingId: bag.id,
+      packageCount: 10,
+      packagePrice: "4.50",
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({
+      quantity: "3.8",
+      unitCost: "11.842105",
+      lot: { quantity: "3.8", packaging: { id: bag.id, content: "0.38", count: 10 } },
+    });
+    const [lot] = await lotsOf(product.sku);
+    expect(lot).toMatchObject({ packagingId: bag.id, packageCount: 10 });
+    expect([lot!.quantity, lot!.unitCost].map(String)).toEqual(["3.8", "11.842105"]);
+  });
+
+  it("answers 404 for a packaging of another product, and writes nothing", async () => {
+    const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const { product } = await createPackaged();
+    const other = await testPrisma.product.create({
+      data: { description: "Rye flour", kind: "GOODS", unit: "KILOGRAM" },
+    });
+    const otherBag = await testPrisma.productPackaging.create({ data: { productSku: other.sku, content: "1" } });
+
+    const response = await postEntry(headers, {
+      productSku: product.sku,
+      packagingId: otherBag.id,
+      packageCount: 1,
+      packagePrice: "1",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(await testPrisma.stockLot.count()).toBe(0);
+  });
+
+  it("answers 409 for an inactive packaging", async () => {
+    const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const { product, bag } = await createPackaged({ content: "1", isActive: false });
+
+    const response = await postEntry(headers, {
+      productSku: product.sku,
+      packagingId: bag.id,
+      packageCount: 1,
+      packagePrice: "1",
+    });
+
+    expect(response.statusCode).toBe(409);
+  });
+
+  it.each([
+    ["a body mixing both shapes", { quantity: "1", unitCost: "1", packageCount: 1, packagePrice: "1" }],
+    ["a price with fractions of a cent", { packageCount: 1, packagePrice: "1.005" }],
+    ["a fractional count", { packageCount: 1.5, packagePrice: "1" }],
+  ])("answers 400 for %s", async (_label, body) => {
+    const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const { product, bag } = await createPackaged();
+
+    const response = await postEntry(headers, { productSku: product.sku, packagingId: bag.id, ...body });
+
+    expect(response.statusCode).toBe(400);
+  });
+});

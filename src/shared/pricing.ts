@@ -1,6 +1,6 @@
 // Cost and price of a manufactured product, shared by the server and the live preview in the
-// browser. Decimals arrive and leave as strings and are worked as scaled BigInts: the browser has no
-// decimal library, and a float would miss cents.
+// browser. Decimals arrive and leave as strings and are worked as scaled BigInts.
+import { divideHalfUp, fromScaled, scale, toScaled } from "./fixed-point";
 
 const COST_PLACES = 6;
 const MARKUP_PLACES = 2;
@@ -9,23 +9,6 @@ const PRICE_PLACES = 2;
 export type IngredientCost = { productSku: string; quantity: string; averageCost: string | null };
 
 export type CostResult = { status: "complete"; costPerUnit: string } | { status: "incomplete"; missing: string[] };
-
-const scale = (places: number) => 10n ** BigInt(places);
-
-/** A non-negative decimal string as an integer counting units of 10^-places. */
-function toScaled(value: string, places: number): bigint {
-  const [integer = "0", fraction = ""] = value.split(".");
-
-  return BigInt(integer + fraction.padEnd(places, "0").slice(0, places));
-}
-
-function fromScaled(value: bigint, places: number): string {
-  const digits = value.toString().padStart(places + 1, "0");
-
-  return `${digits.slice(0, -places)}.${digits.slice(-places)}`;
-}
-
-const divideHalfUp = (dividend: bigint, divisor: bigint) => (2n * dividend + divisor) / (2n * divisor);
 
 const divideUp = (dividend: bigint, divisor: bigint) => (dividend + divisor - 1n) / divisor;
 

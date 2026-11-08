@@ -153,14 +153,15 @@ model Product {
 
 // What a product is bought in: its content, in the product's own unit, and the GTIN on it.
 model ProductPackaging {
-  id         String   @id @default(uuid(7)) @db.Uuid
-  productSku String   @map("product_sku") @db.Uuid
-  product    Product  @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  content    Decimal  @db.Decimal(18, 6)
-  gtin       String?  @unique
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id         String     @id @default(uuid(7)) @db.Uuid
+  productSku String     @map("product_sku") @db.Uuid
+  product    Product    @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  content    Decimal    @db.Decimal(18, 6)
+  gtin       String?    @unique
+  isActive   Boolean    @default(true) @map("is_active")
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lots       StockLot[]
 
   @@unique([productSku, content], map: "uq_product_packagings_product_sku_content")
   @@map("product_packagings")
@@ -221,22 +222,27 @@ model StockMovement {
 // lots of a product add up to its balance whenever that balance is not negative. `expiresAt` is a
 // calendar day, kept as its midnight in UTC.
 model StockLot {
-  id              String          @id @default(uuid(7)) @db.Uuid
-  productSku      String          @map("product_sku") @db.Uuid
-  product         Product         @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  supplierId      String?         @map("supplier_id") @db.Uuid
-  supplier        Supplier?       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  expiresAt       DateTime?       @map("expires_at") @db.Timestamptz(3)
-  initialQuantity Decimal         @map("initial_quantity") @db.Decimal(18, 6)
-  quantity        Decimal         @db.Decimal(18, 6)
-  unitCost        Decimal         @map("unit_cost") @db.Decimal(18, 6)
+  id              String            @id @default(uuid(7)) @db.Uuid
+  productSku      String            @map("product_sku") @db.Uuid
+  product         Product           @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  supplierId      String?           @map("supplier_id") @db.Uuid
+  supplier        Supplier?         @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  // The packaging the lot came in and how many of them; both empty for a lot received loose.
+  packagingId     String?           @map("packaging_id") @db.Uuid
+  packaging       ProductPackaging? @relation(fields: [packagingId], references: [id], onDelete: Restrict)
+  packageCount    Int?              @map("package_count")
+  expiresAt       DateTime?         @map("expires_at") @db.Timestamptz(3)
+  initialQuantity Decimal           @map("initial_quantity") @db.Decimal(18, 6)
+  quantity        Decimal           @db.Decimal(18, 6)
+  unitCost        Decimal           @map("unit_cost") @db.Decimal(18, 6)
   movements       StockMovement[]
   losses          StockLoss[]
-  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([productSku, expiresAt, createdAt], map: "idx_stock_lots_product_sku_expires_at")
   @@index([supplierId], map: "idx_stock_lots_supplier_id")
+  @@index([packagingId], map: "idx_stock_lots_packaging_id")
   @@map("stock_lots")
 }
 

@@ -7,3 +7,6 @@ export const decimalSchema = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
 export const positiveDecimalSchema = decimalSchema.refine((value) => Number(value) > 0, {
   message: "Must be positive.",
 });
+
+// Money as the operator types and reads it: cents, never fractions of a cent.
+export const moneySchema = z.string().regex(/^\d{1,12}(\.\d{1,2})?$/);

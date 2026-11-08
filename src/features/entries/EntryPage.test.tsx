@@ -6,7 +6,7 @@ import { EntryPage } from "@/features/entries/EntryPage";
 import type { CreateEntryBody, Product, Supplier } from "@/lib/api";
 import { todayIso } from "@/lib/dates";
 import { renderWithProviders } from "@/tests/render";
-import { aProduct, aSupplier, anEntry } from "@/tests/samples";
+import { aPackaging, aProduct, aSupplier, anEntry } from "@/tests/samples";
 
 vi.mock("@/features/entries/actions", () => ({ createEntry: vi.fn() }));
 
@@ -158,7 +158,7 @@ describe("EntryPage", () => {
       data: anEntry({
         quantity: "10.5",
         product: { sku: FLOUR.sku, description: "Farinha de trigo", unit: "KILOGRAM" },
-        lot: { id: "lot-1", expiresAt: "2099-12-31", supplier: MILL, quantity: "10.5" },
+        lot: { id: "lot-1", expiresAt: "2099-12-31", supplier: MILL, quantity: "10.5", packaging: null },
         stock: { quantity: "40.5", lastEntryCost: "4.25", averageCost: "5.5" },
       }),
     }));
@@ -296,5 +296,209 @@ describe("EntryPage sizing", () => {
 
     expect(label).toHaveClass("py-1.5");
     expect(label.parentElement).toHaveClass("min-h-8");
+  });
+});
+
+describe("EntryPage, by packaging", () => {
+  const BAG = aPackaging({ id: "018f0000-0000-7000-8000-000000000101", content: "0.38", gtin: "7891000100103" });
+  const SACK = aPackaging({ id: "018f0000-0000-7000-8000-000000000102", content: "1", gtin: null });
+  const RETIRED = aPackaging({ id: "018f0000-0000-7000-8000-000000000103", content: "5", isActive: false });
+  const SUGAR = aProduct({
+    sku: "018f0000-0000-7000-8000-000000000021",
+    description: "AÇÚCAR",
+    packagings: [BAG, SACK, RETIRED],
+  });
+  const BOTTLE = aPackaging({ id: "018f0000-0000-7000-8000-000000000104", content: "0.9", gtin: "78910003" });
+  const OIL = aProduct({
+    sku: "018f0000-0000-7000-8000-000000000022",
+    description: "ÓLEO",
+    unit: "LITER",
+    packagings: [BOTTLE],
+  });
+
+  const renderStock = () => renderPage([FLOUR, SUGAR, OIL]);
+
+  const scan = async (gtin: string) => {
+    await userEvent.type(await screen.findByLabelText("Código de barras"), `${gtin}{Enter}`);
+  };
+
+  const fillPackaged = async ({ count = "10", price = "4,50" } = {}) => {
+    await userEvent.type(screen.getByLabelText("Quantidade"), count);
+    await userEvent.type(screen.getByLabelText("Preço por embalagem"), price);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Sem data de validade" }));
+  };
+
+  const packagedEntry = (): CreateEntryResult => ({
+    ok: true,
+    data: anEntry({
+      quantity: "3.8",
+      product: { sku: SUGAR.sku, description: "AÇÚCAR", unit: "KILOGRAM" },
+      lot: {
+        id: "018f0000-0000-7000-8000-000000000060",
+        expiresAt: null,
+        supplier: null,
+        quantity: "3.8",
+        packaging: { id: BAG.id, content: "0.38", count: 10 },
+      },
+    }),
+  });
+
+  it("fills the product and the packaging from a read barcode, ready for the count", async () => {
+    renderStock();
+
+    await scan("7891000100103");
+
+    expect(screen.getByLabelText("Produto")).toHaveValue(SUGAR.sku);
+    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("380 g");
+    expect(screen.getByLabelText("Quantidade")).toHaveFocus();
+    expect(createEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("says when a barcode is on no active packaging, and changes nothing", async () => {
+    renderStock();
+
+    await scan("0000000000000");
+
+    expect(await screen.findByText("Código não cadastrado em nenhuma embalagem ativa.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Produto")).toHaveValue("");
+  });
+
+  it("offers the active packagings and the product's own unit, the first packaging chosen", async () => {
+    renderStock();
+
+    await userEvent.selectOptions(await screen.findByLabelText("Produto"), "AÇÚCAR (kg)");
+
+    const options = within(screen.getByLabelText("Embalagem")).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["380 g", "1 kg", "Sem embalagem (kg)"]);
+    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("380 g");
+  });
+
+  it("asks for no packaging on a product that has none", async () => {
+    renderStock();
+
+    await userEvent.selectOptions(await screen.findByLabelText("Produto"), "Farinha de trigo (kg)");
+
+    expect(screen.queryByLabelText("Embalagem")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Quantidade")).toBeInTheDocument();
+  });
+
+  it("shows what the packagings amount to in the product's unit, as they are typed", async () => {
+    renderStock();
+    await scan("7891000100103");
+
+    await fillPackaged();
+
+    expect(screen.getByText("= 3,8 kg a R$ 11,84/kg")).toBeInTheDocument();
+  });
+
+  it("sends the packagings, their count and the price of one", async () => {
+    const received = recordingEntries(packagedEntry);
+    renderStock();
+    await scan("7891000100103");
+    await fillPackaged();
+
+    await submit();
+
+    await waitFor(() =>
+      expect(received).toEqual([
+        { productSku: SUGAR.sku, packagingId: BAG.id, packageCount: 10, packagePrice: "4.50", expiresAt: null },
+      ]),
+    );
+  });
+
+  it("sends a loose entry when the product's own unit is chosen", async () => {
+    const received = recordingEntries(created);
+    renderStock();
+    await userEvent.selectOptions(await screen.findByLabelText("Produto"), "AÇÚCAR (kg)");
+    await userEvent.selectOptions(screen.getByLabelText("Embalagem"), "Sem embalagem (kg)");
+    await userEvent.type(screen.getByLabelText("Quantidade"), "2,5");
+    await userEvent.type(screen.getByLabelText("Custo unitário"), "4");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Sem data de validade" }));
+
+    await submit();
+
+    await waitFor(() =>
+      expect(received).toEqual([{ productSku: SUGAR.sku, quantity: "2.5", unitCost: "4.00", expiresAt: null }]),
+    );
+  });
+
+  it("refuses a price with fractions of a cent and a count of zero", async () => {
+    renderStock();
+    await scan("7891000100103");
+    await fillPackaged({ count: "0", price: "4,505" });
+
+    await submit();
+
+    expect(await screen.findByText("Informe o preço com até 2 casas decimais.")).toBeInTheDocument();
+    expect(screen.getByText("Informe um número inteiro de embalagens, de 1 a 99.999.")).toBeInTheDocument();
+    expect(createEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a barcode read into the count instead of recording millions of packagings", async () => {
+    renderStock();
+    await scan("7891000100103");
+    await fillPackaged({ count: "78910003" });
+
+    await submit();
+
+    expect(await screen.findByText("Informe um número inteiro de embalagens, de 1 a 99.999.")).toBeInTheDocument();
+    expect(createEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the packagings in the summary and goes back to the barcode", async () => {
+    recordingEntries(packagedEntry);
+    renderStock();
+    await scan("7891000100103");
+    await fillPackaged();
+
+    await submit();
+
+    expect(await screen.findByRole("status")).toHaveTextContent("10 × 380 g (3,8 kg)");
+    expect(screen.getByLabelText("Código de barras")).toHaveFocus();
+  });
+
+  it("keeps the packaged entry when it settles a negative balance", async () => {
+    const received = recordingEntries((body) =>
+      body.deficit === undefined
+        ? { ok: false, status: 409, message: "The product has a negative balance to settle.", deficit: "1" }
+        : packagedEntry(),
+    );
+    renderStock();
+    await scan("7891000100103");
+    await fillPackaged();
+    await submit();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Zerar o saldo antes" }));
+
+    await screen.findByRole("status");
+    expect(received[1]).toEqual({
+      productSku: SUGAR.sku,
+      packagingId: BAG.id,
+      packageCount: 10,
+      packagePrice: "4.50",
+      expiresAt: null,
+      deficit: "ZERO",
+    });
+  });
+
+  it("chooses the new product's packaging when the product changes after a barcode", async () => {
+    renderStock();
+    await scan("7891000100103");
+
+    await userEvent.selectOptions(screen.getByLabelText("Produto"), "ÓLEO (L)");
+
+    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("900 mL");
+  });
+
+  it("sends the new product's packaging when the product changes after a barcode", async () => {
+    const received = recordingEntries(packagedEntry);
+    renderStock();
+    await scan("7891000100103");
+    await userEvent.selectOptions(screen.getByLabelText("Produto"), "ÓLEO (L)");
+    await fillPackaged({ count: "2", price: "9" });
+
+    await submit();
+
+    await waitFor(() => expect(received[0]).toMatchObject({ productSku: OIL.sku, packagingId: BOTTLE.id }));
   });
 });

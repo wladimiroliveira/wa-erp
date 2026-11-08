@@ -70,6 +70,8 @@ export const PRODUCT_CONFLICTS = {
   description: "A product with this description already exists.",
   gtin: "A packaging with this GTIN already exists.",
   content: "The product already has a packaging with this content.",
+  inUse: "A packaging with stock lots cannot be removed.",
+  contentLocked: "A packaging with stock lots cannot change its content.",
 } as const;
 
 export const createProductBodySchema = z.object({

@@ -101,18 +101,29 @@ export function openLot(
     unitCost: Prisma.Decimal | string;
     expiresAt: string | null;
     supplierId?: string;
+    packagingId?: string;
+    packageCount?: number;
   },
 ) {
   return client.stockLot.create({
     data: {
       productSku: lot.productSku,
       supplierId: lot.supplierId,
+      packagingId: lot.packagingId,
+      packageCount: lot.packageCount,
       expiresAt: lot.expiresAt === null ? null : new Date(lot.expiresAt),
       initialQuantity: lot.quantity,
       quantity: lot.left ?? lot.quantity,
       unitCost: lot.unitCost,
     },
-    select: { id: true, expiresAt: true, quantity: true, supplier: { select: { id: true, name: true } } },
+    select: {
+      id: true,
+      expiresAt: true,
+      quantity: true,
+      supplier: { select: { id: true, name: true } },
+      packageCount: true,
+      packaging: { select: { id: true, content: true } },
+    },
   });
 }
 

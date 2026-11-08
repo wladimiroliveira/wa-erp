@@ -33,10 +33,24 @@ import { messageForFailure } from "@/lib/form-errors";
 import { UNITS, unitLabel, unitName } from "@/lib/units";
 import { withValues } from "@/lib/url-filters";
 import { PageTitle } from "@/components/layout/PageTitle";
+import { NOTHING, quantityOf } from "@/features/stock/stock-format";
+import { readableQuantity } from "@/shared/units";
 
 const KIND_OPTIONS = PRODUCT_KINDS.map((kind) => ({ value: kind, label: kindLabel(kind) }));
 const UNIT_OPTIONS = UNITS.map((unit) => ({ value: unit, label: unitName(unit) }));
 const STATUS_OPTIONS = STATUS_CHOICES.map((choice) => ({ value: choice, label: statusLabel(choice) }));
+
+// What the product is bought in today: the inactive packagings are no longer offered.
+function packagingsOf({ packagings, unit }: Product): string {
+  const active = packagings.filter(({ isActive }) => isActive);
+
+  if (active.length === 0) return NOTHING;
+
+  return active
+    .map(({ content }) => readableQuantity(content, unit))
+    .map(({ quantity, unit: shown }) => quantityOf(quantity, shown))
+    .join(" · ");
+}
 
 interface ProductsListPageProps {
   /** The products the address's filters answer, as the server read them. */
@@ -180,7 +194,7 @@ export function ProductsListPage({ products, catalog }: ProductsListPageProps) {
               { key: "description", header: "Descrição", cell: (product) => product.description },
               { key: "kind", header: "Tipo", cell: (product) => kindLabel(product.kind) },
               { key: "unit", header: "Unidade", cell: (product) => unitLabel(product.unit) },
-              { key: "gtin", header: "GTIN", cell: (product) => product.gtin ?? "—" },
+              { key: "packagings", header: "Embalagens", cell: (product) => packagingsOf(product) },
               {
                 key: "status",
                 header: "Situação",

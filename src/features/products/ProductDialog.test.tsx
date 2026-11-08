@@ -1,10 +1,11 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createProduct, updateProduct } from "@/features/products/actions";
 import { ProductDialog } from "@/features/products/ProductDialog";
 import { renderWithProviders } from "@/tests/render";
-import { aProduct } from "@/tests/samples";
+import { PRODUCT_CONFLICTS } from "@/server/modules/products/products.schemas";
+import { aPackaging, aProduct } from "@/tests/samples";
 
 vi.mock("@/features/products/actions", () => ({ createProduct: vi.fn(), updateProduct: vi.fn() }));
 
@@ -16,11 +17,19 @@ beforeEach(() => {
   updateMock.mockReset();
 });
 
-async function fill({ description = "Farinha de trigo", gtin = "" } = {}) {
+async function fill({
+  description = "Farinha de trigo",
+  packaging = null as null | { content: string; unit?: string; gtin?: string },
+} = {}) {
   await userEvent.type(screen.getByLabelText("Descrição"), description);
   await userEvent.selectOptions(screen.getByLabelText("Tipo"), "Mercadoria");
   await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
-  if (gtin !== "") await userEvent.type(screen.getByLabelText("GTIN (opcional)"), gtin);
+  if (packaging !== null) {
+    await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+    await userEvent.type(screen.getByLabelText("Conteúdo da embalagem 1"), packaging.content);
+    if (packaging.unit) await userEvent.selectOptions(screen.getByLabelText("Unidade da embalagem 1"), packaging.unit);
+    if (packaging.gtin) await userEvent.type(screen.getByLabelText("GTIN da embalagem 1"), packaging.gtin);
+  }
   await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 }
 
@@ -38,7 +47,7 @@ describe("ProductDialog", () => {
   it("refuses a GTIN that is not 8 to 14 digits", async () => {
     renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
 
-    await fill({ gtin: "789-1000" });
+    await fill({ packaging: { content: "1", gtin: "789-1000" } });
 
     expect(await screen.findByText("O GTIN tem de 8 a 14 dígitos, só números.")).toBeInTheDocument();
   });
@@ -46,9 +55,64 @@ describe("ProductDialog", () => {
   it("refuses a GTIN whose check digit does not match", async () => {
     renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
 
-    await fill({ gtin: "7891000100104" });
+    await fill({ packaging: { content: "1", gtin: "7891000100104" } });
 
     expect(await screen.findByText("O dígito verificador do GTIN não confere. Revise o código.")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("writes the description in upper case as it is typed", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+
+    await userEvent.type(screen.getByLabelText("Descrição"), "açúcar");
+
+    expect(screen.getByLabelText("Descrição")).toHaveValue("AÇÚCAR");
+  });
+
+  it("offers packagings only once the unit is chosen, in the units that measure it", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+
+    expect(screen.getByRole("button", { name: "Adicionar embalagem" })).toBeDisabled();
+
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
+    await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+
+    const options = within(screen.getByLabelText("Unidade da embalagem 1")).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["kg", "g"]);
+  });
+
+  it("moves a packaging to the new unit when the product's unit changes to another dimension", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
+    await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Litro (L)");
+
+    expect(screen.getByLabelText("Unidade da embalagem 1")).toHaveDisplayValue("L");
+  });
+
+  it("removes a packaging row that was never saved", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
+    await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Remover embalagem 1" }));
+
+    expect(screen.queryByLabelText("Conteúdo da embalagem 1")).not.toBeInTheDocument();
+  });
+
+  it("refuses the same GTIN on two packagings", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
+    for (const position of [1, 2]) {
+      await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+      await userEvent.type(screen.getByLabelText(`Conteúdo da embalagem ${position}`), String(position));
+      await userEvent.type(screen.getByLabelText(`GTIN da embalagem ${position}`), "7891000100103");
+    }
+    await fill();
+
+    expect(await screen.findByText("Cada GTIN só pode aparecer em uma embalagem.")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("hands over the product it registered", async () => {
@@ -66,42 +130,54 @@ describe("ProductDialog", () => {
     const onOpenChange = vi.fn();
 
     renderWithProviders(<ProductDialog open onOpenChange={onOpenChange} />);
-    await fill({ gtin: "7891000100103" });
+    await fill({ packaging: { content: "380", unit: "g", gtin: "7891000100103" } });
 
     await waitFor(() =>
       expect(createMock).toHaveBeenCalledWith({
-        description: "Farinha de trigo",
+        description: "FARINHA DE TRIGO",
         kind: "GOODS",
         unit: "KILOGRAM",
-        gtin: "7891000100103",
+        packagings: [{ content: "380", unit: "GRAM", gtin: "7891000100103" }],
       }),
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("leaves the GTIN out of the request when it was not typed", async () => {
+  it("leaves out a GTIN that was not typed", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await fill({ packaging: { content: "1,5" } });
+
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith({
+        description: "FARINHA DE TRIGO",
+        kind: "GOODS",
+        unit: "KILOGRAM",
+        packagings: [{ content: "1.5", unit: "KILOGRAM" }],
+      }),
+    );
+  });
+
+  it("registers a loose product without a packaging list", async () => {
     renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
     await fill();
 
     await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith({ description: "Farinha de trigo", kind: "GOODS", unit: "KILOGRAM" }),
+      expect(createMock).toHaveBeenCalledWith({ description: "FARINHA DE TRIGO", kind: "GOODS", unit: "KILOGRAM" }),
     );
   });
 
-  it("says the product is already in the catalog, in Portuguese, and keeps the dialog open", async () => {
+  it.each([
+    [PRODUCT_CONFLICTS.description, "Já existe um produto com essa descrição."],
+    [PRODUCT_CONFLICTS.gtin, "Esse GTIN já está em outra embalagem."],
+    [PRODUCT_CONFLICTS.content, "O produto já tem uma embalagem com esse conteúdo."],
+  ])("says what the conflict %j is, in Portuguese, and keeps the dialog open", async (message, shown) => {
     const onOpenChange = vi.fn();
-    createMock.mockResolvedValue({
-      ok: false,
-      status: 409,
-      message: "A product with this description already exists.",
-    });
+    createMock.mockResolvedValue({ ok: false, status: 409, message });
 
     renderWithProviders(<ProductDialog open onOpenChange={onOpenChange} />);
     await fill();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Já existe um produto com essa descrição ou com esse GTIN.",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(shown);
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
@@ -125,7 +201,7 @@ describe("ProductDialog", () => {
 
     await waitFor(() =>
       expect(createMock).toHaveBeenCalledWith({
-        description: "Farinha de trigo",
+        description: "FARINHA DE TRIGO",
         kind: "GOODS",
         unit: "KILOGRAM",
         minimumQuantity: "12.5",
@@ -144,14 +220,17 @@ describe("ProductDialog", () => {
 });
 
 describe("ProductDialog, editing a product", () => {
-  const FLOUR = aProduct({ gtin: "7891000100103", minimumQuantity: "1234.5" });
+  const BAG = aPackaging({ id: "018f0000-0000-7000-8000-000000000101", content: "0.38", gtin: "7891000100103" });
+  const FLOUR = aProduct({ description: "FARINHA DE TRIGO", minimumQuantity: "1234.5", packagings: [BAG] });
+  const SENT_BAG = { id: BAG.id, content: "380", unit: "GRAM", gtin: "7891000100103", isActive: true };
 
   /** Answers the edit with what was sent, and keeps it to be checked. */
   function editServer() {
     const received: unknown[] = [];
 
-    updateMock.mockImplementation(async (_sku, body) => {
-      received.push(body);
+    // The answer echoes the fields that read the same in both shapes; packagings come back as stored.
+    updateMock.mockImplementation(async (_sku, { packagings, ...body }) => {
+      received.push({ packagings, ...body });
       return { ok: true, data: { ...FLOUR, ...body } };
     });
 
@@ -162,8 +241,11 @@ describe("ProductDialog, editing a product", () => {
     renderWithProviders(<ProductDialog product={FLOUR} open onOpenChange={() => undefined} />);
 
     expect(await screen.findByRole("dialog", { name: "Editar produto" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Descrição")).toHaveValue("Farinha de trigo");
-    expect(screen.getByLabelText("GTIN (opcional)")).toHaveValue("7891000100103");
+    expect(screen.getByLabelText("Descrição")).toHaveValue("FARINHA DE TRIGO");
+    expect(screen.getByLabelText("Conteúdo da embalagem 1")).toHaveValue("380");
+    expect(screen.getByLabelText("Unidade da embalagem 1")).toHaveDisplayValue("g");
+    expect(screen.getByLabelText("GTIN da embalagem 1")).toHaveValue("7891000100103");
+    expect(screen.queryByRole("button", { name: "Remover embalagem 1" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Estoque mínimo (opcional)")).toHaveValue("1.234,5");
     expect(screen.getByLabelText("Tipo")).toBeDisabled();
     expect(screen.getByLabelText("Tipo")).toHaveDisplayValue("Mercadoria");
@@ -171,7 +253,7 @@ describe("ProductDialog, editing a product", () => {
     expect(screen.getByLabelText("Unidade")).toHaveDisplayValue("Quilograma (kg)");
   });
 
-  it("saves the description, the GTIN and the minimum, and closes", async () => {
+  it("saves the description, the packagings and the minimum, and closes", async () => {
     const received = editServer();
     const onOpenChange = vi.fn();
     renderWithProviders(<ProductDialog product={FLOUR} open onOpenChange={onOpenChange} />);
@@ -183,7 +265,7 @@ describe("ProductDialog, editing a product", () => {
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() =>
-      expect(received).toEqual([{ description: "Farinha integral", gtin: "7891000100103", minimumQuantity: "8" }]),
+      expect(received).toEqual([{ description: "FARINHA INTEGRAL", minimumQuantity: "8", packagings: [SENT_BAG] }]),
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -193,12 +275,38 @@ describe("ProductDialog, editing a product", () => {
     const received = editServer();
     renderWithProviders(<ProductDialog product={FLOUR} open onOpenChange={() => undefined} />);
 
-    await userEvent.clear(screen.getByLabelText("GTIN (opcional)"));
+    await userEvent.clear(screen.getByLabelText("GTIN da embalagem 1"));
     await userEvent.clear(screen.getByLabelText("Estoque mínimo (opcional)"));
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() =>
-      expect(received).toEqual([{ description: "Farinha de trigo", gtin: null, minimumQuantity: null }]),
+      expect(received).toEqual([
+        { description: "FARINHA DE TRIGO", minimumQuantity: null, packagings: [{ ...SENT_BAG, gtin: null }] },
+      ]),
+    );
+  });
+
+  it("inactivates a stored packaging and adds a new one", async () => {
+    const received = editServer();
+    renderWithProviders(<ProductDialog product={FLOUR} open onOpenChange={() => undefined} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Inativar embalagem 1" }));
+    expect(screen.getByRole("button", { name: "Reativar embalagem 1" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+    await userEvent.type(screen.getByLabelText("Conteúdo da embalagem 2"), "5");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() =>
+      expect(received).toEqual([
+        {
+          description: "FARINHA DE TRIGO",
+          minimumQuantity: "1234.5",
+          packagings: [
+            { ...SENT_BAG, isActive: false },
+            { content: "5", unit: "KILOGRAM", gtin: null, isActive: true },
+          ],
+        },
+      ]),
     );
   });
 

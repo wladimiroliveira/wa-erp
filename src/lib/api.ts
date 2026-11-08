@@ -27,6 +27,7 @@ import type {
 import type {
   createProductBodySchema,
   listProductsQuerySchema,
+  packagingSchema,
   productSchema,
   updateProductBodySchema,
 } from "@/server/modules/products/products.schemas";
@@ -70,6 +71,7 @@ export type UpdateUserBody = z.input<typeof updateUserBodySchema>;
 export type ResetPasswordBody = z.input<typeof resetPasswordBodySchema>;
 
 export type Product = z.output<typeof productSchema>;
+export type Packaging = z.output<typeof packagingSchema>;
 export type CreateProductBody = z.input<typeof createProductBodySchema>;
 export type UpdateProductBody = z.input<typeof updateProductBodySchema>;
 export type ProductStatus = NonNullable<z.output<typeof listProductsQuerySchema>["status"]>;

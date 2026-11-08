@@ -2,6 +2,7 @@ import { Prisma, ProductionStatus } from "@prisma/client";
 import { localToday } from "@/server/lib/dates";
 import { toStoredDecimal } from "@/server/lib/decimal";
 import { toPage } from "@/server/lib/pagination";
+import { isUniqueViolation } from "@/server/lib/prisma-errors";
 import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
 import { findPreWeighingById } from "@/server/modules/pre-weighings/pre-weighings.repository";
 import { planPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
@@ -91,9 +92,6 @@ async function planItem(request: ProductionItemRequest): Promise<Result<PlannedP
     })),
   });
 }
-
-const isUniqueViolation = (error: unknown) =>
-  error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 
 export async function startProduction(input: {
   createdById: string;

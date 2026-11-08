@@ -15,7 +15,11 @@ function enumValues(name: string): string[] {
     .filter((line) => line !== "" && !line.startsWith("@@"));
 }
 
-const productField = (pattern: string) => new RegExp(`model Product \\{[^}]*?\\n\\s+${pattern}[^}]*?\\n\\}`);
+const modelField = (model: string) => (pattern: string) =>
+  new RegExp(`model ${model} \\{[^}]*?\\n\\s+${pattern}[^}]*?\\n\\}`);
+
+const productField = modelField("Product");
+const packagingField = modelField("ProductPackaging");
 
 describe("catalog schema", () => {
   it("keeps goods and manufactured products in a single table", () => {
@@ -30,8 +34,19 @@ describe("catalog schema", () => {
     expect(SCHEMA).not.toMatch(productField(String.raw`id\s+String`));
   });
 
-  it("gives a SKU at most one GTIN, and a GTIN at most one SKU", () => {
-    expect(SCHEMA).toMatch(productField(String.raw`gtin\s+String\?\s+@unique`));
+  it("keeps the GTIN off the product: each packaging has its own", () => {
+    expect(SCHEMA).not.toMatch(productField(String.raw`gtin\s`));
+    expect(SCHEMA).toMatch(productField(String.raw`packagings\s+ProductPackaging\[\]`));
+  });
+
+  it("gives a packaging at most one GTIN, and a GTIN at most one packaging", () => {
+    expect(SCHEMA).toMatch(/model ProductPackaging \{[\s\S]*?@@map\("product_packagings"\)/);
+    expect(SCHEMA).toMatch(packagingField(String.raw`gtin\s+String\?\s+@unique`));
+  });
+
+  it("measures a packaging's content in its product's unit, once per product", () => {
+    expect(SCHEMA).toMatch(packagingField(String.raw`content\s+Decimal\s+@db\.Decimal\(18, 6\)`));
+    expect(SCHEMA).toMatch(packagingField(String.raw`@@unique\(\[productSku, content\]`));
   });
 
   it("measures a product in a single unit from a fixed set", () => {

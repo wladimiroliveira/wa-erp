@@ -14,11 +14,18 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { kindLabel, PRODUCT_KINDS } from "@/features/products/product-kinds";
 import { createProduct, updateProduct } from "@/features/products/actions";
+import {
+  PackagingFields,
+  packagingRowsSchema,
+  rowOf,
+  toCreatedPackaging,
+  toEditedPackaging,
+} from "@/features/products/PackagingFields";
 import type { Product } from "@/lib/api";
 import { isDecimalInput, toApiDecimal, toDecimalInput } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
-import { hasValidCheckDigit } from "@/lib/gtin";
 import { unitLabel, unitName, UNITS } from "@/lib/units";
+import { PRODUCT_CONFLICTS } from "@/server/modules/products/products.schemas";
 
 const productFormSchema = z.object({
   description: z
@@ -28,14 +35,7 @@ const productFormSchema = z.object({
     .max(120, "A descrição pode ter no máximo 120 caracteres."),
   kind: z.enum(PRODUCT_KINDS, "Escolha o tipo."),
   unit: z.enum(UNITS, "Escolha a unidade."),
-  gtin: z
-    .string()
-    .trim()
-    .refine((typed) => typed === "" || /^\d{8,14}$/.test(typed), "O GTIN tem de 8 a 14 dígitos, só números.")
-    .refine(
-      (typed) => !/^\d{8,14}$/.test(typed) || hasValidCheckDigit(typed),
-      "O dígito verificador do GTIN não confere. Revise o código.",
-    ),
+  packagings: packagingRowsSchema,
   // Optional, so it is checked only once something was typed into it.
   minimumQuantity: z
     .string()
@@ -49,14 +49,21 @@ type ProductForm = z.output<typeof productFormSchema>;
 // Kind and unit start unset on purpose for a new product: the operator chooses them, nothing is assumed.
 const valuesOf = (product: Product | null): Partial<ProductFormInput> =>
   product === null
-    ? { description: "", gtin: "", minimumQuantity: "" }
+    ? { description: "", minimumQuantity: "", packagings: [] }
     : {
         description: product.description,
         kind: product.kind,
         unit: product.unit,
-        gtin: product.gtin ?? "",
         minimumQuantity: product.minimumQuantity === null ? "" : toDecimalInput(product.minimumQuantity),
+        packagings: product.packagings.map((packaging) => rowOf(packaging, product.unit)),
       };
+
+// The server's 409 says which value is taken; each gets its own sentence.
+const CONFLICT_MESSAGES: Record<string, string> = {
+  [PRODUCT_CONFLICTS.description]: "Já existe um produto com essa descrição.",
+  [PRODUCT_CONFLICTS.gtin]: "Esse GTIN já está em outra embalagem.",
+  [PRODUCT_CONFLICTS.content]: "O produto já tem uma embalagem com esse conteúdo.",
+};
 
 const SAVE_MESSAGES = {
   409: "Já existe um produto com essa descrição ou com esse GTIN.",
@@ -88,20 +95,24 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
   }, [form, product, open]);
 
   // A new product leaves a blank field out; an edited one says null, or what was erased would
-  // survive. Kind and unit are the product's for good once registered.
-  function send({ description, kind, unit, gtin, minimumQuantity }: ProductForm) {
+  // survive, and sends its whole list of packagings. Kind and unit are the product's for good once registered.
+  function send({ description, kind, unit, minimumQuantity, packagings }: ProductForm) {
     const minimum = minimumQuantity === "" ? null : toApiDecimal(minimumQuantity);
 
     if (product !== null) {
-      return updateProduct(product.sku, { description, gtin: gtin === "" ? null : gtin, minimumQuantity: minimum });
+      return updateProduct(product.sku, {
+        description,
+        minimumQuantity: minimum,
+        packagings: packagings.map(toEditedPackaging),
+      });
     }
 
     return createProduct({
       description,
       kind,
       unit,
-      ...(gtin === "" ? {} : { gtin }),
       ...(minimum === null ? {} : { minimumQuantity: minimum }),
+      ...(packagings.length === 0 ? {} : { packagings: packagings.map(toCreatedPackaging) }),
     });
   }
 
@@ -112,7 +123,10 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
       const result = await send(values);
 
       if (!result.ok) {
-        setFailure(messageForFailure(result, SAVE_MESSAGES));
+        setFailure(
+          (result.status === 409 ? CONFLICT_MESSAGES[result.message] : undefined) ??
+            messageForFailure(result, SAVE_MESSAGES),
+        );
         return;
       }
 
@@ -128,7 +142,9 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
 
   const { errors } = form.formState;
   const unit = form.watch("unit");
+  const chosenUnit = UNITS.includes(unit) ? unit : undefined;
   const editing = product !== null;
+  const description = form.register("description");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -140,7 +156,21 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
         <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
           <div className="flex flex-col gap-2">
             <Label htmlFor="product-description">Descrição</Label>
-            <Input id="product-description" autoFocus autoComplete="off" {...form.register("description")} />
+            <Input
+              id="product-description"
+              autoFocus
+              autoComplete="off"
+              {...description}
+              // Shown as it is stored: in upper case, the caret kept where the operator typed.
+              onChange={(event) => {
+                const { selectionStart, selectionEnd } = event.target;
+
+                event.target.value = event.target.value.toLocaleUpperCase("pt-BR");
+                event.target.setSelectionRange(selectionStart, selectionEnd);
+
+                return description.onChange(event);
+              }}
+            />
             {errors.description ? <p className="text-sm text-destructive">{errors.description.message}</p> : null}
           </div>
 
@@ -170,17 +200,19 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
             {errors.unit ? <p className="text-sm text-destructive">{errors.unit.message}</p> : null}
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="product-gtin">GTIN (opcional)</Label>
-            <NumericInput id="product-gtin" format="digits" maxLength={14} {...form.register("gtin")} />
-            {errors.gtin ? <p className="text-sm text-destructive">{errors.gtin.message}</p> : null}
-          </div>
+          <PackagingFields
+            control={form.control}
+            register={form.register}
+            setValue={form.setValue}
+            errors={errors}
+            unit={chosenUnit}
+          />
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="product-minimum">Estoque mínimo (opcional)</Label>
             <NumericInput
               id="product-minimum"
-              trailing={UNITS.includes(unit) ? unitLabel(unit) : undefined}
+              trailing={chosenUnit === undefined ? undefined : unitLabel(chosenUnit)}
               {...form.register("minimumQuantity")}
             />
             {errors.minimumQuantity ? (

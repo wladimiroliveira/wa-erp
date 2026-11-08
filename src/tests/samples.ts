@@ -6,6 +6,7 @@ import type {
   PreWeighing,
   PreWeighingPlan,
   PricingRow,
+  Packaging,
   Product,
   Production,
   ProductionItem,
@@ -60,14 +61,18 @@ export function aUser(over: Partial<User> = {}): User {
 export function aProduct(over: Partial<Product> = {}): Product {
   return {
     sku: "018f0000-0000-7000-8000-000000000020",
-    gtin: null,
     description: "Farinha de trigo",
     kind: "GOODS",
     unit: "KILOGRAM",
     isActive: true,
     minimumQuantity: null,
+    packagings: [],
     ...over,
   };
+}
+
+export function aPackaging(over: Partial<Packaging> = {}): Packaging {
+  return { id: "018f0000-0000-7000-8000-000000000101", content: "1", gtin: null, isActive: true, ...over };
 }
 
 export function anEntry(over: Partial<Entry> = {}): Entry {

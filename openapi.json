@@ -2783,7 +2783,7 @@
         "tags": [
           "products"
         ],
-        "summary": "Lista os produtos, filtrados por busca, tipo, unidade e situação",
+        "summary": "Lista os produtos com suas embalagens, filtrados por busca (descrição ou GTIN), tipo, unidade e situação",
         "security": [
           {
             "BearerAuth": []
@@ -2898,10 +2898,6 @@
                           "MILLILITER"
                         ]
                       },
-                      "gtin": {
-                        "nullable": true,
-                        "type": "string"
-                      },
                       "kind": {
                         "type": "string",
                         "enum": [
@@ -2915,16 +2911,46 @@
                       "minimumQuantity": {
                         "nullable": true,
                         "type": "string"
+                      },
+                      "packagings": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "content": {
+                              "type": "string"
+                            },
+                            "gtin": {
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "isActive": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "content",
+                            "gtin",
+                            "isActive"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
                     },
                     "required": [
                       "sku",
                       "description",
                       "unit",
-                      "gtin",
                       "kind",
                       "isActive",
-                      "minimumQuantity"
+                      "minimumQuantity",
+                      "packagings"
                     ],
                     "additionalProperties": false
                   }
@@ -2938,7 +2964,7 @@
         "tags": [
           "products"
         ],
-        "summary": "Cadastra um produto",
+        "summary": "Cadastra um produto com as embalagens em que é comprado",
         "security": [
           {
             "BearerAuth": []
@@ -2973,13 +2999,39 @@
                       "MILLILITER"
                     ]
                   },
-                  "gtin": {
-                    "type": "string",
-                    "pattern": "^\\d{8,14}$"
-                  },
                   "minimumQuantity": {
                     "type": "string",
                     "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
+                  },
+                  "packagings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "content": {
+                          "type": "string",
+                          "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
+                        },
+                        "unit": {
+                          "type": "string",
+                          "enum": [
+                            "UNIT",
+                            "KILOGRAM",
+                            "GRAM",
+                            "LITER",
+                            "MILLILITER"
+                          ]
+                        },
+                        "gtin": {
+                          "type": "string",
+                          "pattern": "^\\d{8,14}$"
+                        }
+                      },
+                      "required": [
+                        "content",
+                        "unit"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -3017,10 +3069,6 @@
                         "MILLILITER"
                       ]
                     },
-                    "gtin": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "kind": {
                       "type": "string",
                       "enum": [
@@ -3034,16 +3082,65 @@
                     "minimumQuantity": {
                       "nullable": true,
                       "type": "string"
+                    },
+                    "packagings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "content": {
+                            "type": "string"
+                          },
+                          "gtin": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "isActive": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "content",
+                          "gtin",
+                          "isActive"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
                     "sku",
                     "description",
                     "unit",
-                    "gtin",
                     "kind",
                     "isActive",
-                    "minimumQuantity"
+                    "minimumQuantity",
+                    "packagings"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
                   ],
                   "additionalProperties": false
                 }
@@ -3077,7 +3174,7 @@
         "tags": [
           "products"
         ],
-        "summary": "Edita a descrição, o GTIN e o estoque mínimo de um produto, ou o inativa e reativa",
+        "summary": "Edita a descrição, as embalagens e o estoque mínimo de um produto, ou o inativa e reativa",
         "security": [
           {
             "BearerAuth": []
@@ -3107,11 +3204,6 @@
                     "minLength": 1,
                     "maxLength": 120
                   },
-                  "gtin": {
-                    "nullable": true,
-                    "type": "string",
-                    "pattern": "^\\d{8,14}$"
-                  },
                   "isActive": {
                     "type": "boolean"
                   },
@@ -3119,6 +3211,45 @@
                     "nullable": true,
                     "type": "string",
                     "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
+                  },
+                  "packagings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "content": {
+                          "type": "string",
+                          "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
+                        },
+                        "unit": {
+                          "type": "string",
+                          "enum": [
+                            "UNIT",
+                            "KILOGRAM",
+                            "GRAM",
+                            "LITER",
+                            "MILLILITER"
+                          ]
+                        },
+                        "gtin": {
+                          "nullable": true,
+                          "type": "string",
+                          "pattern": "^\\d{8,14}$"
+                        },
+                        "isActive": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "content",
+                        "unit"
+                      ]
+                    }
                   }
                 }
               }
@@ -3151,10 +3282,6 @@
                         "MILLILITER"
                       ]
                     },
-                    "gtin": {
-                      "nullable": true,
-                      "type": "string"
-                    },
                     "kind": {
                       "type": "string",
                       "enum": [
@@ -3168,16 +3295,65 @@
                     "minimumQuantity": {
                       "nullable": true,
                       "type": "string"
+                    },
+                    "packagings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "content": {
+                            "type": "string"
+                          },
+                          "gtin": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "isActive": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "content",
+                          "gtin",
+                          "isActive"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
                     "sku",
                     "description",
                     "unit",
-                    "gtin",
                     "kind",
                     "isActive",
-                    "minimumQuantity"
+                    "minimumQuantity",
+                    "packagings"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
                   ],
                   "additionalProperties": false
                 }

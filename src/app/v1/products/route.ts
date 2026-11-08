@@ -14,7 +14,7 @@ export const GET = apiHandler(
   {
     auth: Permission.CATALOG_READ,
     tags: ["products"],
-    summary: "Lista os produtos, filtrados por busca, tipo, unidade e situação",
+    summary: "Lista os produtos com suas embalagens, filtrados por busca (descrição ou GTIN), tipo, unidade e situação",
     query: listProductsQuerySchema,
     response: { 200: z.array(productSchema) },
   },
@@ -25,9 +25,9 @@ export const POST = apiHandler(
   {
     auth: Permission.CATALOG_CREATE,
     tags: ["products"],
-    summary: "Cadastra um produto",
+    summary: "Cadastra um produto com as embalagens em que é comprado",
     body: createProductBodySchema,
-    response: { 201: productSchema, 409: messageSchema },
+    response: { 201: productSchema, 400: messageSchema, 409: messageSchema },
   },
   async (request, reply) => {
     const result = await createProduct(request.body);

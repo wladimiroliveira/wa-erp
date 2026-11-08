@@ -8,7 +8,7 @@ import type { Permission, Product } from "@/lib/api";
 import { navigation } from "@/tests/navigation";
 import { renderWithProviders } from "@/tests/render";
 import { columnHeaders } from "@/tests/table-layouts";
-import { aCurrentUser, aProduct, aRecipe } from "@/tests/samples";
+import { aCurrentUser, aPackaging, aProduct, aRecipe } from "@/tests/samples";
 import { chooseRowAction } from "@/tests/row-actions";
 
 vi.mock("@/features/products/actions", () => ({ createProduct: vi.fn(), updateProduct: vi.fn() }));
@@ -70,10 +70,18 @@ beforeEach(() => {
 });
 
 describe("ProductsListPage", () => {
-  it("lists each product with its kind, unit, GTIN and status in Portuguese", async () => {
+  it("lists each product with its kind, unit, packagings and status in Portuguese", async () => {
     renderPage({
       products: [
-        aProduct({ sku: "sku-1", description: "Farinha de trigo", gtin: "7891000100103" }),
+        aProduct({
+          sku: "sku-1",
+          description: "Farinha de trigo",
+          packagings: [
+            aPackaging({ id: "p-1", content: "0.38" }),
+            aPackaging({ id: "p-2", content: "1" }),
+            aPackaging({ id: "p-3", content: "5", isActive: false }),
+          ],
+        }),
         aProduct({ sku: "sku-2", description: "Pão", kind: "MANUFACTURED", unit: "UNIT", isActive: false }),
       ],
     });
@@ -81,7 +89,7 @@ describe("ProductsListPage", () => {
     const flour = within((await screen.findByText("Farinha de trigo")).closest("tr")!);
     expect(flour.getByText("Mercadoria")).toBeInTheDocument();
     expect(flour.getByText("kg")).toBeInTheDocument();
-    expect(flour.getByText("7891000100103")).toBeInTheDocument();
+    expect(flour.getByText("380 g · 1 kg")).toBeInTheDocument();
     expect(flour.getByText("Ativo")).toBeInTheDocument();
 
     const bread = within(screen.getByText("Pão").closest("tr")!);
@@ -89,6 +97,8 @@ describe("ProductsListPage", () => {
     expect(bread.getByText("un")).toBeInTheDocument();
     expect(bread.getByText("—")).toBeInTheDocument();
     expect(bread.getByText("Inativo")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Embalagens" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "GTIN" })).not.toBeInTheDocument();
   });
 
   it("says there is no active product instead of showing a bare table", async () => {
@@ -130,7 +140,7 @@ describe("ProductsListPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith({ description: "Fermento", kind: "GOODS", unit: "KILOGRAM" }),
+      expect(createMock).toHaveBeenCalledWith({ description: "FERMENTO", kind: "GOODS", unit: "KILOGRAM" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
@@ -200,9 +210,9 @@ describe("ProductsListPage", () => {
 
     await waitFor(() =>
       expect(updateMock).toHaveBeenCalledWith(FLOUR.sku, {
-        description: "Farinha integral",
-        gtin: null,
+        description: "FARINHA INTEGRAL",
         minimumQuantity: null,
+        packagings: [],
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

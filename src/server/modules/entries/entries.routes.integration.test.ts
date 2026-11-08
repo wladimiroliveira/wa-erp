@@ -191,6 +191,7 @@ describe("POST /v1/entries", () => {
       expiresAt: "2099-12-31",
       supplier: { id: supplier.id, name: "Santa Clara Mill" },
       quantity: "10",
+      packaging: null,
     });
 
     const [lot] = await lotsOf(product.sku);

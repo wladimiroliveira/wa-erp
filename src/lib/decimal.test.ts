@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatDecimal,
+  formatMoney,
   isDecimalInput,
   maskDecimalInput,
   padDecimalInput,
@@ -87,4 +88,16 @@ describe("decimal", () => {
     expect(padDecimalInput("0,0035", 2)).toBe("0,0035");
     expect(padDecimalInput("", 2)).toBe("");
   });
+});
+
+describe("formatMoney", () => {
+  it.each([
+    ["11.842105", "R$ 11,84"],
+    ["0.005", "R$ 0,01"],
+    ["0.004999", "R$ 0,00"],
+    ["1234.5", "R$ 1.234,50"],
+    ["40", "R$ 40,00"],
+    ["-11.845", "R$ -11,85"],
+    ["-0.004", "R$ 0,00"],
+  ])("shows %s in cents, rounded half up, as %s", (value, shown) => expect(formatMoney(value)).toBe(shown));
 });

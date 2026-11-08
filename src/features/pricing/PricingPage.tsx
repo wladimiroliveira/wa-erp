@@ -18,7 +18,6 @@ import {
   readPricingFilters,
   withoutPricingFilters,
 } from "@/features/pricing/pricing-filters";
-import { costOf } from "@/features/pricing/pricing-format";
 import { PricingSheet } from "@/features/pricing/PricingSheet";
 import { moneyOf, NOTHING, quantityOf } from "@/features/stock/stock-format";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
@@ -222,7 +221,7 @@ export function PricingPage({ rows }: PricingPageProps) {
               },
               { key: "unit", header: "Unidade", cell: (row) => unitLabel(row.product.unit) },
               { key: "yield", header: "Rendimento", cell: (row) => quantityOf(row.yieldQuantity, row.product.unit) },
-              { key: "cost", header: "Custo/un", cell: (row) => costOf(row.costPerUnit) },
+              { key: "cost", header: "Custo/un", cell: (row) => moneyOf(row.costPerUnit) },
               { key: "markup", header: "Markup", cell: markupCell },
               { key: "price", header: "Preço/un", cell: priceCell },
               {

@@ -22,7 +22,6 @@ import { formatDecimal, formatMoney, isDecimalInput, toApiDecimal } from "@/lib/
 import { messageForFailure } from "@/lib/form-errors";
 import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
-import { roundToCents } from "@/shared/fixed-point";
 import { packagedQuantity, packageUnitCost } from "@/shared/packaging-entry";
 import { readableQuantity } from "@/shared/units";
 
@@ -200,7 +199,7 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
   const amount =
     chosen !== undefined && chosenPackaging !== undefined && isCount(packageCount) && isPrice(packagePrice)
       ? `= ${quantityOf(packagedQuantity(chosenPackaging.content, Number(packageCount)), chosen.unit)} a ${formatMoney(
-          roundToCents(packageUnitCost(toApiDecimal(packagePrice), chosenPackaging.content)),
+          packageUnitCost(toApiDecimal(packagePrice), chosenPackaging.content),
         )}/${chosenUnit}`
       : null;
 
@@ -415,9 +414,9 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
               {formatDecimal(recorded.stock.quantity)} {unitLabel(recorded.product.unit)}
             </dd>
             <dt className="text-muted-foreground">Último custo</dt>
-            <dd>{formatMoney(roundToCents(recorded.stock.lastEntryCost))}</dd>
+            <dd>{formatMoney(recorded.stock.lastEntryCost)}</dd>
             <dt className="text-muted-foreground">Custo médio</dt>
-            <dd>{formatMoney(roundToCents(recorded.stock.averageCost))}</dd>
+            <dd>{formatMoney(recorded.stock.averageCost)}</dd>
           </dl>
         </div>
       ) : null}

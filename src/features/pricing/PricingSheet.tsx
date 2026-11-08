@@ -3,8 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { costOf } from "@/features/pricing/pricing-format";
-import { quantityOf } from "@/features/stock/stock-format";
+import { moneyOf, quantityOf } from "@/features/stock/stock-format";
 import type { PricingRow } from "@/lib/api";
 
 interface PricingSheetProps {
@@ -32,7 +31,7 @@ export function PricingSheet({ row, onClose }: PricingSheetProps) {
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">Custo por unidade</dt>
-              <dd className="font-semibold">{costOf(row.costPerUnit)}</dd>
+              <dd className="font-semibold">{moneyOf(row.costPerUnit)}</dd>
             </div>
           </dl>
 
@@ -51,9 +50,9 @@ export function PricingSheet({ row, onClose }: PricingSheetProps) {
                   <TableCell>{product.description}</TableCell>
                   <TableCell className="text-right tabular-nums">{quantityOf(quantity, product.unit)}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {averageCost === null ? <Badge variant="destructive">Sem custo médio</Badge> : costOf(averageCost)}
+                    {averageCost === null ? <Badge variant="destructive">Sem custo médio</Badge> : moneyOf(averageCost)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{costOf(subtotal)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{moneyOf(subtotal)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

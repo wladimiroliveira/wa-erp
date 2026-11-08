@@ -1,3 +1,5 @@
+import { roundToCents } from "@/shared/fixed-point";
+
 // The API takes and returns decimals as strings, so that no amount passes through a
 // float on the way. Everything here works on the string for the same reason.
 const INTEGER_DIGITS = 12;
@@ -63,6 +65,10 @@ export function formatDecimal(value: string, minFractionDigits = 0): string {
   return padded === "" ? groupThousands(integer) : `${groupThousands(integer)},${padded}`;
 }
 
+/** An amount of money as every screen shows it: in cents, rounded half up, away from zero for a negative one. */
 export function formatMoney(value: string): string {
-  return `R$ ${formatDecimal(value, 2)}`;
+  const negative = value.startsWith("-");
+  const cents = roundToCents(negative ? value.slice(1) : value);
+
+  return `R$ ${negative && /[1-9]/.test(cents) ? "-" : ""}${formatDecimal(cents)}`;
 }

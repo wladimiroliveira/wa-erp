@@ -1,5 +1,5 @@
 import type { Product, RecipeSummary } from "@/lib/api";
-import { readList, readText, withValues } from "@/lib/url-filters";
+import { foldForSearch, readList, readText, withValues } from "@/lib/url-filters";
 
 /** A product that takes a recipe, beside the summary of the one it has, if any. */
 export interface RecipeRow {
@@ -53,20 +53,13 @@ export function withoutRecipeFilters(params: URLSearchParams): URLSearchParams {
   return FILTER_KEYS.reduce((next, key) => withValues(next, key, []), params);
 }
 
-// Typed without accents or capitals, a search still finds "Pão francês".
-const folded = (text: string) =>
-  text
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLocaleLowerCase("pt-BR");
-
 /** The rows the filters keep. Both lists are whole on the client, so narrowing them asks the API for nothing. */
 export function filterRecipeRows(rows: RecipeRow[], { q, recipe }: RecipeFilters): RecipeRow[] {
-  const search = q === undefined ? undefined : folded(q);
+  const search = q === undefined ? undefined : foldForSearch(q);
 
   return rows.filter(
     ({ product, summary }) =>
-      (search === undefined || folded(product.description).includes(search)) &&
+      (search === undefined || foldForSearch(product.description).includes(search)) &&
       (recipe === "ALL" || (recipe === "WITH") === (summary !== undefined)),
   );
 }

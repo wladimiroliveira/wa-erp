@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readList, readText, withValues } from "@/lib/url-filters";
+import { foldForSearch, readList, readText, withValues } from "@/lib/url-filters";
 
 const COLORS = ["RED", "BLUE"] as const;
 
@@ -39,5 +39,11 @@ describe("url filters", () => {
     withValues(params, "color", []);
 
     expect(params.toString()).toBe("color=RED");
+  });
+});
+
+describe("foldForSearch", () => {
+  it("drops accents and capitals, so pao finds Pão", () => {
+    expect(foldForSearch("Pão Francês")).toBe("pao frances");
   });
 });

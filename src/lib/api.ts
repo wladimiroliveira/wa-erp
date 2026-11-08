@@ -30,6 +30,7 @@ import type {
   productSchema,
   updateProductBodySchema,
 } from "@/server/modules/products/products.schemas";
+import type { pricingRowSchema, saveMarkupBodySchema } from "@/server/modules/pricing/pricing.schemas";
 import type { recipeSchema, recipeSummarySchema, saveRecipeBodySchema } from "@/server/modules/recipes/recipes.schemas";
 import type { createRoleBodySchema, roleSchema, updateRoleBodySchema } from "@/server/modules/roles/roles.schemas";
 import type {
@@ -111,3 +112,6 @@ export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
 export type Recipe = z.output<typeof recipeSchema>;
 export type SaveRecipeBody = z.input<typeof saveRecipeBodySchema>;
 export type RecipeSummary = z.output<typeof recipeSummarySchema>;
+
+export type PricingRow = z.output<typeof pricingRowSchema>;
+export type SaveMarkupBody = z.input<typeof saveMarkupBodySchema>;

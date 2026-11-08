@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   BookOpen,
+  Calculator,
   Factory,
   KeyRound,
   Package,
@@ -36,6 +37,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/stock", label: "Estoque", icon: Warehouse, permission: "REPORTS_READ" },
   { to: "/pre-weighings", label: "Pré-pesagens", icon: Scale, permission: "PRODUCTION_READ" },
   { to: "/productions", label: "Produções", icon: Factory, permission: "PRODUCTION_READ" },
+  { to: "/pricing", label: "Precificação", icon: Calculator, permission: "PRICING_READ" },
   { to: "/loss-reasons", label: "Modalidades de avaria", icon: PackageX, permission: "LOSSES_UPDATE" },
   { to: "/users", label: "Usuários", icon: Users, permission: "ACCESS_READ" },
   { to: "/roles", label: "Papéis", icon: ShieldCheck, permission: "ACCESS_READ" },

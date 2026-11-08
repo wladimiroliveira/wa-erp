@@ -22,3 +22,11 @@ export function withValues(params: URLSearchParams, key: string, values: readonl
 
   return next;
 }
+
+/** A text without accents or capitals: typed that way, a search still finds "Pão francês". */
+export function foldForSearch(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("pt-BR");
+}

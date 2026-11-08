@@ -7,6 +7,15 @@ const SCHEMA = readFileSync(fileURLToPath(new URL("../schema.prisma", import.met
 const fieldOf = (model: string, pattern: string) => new RegExp(`model ${model} \\{[^}]*?\\n\\s+${pattern}[^}]*?\\n\\}`);
 
 describe("stock schema", () => {
+  it("remembers which packaging a lot came in and how many of them, or neither", () => {
+    expect(SCHEMA).toMatch(fieldOf("StockLot", String.raw`packagingId\s+String\?\s+@map\("packaging_id"\) @db\.Uuid`));
+    expect(SCHEMA).toMatch(fieldOf("StockLot", String.raw`packageCount\s+Int\?\s+@map\("package_count"\)`));
+    expect(SCHEMA).toMatch(fieldOf("StockLot", String.raw`packaging\s+ProductPackaging\?.*onDelete: Restrict`));
+    expect(SCHEMA).toMatch(
+      fieldOf("StockLot", String.raw`@@index\(\[packagingId\], map: "idx_stock_lots_packaging_id"\)`),
+    );
+  });
+
   it("declares the stock and the movement tables", () => {
     expect(SCHEMA).toMatch(/model ProductStock \{[\s\S]*?@@map\("product_stocks"\)/);
     expect(SCHEMA).toMatch(/model StockMovement \{[\s\S]*?@@map\("stock_movements"\)/);

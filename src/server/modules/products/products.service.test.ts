@@ -7,6 +7,7 @@ const repository = vi.hoisted(() => ({
   findProductBySku: vi.fn(),
   findProductByDescription: vi.fn(),
   findPackagingByGtin: vi.fn(),
+  findPackagingsWithLots: vi.fn(),
   insertProduct: vi.fn(),
   updateProduct: vi.fn(),
 }));
@@ -48,6 +49,7 @@ beforeEach(() => {
   repository.findProductBySku.mockResolvedValue(SUGAR);
   repository.findProductByDescription.mockResolvedValue(null);
   repository.findPackagingByGtin.mockResolvedValue(null);
+  repository.findPackagingsWithLots.mockResolvedValue([]);
   repository.insertProduct.mockResolvedValue(SUGAR);
   repository.updateProduct.mockResolvedValue(SUGAR);
 });
@@ -165,6 +167,50 @@ describe("editProduct", () => {
         { content: "0.5", gtin: null, isActive: true },
       ],
     });
+  });
+
+  it("refuses to remove a packaging that stock lots came in", async () => {
+    repository.findPackagingsWithLots.mockResolvedValue([SACK_ID]);
+
+    const result = await edit({ packagings: [{ id: BAG_ID, content: "1", unit: "KILOGRAM" }] });
+
+    expect(result).toEqual({ ok: false, status: 409, message: PRODUCT_CONFLICTS.inUse });
+    expect(repository.updateProduct).not.toHaveBeenCalled();
+  });
+
+  it("refuses to change the content of a packaging stock lots came in", async () => {
+    repository.findPackagingsWithLots.mockResolvedValue([BAG_ID]);
+
+    const result = await edit({
+      packagings: [
+        { id: BAG_ID, content: "2", unit: "KILOGRAM" },
+        { id: SACK_ID, content: "5", unit: "KILOGRAM" },
+      ],
+    });
+
+    expect(result).toEqual({ ok: false, status: 409, message: PRODUCT_CONFLICTS.contentLocked });
+    expect(repository.updateProduct).not.toHaveBeenCalled();
+  });
+
+  it("keeps the content of a packaging with lots when it is sent in another unit", async () => {
+    repository.findPackagingsWithLots.mockResolvedValue([BAG_ID]);
+
+    const result = await edit({
+      packagings: [
+        { id: BAG_ID, content: "1000", unit: "GRAM", gtin: "7891000100103" },
+        { id: SACK_ID, content: "5", unit: "KILOGRAM" },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("removes a packaging no lot came in", async () => {
+    repository.findPackagingsWithLots.mockResolvedValue([BAG_ID]);
+
+    const result = await edit({ packagings: [{ id: BAG_ID, content: "1", unit: "KILOGRAM" }] });
+
+    expect(result.ok).toBe(true);
   });
 
   it("leaves the packagings alone when the list is not sent", async () => {

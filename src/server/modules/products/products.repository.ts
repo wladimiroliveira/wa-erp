@@ -69,6 +69,16 @@ export async function findProductByDescription(description: string) {
   return toOptionalProduct(await prisma.product.findUnique({ where: { description }, ...PRODUCT_FIELDS }));
 }
 
+/** The packagings of the product that some stock lot came in: they can be inactivated, never removed. */
+export async function findPackagingsWithLots(productSku: string): Promise<string[]> {
+  const packagings = await prisma.productPackaging.findMany({
+    where: { productSku, lots: { some: {} } },
+    select: { id: true },
+  });
+
+  return packagings.map(({ id }) => id);
+}
+
 export function findPackagingByGtin(gtin: string) {
   return prisma.productPackaging.findUnique({ where: { gtin }, select: { id: true, productSku: true } });
 }

@@ -83,7 +83,13 @@ export function anEntry(over: Partial<Entry> = {}): Entry {
     unitCost: "4",
     createdAt: "2026-10-11T12:00:00.000Z",
     product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM" },
-    lot: { id: "018f0000-0000-7000-8000-000000000060", expiresAt: null, supplier: null, quantity: "10" },
+    lot: {
+      id: "018f0000-0000-7000-8000-000000000060",
+      expiresAt: null,
+      supplier: null,
+      quantity: "10",
+      packaging: null,
+    },
     stock: { quantity: "10", lastEntryCost: "4", averageCost: "4" },
     ...over,
   };

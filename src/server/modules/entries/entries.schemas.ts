@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { stockMovementTypeSchema } from "@/shared/enums";
-import { decimalSchema, positiveDecimalSchema } from "@/shared/decimal";
+import { decimalSchema, moneySchema, positiveDecimalSchema } from "@/shared/decimal";
 import { productSummarySchema } from "@/server/modules/products/products.schemas";
 import { lotExpirySchema } from "@/server/modules/stock/stock.schemas";
 import { supplierSchema } from "@/server/modules/suppliers/suppliers.schemas";
@@ -11,14 +11,34 @@ export const DeficitSettlement = { ZERO: "ZERO", DISCOUNT: "DISCOUNT" } as const
 
 export type DeficitSettlement = (typeof DeficitSettlement)[keyof typeof DeficitSettlement];
 
-export const createEntryBodySchema = z.object({
+/** The most packagings one entry takes. */
+export const MAX_PACKAGE_COUNT = 99_999;
+
+const entryBase = {
   productSku: z.uuid(),
-  quantity: positiveDecimalSchema,
-  unitCost: decimalSchema,
   expiresAt: lotExpirySchema,
   supplierId: z.uuid().optional(),
   deficit: z.enum(DeficitSettlement).optional(),
+};
+
+// Received in the product's own unit: the quantity and the cost of one unit, as typed.
+export const looseEntryBodySchema = z.strictObject({
+  ...entryBase,
+  quantity: positiveDecimalSchema,
+  unitCost: decimalSchema,
 });
+
+// Received in packagings: how many, and what one costs. The service turns it into the product's unit.
+export const packagedEntryBodySchema = z.strictObject({
+  ...entryBase,
+  packagingId: z.uuid(),
+  // A bound well above any invoice, and below what a misread barcode would type into the count.
+  packageCount: z.number().int().min(1).max(MAX_PACKAGE_COUNT),
+  packagePrice: moneySchema,
+});
+
+// Strict on both sides, so a body that mixes the two shapes matches neither.
+export const createEntryBodySchema = z.union([looseEntryBodySchema, packagedEntryBodySchema]);
 
 export const entrySchema = z.object({
   id: z.uuid(),
@@ -32,6 +52,8 @@ export const entrySchema = z.object({
     expiresAt: z.iso.date().nullable(),
     supplier: supplierSchema.nullable(),
     quantity: z.string(),
+    // The packaging the lot came in, with its content in the product's unit; null for a loose entry.
+    packaging: z.object({ id: z.uuid(), content: z.string(), count: z.number().int() }).nullable(),
   }),
   stock: z.object({ quantity: z.string(), lastEntryCost: z.string(), averageCost: z.string() }),
 });

@@ -3,11 +3,27 @@ import { prisma } from "@/server/lib/prisma";
 import { increaseStock, lockStockBalance, openLot, settleStockBalance } from "@/server/modules/stock/stock.repository";
 import { DeficitSettlement } from "./entries.schemas";
 
-export function findProductBySku(sku: string) {
-  return prisma.product.findUnique({
+export async function findProductBySku(sku: string) {
+  const product = await prisma.product.findUnique({
     where: { sku },
-    select: { sku: true, description: true, unit: true, isActive: true },
+    select: {
+      sku: true,
+      description: true,
+      unit: true,
+      isActive: true,
+      packagings: { select: { id: true, content: true, isActive: true } },
+    },
   });
+
+  return (
+    product && {
+      ...product,
+      packagings: product.packagings.map(({ content, ...packaging }) => ({
+        ...packaging,
+        content: content.toString(),
+      })),
+    }
+  );
 }
 
 // Thrown inside the transaction, so nothing of the entry is written, and turned into an answer
@@ -30,6 +46,8 @@ export function insertEntry(input: {
   supplierId?: string;
   deficit?: DeficitSettlement;
   createdById: string;
+  packagingId?: string;
+  packageCount?: number;
 }) {
   const { productSku, quantity, unitCost, createdById } = input;
 
@@ -64,6 +82,8 @@ export function insertEntry(input: {
       unitCost,
       expiresAt: input.expiresAt,
       supplierId: input.supplierId,
+      packagingId: input.packagingId,
+      packageCount: input.packageCount,
     });
 
     const movement = await tx.stockMovement.create({

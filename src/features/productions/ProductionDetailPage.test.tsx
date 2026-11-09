@@ -105,8 +105,16 @@ describe("ProductionDetailPage", () => {
   });
 
   it("says when the leftovers were kept out of the cost, and says nothing while in progress", () => {
+    const discarded = aProductionItem({
+      inputs: [{ ...aProductionItem().inputs[0]!, leftovers: [{ lotId: "lot-1", quantity: "0.1", unitCost: "2" }] }],
+    });
     const { unmount } = open(
-      aProduction({ status: "FINISHED", finishedAt: "2026-10-14T15:00:00.000Z", hasLeftoversInCost: false }),
+      aProduction({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T15:00:00.000Z",
+        hasLeftoversInCost: false,
+        items: [discarded],
+      }),
     );
 
     expect(within(screen.getByRole("group", { name: "Resumo da produção" })).getByText("Não")).toBeInTheDocument();
@@ -114,6 +122,13 @@ describe("ProductionDetailPage", () => {
 
     open(aProduction());
     expect(screen.queryByText("Sobras no custo")).not.toBeInTheDocument();
+  });
+
+  it("says nothing of leftovers when nothing was discarded", () => {
+    open(aProduction({ status: "FINISHED", finishedAt: "2026-10-14T15:00:00.000Z", hasLeftoversInCost: true }));
+
+    expect(screen.queryByText("Sobras no custo")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Sobra descartada" })).not.toBeInTheDocument();
   });
 
   it("offers finishing while in progress to whoever may record production", () => {

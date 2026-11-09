@@ -1202,6 +1202,18 @@ describe("leftovers of opened packagings", () => {
     expect(response.json().totalCost).toBe("3.90");
   });
 
+  it("discards only what the lot leaves when the production takes beyond it, and owes the rest", async () => {
+    const { headers } = await canDoBoth();
+    const { milk, milkLot, production } = await startPudding(headers, { dose: "4000" });
+
+    const response = await finishAll(headers, production);
+
+    expect(response.statusCode).toBe(200);
+    expect(await lotQuantity(milkLot.id)).toBe("0");
+    expect(await testPrisma.productionLeftover.count()).toBe(0);
+    expect(await stockOf(milk.sku)).toMatchObject({ quantity: "-50" });
+  });
+
   it("previews the leftovers without moving the stock, and only while the production is in progress", async () => {
     const { headers } = await canDoBoth();
     const { milkLot, production } = await startPudding(headers);

@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label";
 import { weighedOf } from "@/features/pre-weighings/weighing-units";
 import type { LeftoversPreview } from "@/lib/api";
 import { formatMoney } from "@/lib/decimal";
-import { fromScaled, toScaled } from "@/shared/fixed-point";
+import { divideHalfUp, fromScaled, scale, toScaled } from "@/shared/fixed-point";
 import { normalizeDecimal, readableQuantity } from "@/shared/units";
 
 type Leftover = LeftoversPreview["items"][number]["leftovers"][number];
@@ -12,20 +12,21 @@ type Leftover = LeftoversPreview["items"][number]["leftovers"][number];
 function byProduct(preview: LeftoversPreview) {
   const lines = new Map<string, { product: Leftover["product"]; quantity: bigint; cost: bigint }>();
 
-  for (const { product, quantity, cost } of preview.items.flatMap(({ leftovers }) => leftovers)) {
+  for (const { product, quantity, unitCost } of preview.items.flatMap(({ leftovers }) => leftovers)) {
     const line = lines.get(product.sku) ?? { product, quantity: 0n, cost: 0n };
 
+    // The cost is summed exactly, at 12 places, and rounded to the cent once, as the total is.
     lines.set(product.sku, {
       product,
       quantity: line.quantity + toScaled(quantity, 6),
-      cost: line.cost + toScaled(cost, 2),
+      cost: line.cost + toScaled(quantity, 6) * toScaled(unitCost, 6),
     });
   }
 
   return [...lines.values()].map(({ product, quantity, cost }) => ({
     product,
     quantity: normalizeDecimal(fromScaled(quantity, 6)),
-    cost: fromScaled(cost, 2),
+    cost: fromScaled(divideHalfUp(cost, scale(10)), 2),
   }));
 }
 

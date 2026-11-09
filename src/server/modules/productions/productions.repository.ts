@@ -5,7 +5,7 @@ import {
   increaseStock,
   openLot,
   suggestLots,
-  takeFromLot,
+  takeFromHeldLot,
   takeFromLots,
 } from "@/server/modules/stock/stock.repository";
 import { leftoverOf, splitLeftover } from "./production-leftovers";
@@ -145,10 +145,9 @@ export async function discardLeftover(
   },
 ) {
   const { inputId, lotId, productSku, quantity, unitCost, createdById } = leftover;
-  const discarded = await takeFromLot(tx, { lotId, quantity });
-
-  // What is left of a lot after a take is never more than it holds, so this is a broken invariant.
-  if ("failure" in discarded) throw new Error(`Could not discard the leftover of lot ${lotId}: ${discarded.failure}.`);
+  // What is left of a lot after a take is never more than it holds; a lot that does not is a bug,
+  // and throwing undoes the whole finish.
+  await takeFromHeldLot(tx, { lotId, productSku, quantity });
 
   const movement = await tx.stockMovement.create({
     data: { productSku, lotId, quantity, unitCost, createdById, type: StockMovementType.OPENED_LEFTOVER },

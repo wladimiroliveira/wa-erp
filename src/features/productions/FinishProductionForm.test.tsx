@@ -175,3 +175,63 @@ describe("FinishProductionForm, leftovers of opened packagings", () => {
     );
   });
 });
+
+describe("FinishProductionForm, while the leftovers are worked out", () => {
+  const MILK = { sku: "018f0000-0000-7000-8000-000000000024", description: "Leite condensado", unit: "GRAM" as const };
+  const lotOf = (lotId: string) => ({ product: MILK, lotId, quantity: "0.25", unitCost: "0.02", cost: "0.01" });
+
+  it("does not finish until the leftovers are known, and says it is working them out", async () => {
+    vi.mocked(previewLeftovers).mockReturnValue(new Promise(() => undefined));
+    open();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Calculando as sobras…");
+    expect(screen.getByRole("button", { name: "Finalizar produção" })).toBeDisabled();
+  });
+
+  it("announces the leftovers once they arrive", async () => {
+    vi.mocked(previewLeftovers).mockResolvedValue({
+      ok: true,
+      data: {
+        items: [
+          {
+            itemId: ITEM.id,
+            leftovers: [{ ...lotOf("018f0000-0000-7000-8000-000000000060"), quantity: "95", cost: "1.90" }],
+          },
+        ],
+        totalCost: "1.90",
+      },
+    });
+    open();
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Leite condensado: 95 g (R$ 1,90)"));
+    expect(screen.getByRole("button", { name: "Finalizar produção" })).toBeEnabled();
+  });
+
+  it("prices a line of several lots the way the total is priced, rounding once", async () => {
+    vi.mocked(previewLeftovers).mockResolvedValue({
+      ok: true,
+      data: {
+        items: [
+          {
+            itemId: ITEM.id,
+            leftovers: [lotOf("018f0000-0000-7000-8000-000000000060"), lotOf("018f0000-0000-7000-8000-000000000061")],
+          },
+        ],
+        totalCost: "0.01",
+      },
+    });
+    open();
+
+    expect(await screen.findByText("Leite condensado: 0,5 g (R$ 0,01)")).toBeInTheDocument();
+    expect(screen.getByText("Total: R$ 0,01")).toBeInTheDocument();
+  });
+
+  it("works the leftovers out again when the page brings the production anew", async () => {
+    const { rerender } = open();
+
+    await waitFor(() => expect(previewLeftovers).toHaveBeenCalledTimes(1));
+    rerender(<FinishProductionForm production={{ ...PRODUCTION }} />);
+
+    await waitFor(() => expect(previewLeftovers).toHaveBeenCalledTimes(2));
+  });
+});

@@ -59,7 +59,10 @@ function Item({ item }: { item: ProductionItem }) {
           { key: "quantity", header: "Quantidade", cell: (input) => quantityOf(input.quantity, input.product.unit) },
           // Known only once the production finishes: it is what the lots the input left cost.
           { key: "unitCost", header: "Custo unitário", cell: (input) => moneyOf(input.unitCost) },
-          { key: "leftover", header: "Sobra descartada", cell: discardedOf },
+          // Only where something was discarded: elsewhere it would be a column of dashes.
+          ...(item.inputs.some(({ leftovers }) => leftovers.length > 0)
+            ? [{ key: "leftover", header: "Sobra descartada", cell: discardedOf }]
+            : []),
         ]}
       />
     </section>
@@ -67,6 +70,9 @@ function Item({ item }: { item: ProductionItem }) {
 }
 
 type Input = Production["items"][number]["inputs"][number];
+
+const discardedAny = ({ items }: Production) =>
+  items.some(({ inputs }) => inputs.some(({ leftovers }) => leftovers.length > 0));
 
 // What finishing discarded of the input's opened packagings, "95 g · R$ 1,90", priced at each lot's cost.
 function discardedOf({ product, leftovers }: Input): string {
@@ -100,7 +106,7 @@ export function ProductionDetailPage({ production }: { production: Production })
           <ProductionStatusBadge status={production.status} />
         </Fact>
         <Fact label="Iniciada em">{formatDateTime(production.createdAt)}</Fact>
-        {production.hasLeftoversInCost === null ? null : (
+        {production.hasLeftoversInCost === null || !discardedAny(production) ? null : (
           <Fact label="Sobras no custo">{production.hasLeftoversInCost ? "Sim" : "Não"}</Fact>
         )}
         {production.finishedAt !== null ? (

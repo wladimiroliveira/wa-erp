@@ -263,6 +263,23 @@ export async function takeFromLot(
   return { lot: { ...lot, left: lot.quantity.sub(quantity) } };
 }
 
+// Takes a quantity out of a lot the transaction already holds, with its product's balance: what
+// a consumption leaves of an opened packaging. Holding them again would only repeat the queries.
+// The lot never goes below zero: more than it holds is refused.
+export async function takeFromHeldLot(
+  client: Prisma.TransactionClient,
+  { lotId, productSku, quantity }: { lotId: string; productSku: string; quantity: Prisma.Decimal },
+) {
+  const updated = await client.$executeRaw`
+    UPDATE stock_lots SET quantity = quantity - ${quantity}::numeric, updated_at = now()
+    WHERE id = ${lotId}::uuid AND quantity >= ${quantity}::numeric
+  `;
+
+  if (updated !== 1) throw new Error(`Lot ${lotId} does not hold ${quantity.toString()}.`);
+
+  await decreaseStock(client, { productSku, quantity: quantity.toString() });
+}
+
 async function newestLotCost(client: Prisma.TransactionClient, productSku: string) {
   const lot = await client.stockLot.findFirst({
     where: { productSku },

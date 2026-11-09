@@ -48,7 +48,9 @@ export function FinishProductionForm({ production }: { production: Production })
   const [finishing, startFinishing] = useTransition();
   // What finishing would discard, as the stock stood when the form opened; only a guide, the server
   // works it out again when the production finishes.
-  const [leftovers, setLeftovers] = useState<LeftoversPreview | "failed" | null>(null);
+  // Kept with the production it was asked for: one brought anew by a refresh is still being worked out.
+  const [preview, setPreview] = useState<{ of: Production; leftovers: LeftoversPreview | "failed" } | null>(null);
+  const leftovers = preview?.of === production ? preview.leftovers : null;
   const [inCost, setInCost] = useState(true);
 
   useEffect(() => {
@@ -56,16 +58,17 @@ export function FinishProductionForm({ production }: { production: Production })
 
     previewLeftovers(production.id)
       .then((result) => {
-        if (current) setLeftovers(result.ok ? result.data : "failed");
+        if (current) setPreview({ of: production, leftovers: result.ok ? result.data : "failed" });
       })
       .catch(() => {
-        if (current) setLeftovers("failed");
+        if (current) setPreview({ of: production, leftovers: "failed" });
       });
 
     return () => {
       current = false;
     };
-  }, [production.id]);
+    // A refreshed page brings the production anew, and the stock may have moved since: ask again.
+  }, [production]);
 
   const form = useForm<FinishFormValues>({
     resolver: zodResolver(finishFormSchema),
@@ -155,15 +158,20 @@ export function FinishProductionForm({ production }: { production: Production })
         );
       })}
 
-      {leftovers === "failed" ? (
-        // The server still finds the leftovers when it finishes, so the choice stays the user's.
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-muted-foreground">Não foi possível calcular as sobras.</p>
-          <LeftoversInCostCheckbox inCost={inCost} onInCostChange={setInCost} />
-        </div>
-      ) : leftovers !== null && leftovers.items.some((item) => item.leftovers.length > 0) ? (
-        <LeftoversSection preview={leftovers} inCost={inCost} onInCostChange={setInCost} />
-      ) : null}
+      {/* Announced as it arrives: it comes after the form, and changes what finishing will do. */}
+      <div role="status" aria-live="polite">
+        {leftovers === null ? (
+          <p className="text-sm text-muted-foreground">Calculando as sobras…</p>
+        ) : leftovers === "failed" ? (
+          // The server still finds the leftovers when it finishes, so the choice stays the user's.
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-muted-foreground">Não foi possível calcular as sobras.</p>
+            <LeftoversInCostCheckbox inCost={inCost} onInCostChange={setInCost} />
+          </div>
+        ) : leftovers.items.some((item) => item.leftovers.length > 0) ? (
+          <LeftoversSection preview={leftovers} inCost={inCost} onInCostChange={setInCost} />
+        ) : null}
+      </div>
 
       {failure !== null ? (
         <p role="alert" className="text-sm text-destructive">
@@ -171,7 +179,8 @@ export function FinishProductionForm({ production }: { production: Production })
         </p>
       ) : null}
 
-      <Button type="submit" className="self-start" disabled={finishing}>
+      {/* Not before the leftovers are known: their cost is the user's to keep out. */}
+      <Button type="submit" className="self-start" disabled={finishing || leftovers === null}>
         Finalizar produção
       </Button>
     </form>

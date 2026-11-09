@@ -138,6 +138,18 @@ describe("finishProduction, leftovers of opened packagings", () => {
     expect(unitCostOf(FLAN_ITEM)).toBe("3.95");
   });
 
+  it("discards nothing of what was taken beyond the lots, and still counts what it cost", async () => {
+    repository.consumeProductionInput.mockResolvedValue({
+      cost: D("6"),
+      takes: [{ lotId: null, quantity: D("300"), unitCost: D("0.02"), lotQuantity: null, packageContent: null }],
+    });
+
+    await finish(true);
+
+    expect(repository.discardLeftover).not.toHaveBeenCalled();
+    expect(unitCostOf(ITEM)).toBe("6");
+  });
+
   it("counts the leftover in the cost when the body does not say", () => {
     expect(
       finishProductionBodySchema.parse({ items: [{ id: ITEM, producedQuantity: "1", expiresAt: null }] }),

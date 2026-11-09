@@ -85,7 +85,7 @@ describe("taking more than the lots of a product cover", () => {
 
     expect(
       taken.map((take) => ({ ...take, quantity: take.quantity.toString(), unitCost: take.unitCost.toString() })),
-    ).toEqual([{ lotId: null, quantity: "3", unitCost: "4.5" }]);
+    ).toEqual([{ lotId: null, quantity: "3", unitCost: "4.5", lotQuantity: null, packageContent: null }]);
     expect(
       (await testPrisma.productStock.findUniqueOrThrow({ where: { productSku: product.sku } })).quantity.toString(),
     ).toBe("-5");

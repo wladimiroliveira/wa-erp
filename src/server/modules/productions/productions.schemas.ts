@@ -29,6 +29,9 @@ export const finishProductionBodySchema = z.object({
     .array(z.object({ id: z.uuid(), producedQuantity: positiveDecimalSchema, expiresAt: lotExpirySchema }))
     .min(1)
     .refine((items) => listsEachOnce(items.map(({ id }) => id)), { message: "An item is listed more than once." }),
+  // Whether what is discarded of the opened packagings goes into the cost produced. Asked for at
+  // finish, after the production happened; an older client that does not say counts it.
+  hasLeftoversInCost: z.boolean().default(true),
 });
 
 export const productionIdParamsSchema = z.object({ id: z.uuid() });
@@ -43,6 +46,8 @@ export const productionSchema = z.object({
   createdAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
   canceledAt: z.iso.datetime().nullable(),
+  // Whether the leftovers discarded at finish went into the cost; null until it finishes.
+  hasLeftoversInCost: z.boolean().nullable(),
   items: z.array(
     z.object({
       id: z.uuid(),
@@ -52,10 +57,35 @@ export const productionSchema = z.object({
       producedQuantity: z.string().nullable(),
       unitCost: z.string().nullable(),
       inputs: z.array(
-        z.object({ product: productSummarySchema, quantity: z.string(), unitCost: z.string().nullable() }),
+        z.object({
+          product: productSummarySchema,
+          quantity: z.string(),
+          unitCost: z.string().nullable(),
+          // What was discarded of each lot's opened packagings when the production finished.
+          leftovers: z.array(z.object({ lotId: z.uuid(), quantity: z.string(), unitCost: z.string() })),
+        }),
       ),
     }),
   ),
 });
 
 export const productionPageSchema = pageSchema(productionSchema);
+
+// What finishing a production would discard of the opened packagings, as the stock stands now.
+export const productionLeftoversSchema = z.object({
+  items: z.array(
+    z.object({
+      itemId: z.uuid(),
+      leftovers: z.array(
+        z.object({
+          product: productSummarySchema,
+          lotId: z.uuid(),
+          quantity: z.string(),
+          unitCost: z.string(),
+          cost: z.string(),
+        }),
+      ),
+    }),
+  ),
+  totalCost: z.string(),
+});

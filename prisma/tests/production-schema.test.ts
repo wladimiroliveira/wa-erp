@@ -25,6 +25,20 @@ describe("production schema", () => {
     );
   });
 
+  it("writes off what is left of an opened packaging as a movement of its own, tied to the input", () => {
+    expect(SCHEMA).toMatch(/enum StockMovementType \{[^}]*\n\s+OPENED_LEFTOVER\n/);
+    expect(SCHEMA).toMatch(
+      fieldOf("Production", String.raw`hasLeftoversInCost\s+Boolean\?\s+@map\("has_leftovers_in_cost"\)`),
+    );
+    expect(SCHEMA).toMatch(/model ProductionLeftover \{[\s\S]*?@@map\("production_leftovers"\)/);
+    expect(SCHEMA).toMatch(
+      fieldOf("ProductionLeftover", String.raw`movementId\s+String\s+@unique @map\("movement_id"\) @db\.Uuid`),
+    );
+    expect(SCHEMA).toMatch(fieldOf("ProductionLeftover", String.raw`quantity\s+Decimal\s+@db\.Decimal\(18, 6\)`));
+    expect(SCHEMA).toContain(`@@index([inputId], map: "idx_production_leftovers_input_id")`);
+    expect(SCHEMA).toContain(`@@index([lotId], map: "idx_production_leftovers_lot_id")`);
+  });
+
   it("records when a production was canceled", () => {
     expect(SCHEMA).toMatch(
       fieldOf("Production", String.raw`canceledAt\s+DateTime\?\s+@map\("canceled_at"\) @db\.Timestamptz\(3\)`),

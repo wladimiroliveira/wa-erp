@@ -167,7 +167,14 @@ export async function suggestLots(input: { productSku: string; quantity: Prisma.
   return allocate(lots, input.quantity);
 }
 
-type Take = { lotId: string | null; quantity: Prisma.Decimal; unitCost: Prisma.Decimal };
+type Take = {
+  lotId: string | null;
+  quantity: Prisma.Decimal;
+  unitCost: Prisma.Decimal;
+  // What the lot held before the take, and what one of its packagings holds; null for what was owed.
+  lotQuantity: Prisma.Decimal | null;
+  packageContent: Prisma.Decimal | null;
+};
 
 // Takes a quantity out of the stock, lot by lot. What the lots do not cover is taken anyway and
 // stays owed.
@@ -198,6 +205,8 @@ export async function takeFromLots(
     lotId: lot.id,
     quantity: amount,
     unitCost: lot.unitCost,
+    lotQuantity: lot.quantity,
+    packageContent: lot.packageContent,
   }));
 
   if (shortfall.gt(0)) {
@@ -207,7 +216,7 @@ export async function takeFromLots(
       lastEntry: balance.lastEntryCost,
     });
 
-    taken.push({ lotId: null, quantity: shortfall, unitCost });
+    taken.push({ lotId: null, quantity: shortfall, unitCost, lotQuantity: null, packageContent: null });
   }
 
   return taken;
@@ -252,6 +261,23 @@ export async function takeFromLot(
   await decreaseStock(client, { productSku: lot.productSku, quantity: quantity.toString() });
 
   return { lot: { ...lot, left: lot.quantity.sub(quantity) } };
+}
+
+// Takes a quantity out of a lot the transaction already holds, with its product's balance: what
+// a consumption leaves of an opened packaging. Holding them again would only repeat the queries.
+// The lot never goes below zero: more than it holds is refused.
+export async function takeFromHeldLot(
+  client: Prisma.TransactionClient,
+  { lotId, productSku, quantity }: { lotId: string; productSku: string; quantity: Prisma.Decimal },
+) {
+  const updated = await client.$executeRaw`
+    UPDATE stock_lots SET quantity = quantity - ${quantity}::numeric, updated_at = now()
+    WHERE id = ${lotId}::uuid AND quantity >= ${quantity}::numeric
+  `;
+
+  if (updated !== 1) throw new Error(`Lot ${lotId} does not hold ${quantity.toString()}.`);
+
+  await decreaseStock(client, { productSku, quantity: quantity.toString() });
 }
 
 async function newestLotCost(client: Prisma.TransactionClient, productSku: string) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
@@ -10,8 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NumericInput } from "@/components/ui/numeric-input";
-import { finishProduction } from "@/features/productions/actions";
-import type { Production } from "@/lib/api";
+import { finishProduction, previewLeftovers } from "@/features/productions/actions";
+import { LeftoversInCostCheckbox, LeftoversSection } from "@/features/productions/LeftoversSection";
+import type { LeftoversPreview, Production } from "@/lib/api";
 import { todayIso } from "@/lib/dates";
 import { toApiDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
@@ -45,6 +46,29 @@ export function FinishProductionForm({ production }: { production: Production })
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
   const [finishing, startFinishing] = useTransition();
+  // What finishing would discard, as the stock stood when the form opened; only a guide, the server
+  // works it out again when the production finishes.
+  // Kept with the production it was asked for: one brought anew by a refresh is still being worked out.
+  const [preview, setPreview] = useState<{ of: Production; leftovers: LeftoversPreview | "failed" } | null>(null);
+  const leftovers = preview?.of === production ? preview.leftovers : null;
+  const [inCost, setInCost] = useState(true);
+
+  useEffect(() => {
+    let current = true;
+
+    previewLeftovers(production.id)
+      .then((result) => {
+        if (current) setPreview({ of: production, leftovers: result.ok ? result.data : "failed" });
+      })
+      .catch(() => {
+        if (current) setPreview({ of: production, leftovers: "failed" });
+      });
+
+    return () => {
+      current = false;
+    };
+    // A refreshed page brings the production anew, and the stock may have moved since: ask again.
+  }, [production]);
 
   const form = useForm<FinishFormValues>({
     resolver: zodResolver(finishFormSchema),
@@ -59,6 +83,7 @@ export function FinishProductionForm({ production }: { production: Production })
         producedQuantity: toApiDecimal(values.items[index]!.producedQuantity),
         expiresAt: values.items[index]!.expiresAt === "" ? null : values.items[index]!.expiresAt,
       })),
+      hasLeftoversInCost: inCost,
     };
 
     setFailure(null);
@@ -133,13 +158,29 @@ export function FinishProductionForm({ production }: { production: Production })
         );
       })}
 
+      {/* Announced as it arrives: it comes after the form, and changes what finishing will do. */}
+      <div role="status" aria-live="polite">
+        {leftovers === null ? (
+          <p className="text-sm text-muted-foreground">Calculando as sobras…</p>
+        ) : leftovers === "failed" ? (
+          // The server still finds the leftovers when it finishes, so the choice stays the user's.
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-muted-foreground">Não foi possível calcular as sobras.</p>
+            <LeftoversInCostCheckbox inCost={inCost} onInCostChange={setInCost} />
+          </div>
+        ) : leftovers.items.some((item) => item.leftovers.length > 0) ? (
+          <LeftoversSection preview={leftovers} inCost={inCost} onInCostChange={setInCost} />
+        ) : null}
+      </div>
+
       {failure !== null ? (
         <p role="alert" className="text-sm text-destructive">
           {failure}
         </p>
       ) : null}
 
-      <Button type="submit" className="self-start" disabled={finishing}>
+      {/* Not before the leftovers are known: their cost is the user's to keep out. */}
+      <Button type="submit" className="self-start" disabled={finishing || leftovers === null}>
         Finalizar produção
       </Button>
     </form>

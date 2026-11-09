@@ -150,7 +150,8 @@
                         "PRODUCTION_CONSUMPTION",
                         "PRODUCTION_OUTPUT",
                         "BALANCE_ADJUSTMENT",
-                        "LOSS"
+                        "LOSS",
+                        "OPENED_LEFTOVER"
                       ]
                     },
                     "quantity": {
@@ -1957,6 +1958,10 @@
                             "format": "date-time",
                             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                           },
+                          "hasLeftoversInCost": {
+                            "nullable": true,
+                            "type": "boolean"
+                          },
                           "items": {
                             "type": "array",
                             "items": {
@@ -2053,12 +2058,38 @@
                                       "unitCost": {
                                         "nullable": true,
                                         "type": "string"
+                                      },
+                                      "leftovers": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "lotId": {
+                                              "type": "string",
+                                              "format": "uuid",
+                                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                            },
+                                            "quantity": {
+                                              "type": "string"
+                                            },
+                                            "unitCost": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "lotId",
+                                            "quantity",
+                                            "unitCost"
+                                          ],
+                                          "additionalProperties": false
+                                        }
                                       }
                                     },
                                     "required": [
                                       "product",
                                       "quantity",
-                                      "unitCost"
+                                      "unitCost",
+                                      "leftovers"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -2083,6 +2114,7 @@
                           "createdAt",
                           "finishedAt",
                           "canceledAt",
+                          "hasLeftoversInCost",
                           "items"
                         ],
                         "additionalProperties": false
@@ -2210,6 +2242,10 @@
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     },
+                    "hasLeftoversInCost": {
+                      "nullable": true,
+                      "type": "boolean"
+                    },
                     "items": {
                       "type": "array",
                       "items": {
@@ -2306,12 +2342,38 @@
                                 "unitCost": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "leftovers": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "lotId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "quantity": {
+                                        "type": "string"
+                                      },
+                                      "unitCost": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "lotId",
+                                      "quantity",
+                                      "unitCost"
+                                    ],
+                                    "additionalProperties": false
+                                  }
                                 }
                               },
                               "required": [
                                 "product",
                                 "quantity",
-                                "unitCost"
+                                "unitCost",
+                                "leftovers"
                               ],
                               "additionalProperties": false
                             }
@@ -2336,6 +2398,7 @@
                     "createdAt",
                     "finishedAt",
                     "canceledAt",
+                    "hasLeftoversInCost",
                     "items"
                   ],
                   "additionalProperties": false
@@ -2445,6 +2508,10 @@
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     },
+                    "hasLeftoversInCost": {
+                      "nullable": true,
+                      "type": "boolean"
+                    },
                     "items": {
                       "type": "array",
                       "items": {
@@ -2541,12 +2608,38 @@
                                 "unitCost": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "leftovers": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "lotId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "quantity": {
+                                        "type": "string"
+                                      },
+                                      "unitCost": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "lotId",
+                                      "quantity",
+                                      "unitCost"
+                                    ],
+                                    "additionalProperties": false
+                                  }
                                 }
                               },
                               "required": [
                                 "product",
                                 "quantity",
-                                "unitCost"
+                                "unitCost",
+                                "leftovers"
                               ],
                               "additionalProperties": false
                             }
@@ -2571,6 +2664,7 @@
                     "createdAt",
                     "finishedAt",
                     "canceledAt",
+                    "hasLeftoversInCost",
                     "items"
                   ],
                   "additionalProperties": false
@@ -2661,6 +2755,10 @@
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     },
+                    "hasLeftoversInCost": {
+                      "nullable": true,
+                      "type": "boolean"
+                    },
                     "items": {
                       "type": "array",
                       "items": {
@@ -2757,12 +2855,38 @@
                                 "unitCost": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "leftovers": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "lotId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "quantity": {
+                                        "type": "string"
+                                      },
+                                      "unitCost": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "lotId",
+                                      "quantity",
+                                      "unitCost"
+                                    ],
+                                    "additionalProperties": false
+                                  }
                                 }
                               },
                               "required": [
                                 "product",
                                 "quantity",
-                                "unitCost"
+                                "unitCost",
+                                "leftovers"
                               ],
                               "additionalProperties": false
                             }
@@ -2787,6 +2911,7 @@
                     "createdAt",
                     "finishedAt",
                     "canceledAt",
+                    "hasLeftoversInCost",
                     "items"
                   ],
                   "additionalProperties": false
@@ -2840,7 +2965,7 @@
         "tags": [
           "productions"
         ],
-        "summary": "Finaliza uma produção: baixa os insumos e dá entrada no que foi produzido",
+        "summary": "Finaliza uma produção: baixa os insumos, descarta as sobras de embalagens abertas e dá entrada no que foi produzido",
         "security": [
           {
             "BearerAuth": []
@@ -2893,6 +3018,10 @@
                         "expiresAt"
                       ]
                     }
+                  },
+                  "hasLeftoversInCost": {
+                    "default": true,
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -2939,6 +3068,10 @@
                       "type": "string",
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "hasLeftoversInCost": {
+                      "nullable": true,
+                      "type": "boolean"
                     },
                     "items": {
                       "type": "array",
@@ -3036,12 +3169,38 @@
                                 "unitCost": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "leftovers": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "lotId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "quantity": {
+                                        "type": "string"
+                                      },
+                                      "unitCost": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "lotId",
+                                      "quantity",
+                                      "unitCost"
+                                    ],
+                                    "additionalProperties": false
+                                  }
                                 }
                               },
                               "required": [
                                 "product",
                                 "quantity",
-                                "unitCost"
+                                "unitCost",
+                                "leftovers"
                               ],
                               "additionalProperties": false
                             }
@@ -3066,7 +3225,170 @@
                     "createdAt",
                     "finishedAt",
                     "canceledAt",
+                    "hasLeftoversInCost",
                     "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/productions/{id}/leftovers": {
+      "get": {
+        "tags": [
+          "productions"
+        ],
+        "summary": "Prevê o que finalizar a produção descartaria das embalagens abertas, com o estoque de agora",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "leftovers": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "product": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sku": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "enum": [
+                                        "UNIT",
+                                        "KILOGRAM",
+                                        "GRAM",
+                                        "LITER",
+                                        "MILLILITER"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "sku",
+                                    "description",
+                                    "unit"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "lotId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "quantity": {
+                                  "type": "string"
+                                },
+                                "unitCost": {
+                                  "type": "string"
+                                },
+                                "cost": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "product",
+                                "lotId",
+                                "quantity",
+                                "unitCost",
+                                "cost"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "itemId",
+                          "leftovers"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "totalCost": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "totalCost"
                   ],
                   "additionalProperties": false
                 }
@@ -5288,7 +5610,8 @@
                               "PRODUCTION_CONSUMPTION",
                               "PRODUCTION_OUTPUT",
                               "BALANCE_ADJUSTMENT",
-                              "LOSS"
+                              "LOSS",
+                              "OPENED_LEFTOVER"
                             ]
                           },
                           "quantity": {

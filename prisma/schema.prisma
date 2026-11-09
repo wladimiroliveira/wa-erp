@@ -197,23 +197,26 @@ enum StockMovementType {
   PRODUCTION_OUTPUT
   BALANCE_ADJUSTMENT
   LOSS
+  // What is left of an opened packaging of a product that cannot be kept, discarded at a production's finish.
+  OPENED_LEFTOVER
 
   @@map("stock_movement_type")
 }
 
 model StockMovement {
-  id          String            @id @default(uuid(7)) @db.Uuid
-  productSku  String            @map("product_sku") @db.Uuid
-  product     Product           @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  lotId       String?           @map("lot_id") @db.Uuid
-  lot         StockLot?         @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  id          String              @id @default(uuid(7)) @db.Uuid
+  productSku  String              @map("product_sku") @db.Uuid
+  product     Product             @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  lotId       String?             @map("lot_id") @db.Uuid
+  lot         StockLot?           @relation(fields: [lotId], references: [id], onDelete: Restrict)
   loss        StockLoss?
+  leftover    ProductionLeftover?
   type        StockMovementType
-  quantity    Decimal           @db.Decimal(18, 6)
-  unitCost    Decimal           @map("unit_cost") @db.Decimal(18, 6)
-  createdById String            @map("created_by_id") @db.Uuid
-  createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  quantity    Decimal             @db.Decimal(18, 6)
+  unitCost    Decimal             @map("unit_cost") @db.Decimal(18, 6)
+  createdById String              @map("created_by_id") @db.Uuid
+  createdBy   User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([productSku, createdAt(sort: Desc), id(sort: Desc)], map: "idx_stock_movements_product_sku_created_at")
   @@index([lotId], map: "idx_stock_movements_lot_id")
@@ -224,24 +227,25 @@ model StockMovement {
 // lots of a product add up to its balance whenever that balance is not negative. `expiresAt` is a
 // calendar day, kept as its midnight in UTC.
 model StockLot {
-  id              String            @id @default(uuid(7)) @db.Uuid
-  productSku      String            @map("product_sku") @db.Uuid
-  product         Product           @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  supplierId      String?           @map("supplier_id") @db.Uuid
-  supplier        Supplier?         @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  id              String               @id @default(uuid(7)) @db.Uuid
+  productSku      String               @map("product_sku") @db.Uuid
+  product         Product              @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  supplierId      String?              @map("supplier_id") @db.Uuid
+  supplier        Supplier?            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   // The packaging the lot came in, how many of them and what one cost as typed; all empty for a lot received loose.
-  packagingId     String?           @map("packaging_id") @db.Uuid
-  packaging       ProductPackaging? @relation(fields: [packagingId], references: [id], onDelete: Restrict)
-  packageCount    Int?              @map("package_count")
-  packagePrice    Decimal?          @map("package_price") @db.Decimal(14, 2)
-  expiresAt       DateTime?         @map("expires_at") @db.Timestamptz(3)
-  initialQuantity Decimal           @map("initial_quantity") @db.Decimal(18, 6)
-  quantity        Decimal           @db.Decimal(18, 6)
-  unitCost        Decimal           @map("unit_cost") @db.Decimal(18, 6)
+  packagingId     String?              @map("packaging_id") @db.Uuid
+  packaging       ProductPackaging?    @relation(fields: [packagingId], references: [id], onDelete: Restrict)
+  packageCount    Int?                 @map("package_count")
+  packagePrice    Decimal?             @map("package_price") @db.Decimal(14, 2)
+  expiresAt       DateTime?            @map("expires_at") @db.Timestamptz(3)
+  initialQuantity Decimal              @map("initial_quantity") @db.Decimal(18, 6)
+  quantity        Decimal              @db.Decimal(18, 6)
+  unitCost        Decimal              @map("unit_cost") @db.Decimal(18, 6)
   movements       StockMovement[]
   losses          StockLoss[]
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  leftovers       ProductionLeftover[]
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([productSku, expiresAt, createdAt], map: "idx_stock_lots_product_sku_expires_at")
   @@index([supplierId], map: "idx_stock_lots_supplier_id")
@@ -347,14 +351,16 @@ enum ProductionStatus {
 }
 
 model Production {
-  id          String           @id @default(uuid(7)) @db.Uuid
-  status      ProductionStatus @default(IN_PROGRESS)
-  items       ProductionItem[]
-  createdById String           @map("created_by_id") @db.Uuid
-  createdBy   User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  finishedAt  DateTime?        @map("finished_at") @db.Timestamptz(3)
-  canceledAt  DateTime?        @map("canceled_at") @db.Timestamptz(3)
+  id                 String           @id @default(uuid(7)) @db.Uuid
+  status             ProductionStatus @default(IN_PROGRESS)
+  items              ProductionItem[]
+  createdById        String           @map("created_by_id") @db.Uuid
+  createdBy          User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  finishedAt         DateTime?        @map("finished_at") @db.Timestamptz(3)
+  canceledAt         DateTime?        @map("canceled_at") @db.Timestamptz(3)
+  // Whether the cost of the leftovers discarded at finish went into the cost produced; null until it finishes.
+  hasLeftoversInCost Boolean?         @map("has_leftovers_in_cost")
 
   @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_productions_created_at")
   @@map("productions")
@@ -379,13 +385,14 @@ model ProductionItem {
 }
 
 model ProductionItemInput {
-  id               String         @id @default(uuid(7)) @db.Uuid
-  productionItemId String         @map("production_item_id") @db.Uuid
-  productionItem   ProductionItem @relation(fields: [productionItemId], references: [id], onDelete: Restrict)
-  productSku       String         @map("product_sku") @db.Uuid
-  product          Product        @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  quantity         Decimal        @db.Decimal(18, 6)
-  unitCost         Decimal?       @map("unit_cost") @db.Decimal(18, 6)
+  id               String               @id @default(uuid(7)) @db.Uuid
+  productionItemId String               @map("production_item_id") @db.Uuid
+  productionItem   ProductionItem       @relation(fields: [productionItemId], references: [id], onDelete: Restrict)
+  productSku       String               @map("product_sku") @db.Uuid
+  product          Product              @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  quantity         Decimal              @db.Decimal(18, 6)
+  unitCost         Decimal?             @map("unit_cost") @db.Decimal(18, 6)
+  leftovers        ProductionLeftover[]
 
   @@unique([productionItemId, productSku], map: "uq_production_item_inputs_production_item_id_product_sku")
   @@index([productSku], map: "idx_production_item_inputs_product_sku")
@@ -403,4 +410,22 @@ model ProductMarkup {
 
   @@index([updatedById], map: "idx_product_markups_updated_by_id")
   @@map("product_markups")
+}
+
+// What was discarded of an opened packaging of a lot when an input of a production consumed it.
+model ProductionLeftover {
+  id         String              @id @default(uuid(7)) @db.Uuid
+  inputId    String              @map("input_id") @db.Uuid
+  input      ProductionItemInput @relation(fields: [inputId], references: [id], onDelete: Restrict)
+  lotId      String              @map("lot_id") @db.Uuid
+  lot        StockLot            @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  movementId String              @unique @map("movement_id") @db.Uuid
+  movement   StockMovement       @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  quantity   Decimal             @db.Decimal(18, 6)
+  unitCost   Decimal             @map("unit_cost") @db.Decimal(18, 6)
+  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([inputId], map: "idx_production_leftovers_input_id")
+  @@index([lotId], map: "idx_production_leftovers_lot_id")
+  @@map("production_leftovers")
 }

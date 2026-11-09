@@ -21,6 +21,7 @@ import type {
 import type {
   finishProductionBodySchema,
   productionPageSchema,
+  productionLeftoversSchema,
   productionSchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
@@ -114,6 +115,7 @@ export type ProductionItem = Production["items"][number];
 export type ProductionPage = z.output<typeof productionPageSchema>;
 export type StartProductionBody = z.input<typeof startProductionBodySchema>;
 export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
+export type LeftoversPreview = z.output<typeof productionLeftoversSchema>;
 
 export type Recipe = z.output<typeof recipeSchema>;
 export type SaveRecipeBody = z.input<typeof saveRecipeBodySchema>;

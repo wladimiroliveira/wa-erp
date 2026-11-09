@@ -12,7 +12,8 @@ export const POST = apiHandler(
   {
     auth: Permission.PRODUCTION_CREATE,
     tags: ["productions"],
-    summary: "Finaliza uma produção: baixa os insumos e dá entrada no que foi produzido",
+    summary:
+      "Finaliza uma produção: baixa os insumos, descarta as sobras de embalagens abertas e dá entrada no que foi produzido",
     params: productionIdParamsSchema,
     body: finishProductionBodySchema,
     response: { 200: productionSchema, 404: messageSchema, 409: messageSchema },
@@ -22,6 +23,7 @@ export const POST = apiHandler(
       id: request.params.id,
       createdById: request.currentUser!.id,
       items: request.body.items,
+      hasLeftoversInCost: request.body.hasLeftoversInCost,
     });
 
     if (!result.ok) return reply.code(result.status).send({ message: result.message });

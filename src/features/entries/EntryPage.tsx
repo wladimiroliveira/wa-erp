@@ -15,7 +15,7 @@ import { DeficitDialog } from "@/features/entries/DeficitDialog";
 import { createEntry, type CreateEntryResult } from "@/features/entries/actions";
 import { findByGtin } from "@/features/entries/barcode";
 import { MAX_PACKAGE_COUNT } from "@/server/modules/entries/entries.schemas";
-import { packagingOf, quantityOf } from "@/features/stock/stock-format";
+import { packagingOf, quantityOf, unitCostOf } from "@/features/stock/stock-format";
 import type { CreateEntryBody, Entry, Product, Supplier } from "@/lib/api";
 import { formatDate, todayIso } from "@/lib/dates";
 import { formatDecimal, formatMoney, isDecimalInput, toApiDecimal } from "@/lib/decimal";
@@ -406,9 +406,9 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
               {formatDecimal(recorded.stock.quantity)} {unitLabel(recorded.product.unit)}
             </dd>
             <dt className="text-muted-foreground">Último custo</dt>
-            <dd>{formatMoney(recorded.stock.lastEntryCost)}</dd>
+            <dd>{unitCostOf(recorded.stock.lastEntryCost, recorded.product.unit)}</dd>
             <dt className="text-muted-foreground">Custo médio</dt>
-            <dd>{formatMoney(recorded.stock.averageCost)}</dd>
+            <dd>{unitCostOf(recorded.stock.averageCost, recorded.product.unit)}</dd>
           </dl>
         </div>
       ) : null}

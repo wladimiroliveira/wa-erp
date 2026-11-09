@@ -172,8 +172,8 @@ describe("EntryPage", () => {
     expect(result.getByText("31/12/2099")).toBeInTheDocument();
     expect(result.getByText("Moinho Santa Clara")).toBeInTheDocument();
     expect(result.getByText("40,5 kg")).toBeInTheDocument();
-    expect(result.getByText("R$ 4,25")).toBeInTheDocument();
-    expect(result.getByText("R$ 5,50")).toBeInTheDocument();
+    expect(result.getByText("R$ 4,25/kg")).toBeInTheDocument();
+    expect(result.getByText("R$ 5,50/kg")).toBeInTheDocument();
   });
 
   it("says the lot has no expiry and no supplier when it has none", async () => {

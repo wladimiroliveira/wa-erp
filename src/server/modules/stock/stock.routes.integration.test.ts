@@ -5,6 +5,7 @@ import * as stock from "@/app/v1/stock/route";
 import * as productStock from "@/app/v1/stock/[sku]/route";
 import * as stockMovements from "@/app/v1/stock-movements/route";
 import { rateLimiter } from "@/server/http/rate-limit";
+import { HISTORY_LIMIT } from "@/server/modules/stock/stock.schemas";
 import { authenticateAs } from "@/server/testing/authenticate";
 import { inject } from "@/server/testing/inject";
 import { resetDatabase, testPrisma } from "@/server/testing/database";
@@ -460,6 +461,29 @@ describe("GET /v1/stock/:sku", () => {
       },
       { id: unused.id, content: "1000", isActive: true, lastEntry: null, history: [] },
     ]);
+  });
+
+  it("lists only the latest entries of a packaging's price history", async () => {
+    const { headers } = await authenticateAs([Permission.REPORTS_READ]);
+    const nuts = await testPrisma.product.create({ data: { description: "NUTS", kind: "GOODS", unit: "GRAM" } });
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "380" } });
+    await testPrisma.stockLot.createMany({
+      data: Array.from({ length: HISTORY_LIMIT + 1 }, (_, index) => ({
+        productSku: nuts.sku,
+        packagingId: bag.id,
+        packageCount: 1,
+        packagePrice: "12.91",
+        initialQuantity: "380",
+        quantity: "0",
+        unitCost: "0.033",
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)),
+      })),
+    });
+
+    const [packaging] = (await getProductStock(headers, nuts.sku)).json().packagings;
+
+    expect(packaging.history).toHaveLength(HISTORY_LIMIT);
+    expect(packaging.history[0].createdAt).toBe(new Date(Date.UTC(2026, 0, 1, 0, HISTORY_LIMIT)).toISOString());
   });
 
   it("puts the lot that came in first ahead of another that expires on the same day", async () => {

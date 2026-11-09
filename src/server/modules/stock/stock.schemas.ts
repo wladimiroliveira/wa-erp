@@ -43,6 +43,9 @@ const stockItemSchema = z.object({
 
 export const stockPositionSchema = z.object({ items: z.array(stockItemSchema), totalValue: z.string() });
 
+/** The most entries the price history of a packaging lists: the latest ones. */
+export const HISTORY_LIMIT = 50;
+
 export const productStockParamsSchema = z.object({ sku: z.uuid() });
 
 // Lots with nothing left are history, so they come only when asked for.
@@ -73,7 +76,7 @@ export const productStockSchema = stockItemSchema.extend({
       lastEntry: z
         .object({ price: z.string(), createdAt: z.iso.datetime(), supplier: supplierSchema.nullable() })
         .nullable(),
-      // Every entry of the packaging, the newest first, depleted lots included.
+      // The latest entries of the packaging, at most HISTORY_LIMIT, the newest first, depleted lots included.
       history: z.array(
         z.object({
           lotId: z.uuid(),

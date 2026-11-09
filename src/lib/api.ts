@@ -100,7 +100,6 @@ export type StockStatus = StockItem["status"];
 export type ProductStock = z.output<typeof productStockSchema>;
 export type StockLot = ProductStock["lots"][number];
 export type PackagingCost = ProductStock["packagings"][number];
-export type PackagingEntry = PackagingCost["history"][number];
 export type LotStatus = StockLot["status"];
 
 export type PreWeighingPlan = z.output<typeof preWeighingPlanSchema>;

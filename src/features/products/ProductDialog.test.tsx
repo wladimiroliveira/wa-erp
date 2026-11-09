@@ -137,6 +137,7 @@ describe("ProductDialog", () => {
         description: "FARINHA DE TRIGO",
         kind: "GOODS",
         unit: "KILOGRAM",
+        isStorableOnceOpened: true,
         packagings: [{ content: "380", unit: "GRAM", gtin: "7891000100103" }],
       }),
     );
@@ -152,6 +153,7 @@ describe("ProductDialog", () => {
         description: "FARINHA DE TRIGO",
         kind: "GOODS",
         unit: "KILOGRAM",
+        isStorableOnceOpened: true,
         packagings: [{ content: "1.5", unit: "KILOGRAM" }],
       }),
     );
@@ -162,7 +164,12 @@ describe("ProductDialog", () => {
     await fill();
 
     await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith({ description: "FARINHA DE TRIGO", kind: "GOODS", unit: "KILOGRAM" }),
+      expect(createMock).toHaveBeenCalledWith({
+        description: "FARINHA DE TRIGO",
+        kind: "GOODS",
+        unit: "KILOGRAM",
+        isStorableOnceOpened: true,
+      }),
     );
   });
 
@@ -197,6 +204,19 @@ describe("ProductDialog", () => {
     expect(await screen.findByLabelText("Descrição")).toHaveValue("");
   });
 
+  it("registers a product whose leftover is lost once opened", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+
+    const keeps = screen.getByRole("checkbox", { name: "Pode ser guardado depois de aberto" });
+    expect(keeps).toBeChecked();
+    await userEvent.click(keeps);
+    await fill();
+
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ isStorableOnceOpened: false })),
+    );
+  });
+
   it("registers the minimum quantity the stock should keep, in the unit chosen", async () => {
     renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
     await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
@@ -209,6 +229,7 @@ describe("ProductDialog", () => {
         description: "FARINHA DE TRIGO",
         kind: "GOODS",
         unit: "KILOGRAM",
+        isStorableOnceOpened: true,
         minimumQuantity: "12.5",
       }),
     );
@@ -270,7 +291,9 @@ describe("ProductDialog, editing a product", () => {
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() =>
-      expect(received).toEqual([{ description: "FARINHA INTEGRAL", minimumQuantity: "8", packagings: [SENT_BAG] }]),
+      expect(received).toEqual([
+        { description: "FARINHA INTEGRAL", minimumQuantity: "8", isStorableOnceOpened: true, packagings: [SENT_BAG] },
+      ]),
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -286,7 +309,12 @@ describe("ProductDialog, editing a product", () => {
 
     await waitFor(() =>
       expect(received).toEqual([
-        { description: "FARINHA DE TRIGO", minimumQuantity: null, packagings: [{ ...SENT_BAG, gtin: null }] },
+        {
+          description: "FARINHA DE TRIGO",
+          minimumQuantity: null,
+          isStorableOnceOpened: true,
+          packagings: [{ ...SENT_BAG, gtin: null }],
+        },
       ]),
     );
   });
@@ -306,6 +334,7 @@ describe("ProductDialog, editing a product", () => {
         {
           description: "FARINHA DE TRIGO",
           minimumQuantity: "1234.5",
+          isStorableOnceOpened: true,
           packagings: [
             { ...SENT_BAG, isActive: false },
             { content: "5", unit: "KILOGRAM", gtin: null, isActive: true },
@@ -313,6 +342,20 @@ describe("ProductDialog, editing a product", () => {
         },
       ]),
     );
+  });
+
+  it("opens a product that is lost once opened unchecked, and saves it checked again", async () => {
+    const received = editServer();
+    renderWithProviders(
+      <ProductDialog product={{ ...FLOUR, isStorableOnceOpened: false }} open onOpenChange={() => undefined} />,
+    );
+
+    const keeps = await screen.findByRole("checkbox", { name: "Pode ser guardado depois de aberto" });
+    expect(keeps).not.toBeChecked();
+    await userEvent.click(keeps);
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(received).toEqual([expect.objectContaining({ isStorableOnceOpened: true })]));
   });
 
   it("asks for no recipe after an edit", async () => {

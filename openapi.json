@@ -1463,6 +1463,17 @@
               "type": "string",
               "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
             }
+          },
+          {
+            "name": "tolerance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
           }
         ],
         "responses": {
@@ -1582,12 +1593,233 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "waste": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "tolerance": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "requested": {
+                          "type": "object",
+                          "properties": {
+                            "quantity": {
+                              "type": "string"
+                            },
+                            "loss": {
+                              "type": "string"
+                            },
+                            "leftovers": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "product": {
+                                    "type": "object",
+                                    "properties": {
+                                      "sku": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "description": {
+                                        "type": "string"
+                                      },
+                                      "unit": {
+                                        "type": "string",
+                                        "enum": [
+                                          "UNIT",
+                                          "KILOGRAM",
+                                          "GRAM",
+                                          "LITER",
+                                          "MILLILITER"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "sku",
+                                      "description",
+                                      "unit"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "leftover": {
+                                    "type": "string"
+                                  },
+                                  "loss": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "product",
+                                  "leftover",
+                                  "loss"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "quantity",
+                            "loss",
+                            "leftovers"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "alternatives": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "quantity": {
+                                "type": "string"
+                              },
+                              "loss": {
+                                "type": "string"
+                              },
+                              "leftovers": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "product": {
+                                      "type": "object",
+                                      "properties": {
+                                        "sku": {
+                                          "type": "string",
+                                          "format": "uuid",
+                                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                        },
+                                        "description": {
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "type": "string",
+                                          "enum": [
+                                            "UNIT",
+                                            "KILOGRAM",
+                                            "GRAM",
+                                            "LITER",
+                                            "MILLILITER"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "sku",
+                                        "description",
+                                        "unit"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    "leftover": {
+                                      "type": "string"
+                                    },
+                                    "loss": {
+                                      "nullable": true,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "product",
+                                    "leftover",
+                                    "loss"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "quantity",
+                              "loss",
+                              "leftovers"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "unpackaged": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "sku": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "unit": {
+                                "type": "string",
+                                "enum": [
+                                  "UNIT",
+                                  "KILOGRAM",
+                                  "GRAM",
+                                  "LITER",
+                                  "MILLILITER"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "sku",
+                              "description",
+                              "unit"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "uncosted": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "sku": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "unit": {
+                                "type": "string",
+                                "enum": [
+                                  "UNIT",
+                                  "KILOGRAM",
+                                  "GRAM",
+                                  "LITER",
+                                  "MILLILITER"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "sku",
+                              "description",
+                              "unit"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "tolerance",
+                        "requested",
+                        "alternatives",
+                        "unpackaged",
+                        "uncosted"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
                     "product",
                     "quantity",
-                    "items"
+                    "items",
+                    "waste"
                   ],
                   "additionalProperties": false
                 }
@@ -3012,6 +3244,9 @@
                       "isActive": {
                         "type": "boolean"
                       },
+                      "isStorableOnceOpened": {
+                        "type": "boolean"
+                      },
                       "minimumQuantity": {
                         "nullable": true,
                         "type": "string"
@@ -3053,6 +3288,7 @@
                       "unit",
                       "kind",
                       "isActive",
+                      "isStorableOnceOpened",
                       "minimumQuantity",
                       "packagings"
                     ],
@@ -3102,6 +3338,10 @@
                       "LITER",
                       "MILLILITER"
                     ]
+                  },
+                  "isStorableOnceOpened": {
+                    "default": true,
+                    "type": "boolean"
                   },
                   "minimumQuantity": {
                     "type": "string",
@@ -3183,6 +3423,9 @@
                     "isActive": {
                       "type": "boolean"
                     },
+                    "isStorableOnceOpened": {
+                      "type": "boolean"
+                    },
                     "minimumQuantity": {
                       "nullable": true,
                       "type": "string"
@@ -3224,6 +3467,7 @@
                     "unit",
                     "kind",
                     "isActive",
+                    "isStorableOnceOpened",
                     "minimumQuantity",
                     "packagings"
                   ],
@@ -3311,6 +3555,9 @@
                   "isActive": {
                     "type": "boolean"
                   },
+                  "isStorableOnceOpened": {
+                    "type": "boolean"
+                  },
                   "minimumQuantity": {
                     "nullable": true,
                     "type": "string",
@@ -3396,6 +3643,9 @@
                     "isActive": {
                       "type": "boolean"
                     },
+                    "isStorableOnceOpened": {
+                      "type": "boolean"
+                    },
                     "minimumQuantity": {
                       "nullable": true,
                       "type": "string"
@@ -3437,6 +3687,7 @@
                     "unit",
                     "kind",
                     "isActive",
+                    "isStorableOnceOpened",
                     "minimumQuantity",
                     "packagings"
                   ],

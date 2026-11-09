@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +37,7 @@ const productFormSchema = z.object({
   kind: z.enum(PRODUCT_KINDS, "Escolha o tipo."),
   unit: z.enum(UNITS, "Escolha a unidade."),
   packagings: packagingRowsSchema,
+  isStorableOnceOpened: z.boolean(),
   // Optional, so it is checked only once something was typed into it.
   minimumQuantity: z
     .string()
@@ -49,11 +51,12 @@ type ProductForm = z.output<typeof productFormSchema>;
 // Kind and unit start unset on purpose for a new product: the operator chooses them, nothing is assumed.
 const valuesOf = (product: Product | null): Partial<ProductFormInput> =>
   product === null
-    ? { description: "", minimumQuantity: "", packagings: [] }
+    ? { description: "", minimumQuantity: "", packagings: [], isStorableOnceOpened: true }
     : {
         description: product.description,
         kind: product.kind,
         unit: product.unit,
+        isStorableOnceOpened: product.isStorableOnceOpened,
         minimumQuantity: product.minimumQuantity === null ? "" : toDecimalInput(product.minimumQuantity),
         packagings: product.packagings.map((packaging) => rowOf(packaging, product.unit)),
       };
@@ -99,12 +102,13 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
 
   // A new product leaves a blank field out; an edited one says null, or what was erased would
   // survive, and sends its whole list of packagings. Kind and unit are the product's for good once registered.
-  function send({ description, kind, unit, minimumQuantity, packagings }: ProductForm) {
+  function send({ description, kind, unit, isStorableOnceOpened, minimumQuantity, packagings }: ProductForm) {
     const minimum = minimumQuantity === "" ? null : toApiDecimal(minimumQuantity);
 
     if (product !== null) {
       return updateProduct(product.sku, {
         description,
+        isStorableOnceOpened,
         minimumQuantity: minimum,
         packagings: packagings.map(toEditedPackaging),
       });
@@ -114,6 +118,7 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
       description,
       kind,
       unit,
+      isStorableOnceOpened,
       ...(minimum === null ? {} : { minimumQuantity: minimum }),
       ...(packagings.length === 0 ? {} : { packagings: packagings.map(toCreatedPackaging) }),
     });
@@ -145,6 +150,7 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
 
   const { errors } = form.formState;
   const unit = form.watch("unit");
+  const isStorableOnceOpened = form.watch("isStorableOnceOpened");
   const chosenUnit = UNITS.includes(unit) ? unit : undefined;
   const editing = product !== null;
   const description = form.register("description");
@@ -221,6 +227,17 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
             {errors.minimumQuantity ? (
               <p className="text-sm text-destructive">{errors.minimumQuantity.message}</p>
             ) : null}
+          </div>
+
+          <div className="flex min-h-8 items-center gap-2">
+            <Checkbox
+              id="product-storable-once-opened"
+              checked={isStorableOnceOpened}
+              onCheckedChange={(checked) => form.setValue("isStorableOnceOpened", checked === true)}
+            />
+            <Label htmlFor="product-storable-once-opened" className="flex-1 py-1.5">
+              Pode ser guardado depois de aberto
+            </Label>
           </div>
 
           {failure !== null ? (

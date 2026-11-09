@@ -140,7 +140,12 @@ describe("ProductsListPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith({ description: "FERMENTO", kind: "GOODS", unit: "KILOGRAM" }),
+      expect(createMock).toHaveBeenCalledWith({
+        description: "FERMENTO",
+        kind: "GOODS",
+        unit: "KILOGRAM",
+        isStorableOnceOpened: true,
+      }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
@@ -211,6 +216,7 @@ describe("ProductsListPage", () => {
     await waitFor(() =>
       expect(updateMock).toHaveBeenCalledWith(FLOUR.sku, {
         description: "FARINHA INTEGRAL",
+        isStorableOnceOpened: true,
         minimumQuantity: null,
         packagings: [],
       }),

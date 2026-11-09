@@ -108,7 +108,7 @@ describe("PreWeighingPage", () => {
 
     await calculate("10,5");
 
-    await waitFor(() => expect(planPreWeighing).toHaveBeenCalledWith({ productSku: BREAD.sku, quantity: "10.5" }));
+    await waitFor(() => expect(planPreWeighing).toHaveBeenCalledWith({ productSku: BREAD.sku, quantity: "10.5" }, 20));
   });
 
   it("shows how much to weigh of each ingredient and the lots to weigh it from", async () => {
@@ -387,5 +387,134 @@ describe("PreWeighingPage, unit of each weighing", () => {
 
     expect(screen.getByLabelText("Pesado de Fermento")).toHaveValue("0,25");
     expect(rowOf("Fermento").getByText("kg", { selector: "span" })).toBeInTheDocument();
+  });
+});
+
+describe("PreWeighingPage, leftovers of what cannot be kept", () => {
+  const MILK = { sku: "018f0000-0000-7000-8000-000000000024", description: "Leite condensado", unit: "GRAM" } as const;
+  const CREAM = {
+    sku: "018f0000-0000-7000-8000-000000000025",
+    description: "Creme de leite",
+    unit: "MILLILITER",
+  } as const;
+
+  const WITH_WASTE = aPreWeighingPlan({
+    waste: {
+      tolerance: 20,
+      requested: { quantity: "10", loss: "3.20", leftovers: [{ product: MILK, leftover: "160", loss: "3.20" }] },
+      alternatives: [
+        { quantity: "10.533", loss: "0.00", leftovers: [{ product: MILK, leftover: "0.1", loss: "0.00" }] },
+        { quantity: "11.85", loss: "0.00", leftovers: [] },
+      ],
+      unpackaged: [CREAM],
+      uncosted: [MILK],
+    },
+  });
+
+  const section = () => within(screen.getByRole("region", { name: "Sobras de abertos" }));
+
+  it("asks the plan within the tolerance typed, 20% unless changed", async () => {
+    planning();
+    open();
+
+    expect(screen.getByLabelText("Aceitar até")).toHaveValue("20");
+    await userEvent.clear(screen.getByLabelText("Aceitar até"));
+    await userEvent.type(screen.getByLabelText("Aceitar até"), "35");
+    await calculate();
+
+    await waitFor(() => expect(planPreWeighing).toHaveBeenCalledWith({ productSku: BREAD.sku, quantity: "10" }, 35));
+  });
+
+  it.each(["101", "1,5", ""])("refuses a tolerance of %j", async (typed) => {
+    planning();
+    open();
+
+    await userEvent.clear(screen.getByLabelText("Aceitar até"));
+    if (typed !== "") await userEvent.type(screen.getByLabelText("Aceitar até"), typed);
+    await calculate();
+
+    expect(await screen.findByText("Informe um número inteiro de 0 a 100.")).toBeInTheDocument();
+    expect(planPreWeighing).not.toHaveBeenCalled();
+  });
+
+  it("tells what the quantity asked for leaves behind, and the quantities that leave less", async () => {
+    planning(() => ({ ok: true, data: WITH_WASTE }));
+    open();
+    await calculate();
+
+    await screen.findByRole("region", { name: "Sobras de abertos" });
+    expect(section().getByText("10 kg: perda de R$ 3,20 (160 g de Leite condensado)")).toBeInTheDocument();
+    expect(section().getByText("10,533 kg: perda de R$ 0,00 (0,1 g de Leite condensado)")).toBeInTheDocument();
+    expect(section().getByText("11,85 kg: sem sobras")).toBeInTheDocument();
+    expect(section().getByText("Creme de leite: sem embalagem conhecida.")).toBeInTheDocument();
+    expect(section().getByText("Leite condensado: sem custo médio.")).toBeInTheDocument();
+  });
+
+  it("produces a suggested quantity on request, within the same tolerance", async () => {
+    planning(() => ({ ok: true, data: WITH_WASTE }));
+    open();
+    await calculate();
+
+    await userEvent.click(await section().findByRole("button", { name: "Produzir 10,533 kg" }));
+
+    expect(screen.getByLabelText("Quantidade a produzir")).toHaveValue("10,533");
+    await waitFor(() =>
+      expect(planPreWeighing).toHaveBeenLastCalledWith({ productSku: BREAD.sku, quantity: "10.533" }, 20),
+    );
+  });
+
+  it("says when no quantity within the tolerance leaves less", async () => {
+    planning(() => ({
+      ok: true,
+      data: aPreWeighingPlan({
+        waste: {
+          tolerance: 20,
+          requested: { quantity: "10", loss: "0.00", leftovers: [] },
+          alternatives: [],
+          unpackaged: [],
+          uncosted: [],
+        },
+      }),
+    }));
+    open();
+    await calculate();
+
+    await screen.findByRole("region", { name: "Sobras de abertos" });
+    expect(section().getByText("10 kg: sem sobras")).toBeInTheDocument();
+    expect(section().getByText("Nenhuma quantidade até +20% reduz as sobras.")).toBeInTheDocument();
+  });
+
+  it("does not claim nothing leaves less when an ingredient without cost was left out of the comparison", async () => {
+    planning(() => ({
+      ok: true,
+      data: aPreWeighingPlan({
+        waste: {
+          tolerance: 20,
+          requested: { quantity: "10", loss: "0.00", leftovers: [{ product: MILK, leftover: "160", loss: null }] },
+          alternatives: [],
+          unpackaged: [],
+          uncosted: [MILK],
+        },
+      }),
+    }));
+    open();
+    await calculate();
+
+    await screen.findByRole("region", { name: "Sobras de abertos" });
+    expect(section().queryByText(/reduz as sobras/)).not.toBeInTheDocument();
+    expect(
+      section().getByText(
+        "Nenhuma quantidade até +20% reduz a perda calculada; o que não tem custo médio ficou fora da comparação.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no leftovers when the recipe takes nothing that cannot be kept", async () => {
+    planning();
+    open();
+    await calculate();
+
+    await screen.findByRole("heading", { name: "Plano para 10 kg de Pão francês" });
+    expect(screen.queryByRole("region", { name: "Sobras de abertos" })).not.toBeInTheDocument();
   });
 });

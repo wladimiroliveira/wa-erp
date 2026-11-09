@@ -57,6 +57,7 @@ describe("GET /v1/products", () => {
         kind: "MANUFACTURED",
         unit: "UNIT",
         isActive: false,
+        isStorableOnceOpened: true,
         minimumQuantity: null,
         packagings: [],
       },
@@ -66,6 +67,7 @@ describe("GET /v1/products", () => {
         kind: "GOODS",
         unit: "KILOGRAM",
         isActive: true,
+        isStorableOnceOpened: true,
         minimumQuantity: "12.5",
         packagings: [
           { id: bag!.id, content: "1", gtin: null, isActive: false },
@@ -186,6 +188,7 @@ describe("POST /v1/products", () => {
       ...FLOUR,
       sku: expect.any(String),
       isActive: true,
+      isStorableOnceOpened: true,
       minimumQuantity: null,
       packagings: [
         { id: expect.any(String), content: "0.38", gtin: null, isActive: true },
@@ -193,6 +196,16 @@ describe("POST /v1/products", () => {
       ],
     });
     expect(await testPrisma.product.findUnique({ where: { sku: response.json().sku } })).toMatchObject(FLOUR);
+  });
+
+  it("registers a product whose leftover is lost once opened, and changes it back", async () => {
+    const { headers } = await authenticateAs([Permission.CATALOG_CREATE, Permission.CATALOG_UPDATE]);
+
+    const created = await postProduct(headers, { ...FLOUR, isStorableOnceOpened: false });
+
+    expect(created.json().isStorableOnceOpened).toBe(false);
+    const patched = await patchProduct(headers, created.json().sku, { isStorableOnceOpened: true });
+    expect(patched.json().isStorableOnceOpened).toBe(true);
   });
 
   it("registers the minimum quantity the stock should keep", async () => {
@@ -326,6 +339,7 @@ describe("PATCH /v1/products/:sku", () => {
       kind: "GOODS",
       unit: "KILOGRAM",
       isActive: true,
+      isStorableOnceOpened: true,
       minimumQuantity: null,
       packagings: [{ id: expect.any(String), content: "1", gtin: null, isActive: true }],
     });

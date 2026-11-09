@@ -27,7 +27,17 @@ export function findProductWithRecipe(sku: string) {
         select: {
           yieldQuantity: true,
           ingredients: {
-            select: { quantity: true, product: { select: { ...productSelect, isActive: true } } },
+            select: {
+              quantity: true,
+              product: {
+                select: {
+                  ...productSelect,
+                  isActive: true,
+                  isStorableOnceOpened: true,
+                  stock: { select: { averageCost: true } },
+                },
+              },
+            },
             orderBy: { product: { description: "asc" } },
           },
         },

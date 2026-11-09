@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { createPreWeighing, planPreWeighing, type PreWeighingTarget } from "@/features/pre-weighings/actions";
 import { quantityOf } from "@/features/stock/stock-format";
 import { WEIGHING_PLACES, weighedOf } from "@/features/pre-weighings/weighing-units";
+import { WasteSection } from "@/features/pre-weighings/WasteSection";
 import type { MeasurementUnit, PreWeighing, PreWeighingPlan, Product } from "@/lib/api";
 import { formatDate } from "@/lib/dates";
 import { formatDecimal, isDecimalInput, toApiDecimal } from "@/lib/decimal";
@@ -27,11 +28,15 @@ import { compatibleUnits, convert, readableQuantity } from "@/shared/units";
 const targetFormSchema = z.object({
   productSku: z.string().min(1, "Escolha o produto."),
   quantity: positiveDecimal("Informe a quantidade, com até 6 casas decimais.", "A quantidade deve ser maior que zero."),
+  // How much more than asked for may be produced to leave less behind of what cannot be kept.
+  tolerance: z
+    .string()
+    .refine((typed) => /^\d{1,3}$/.test(typed) && Number(typed) <= 100, "Informe um número inteiro de 0 a 100."),
 });
 
 type TargetForm = z.infer<typeof targetFormSchema>;
 
-const EMPTY_TARGET: TargetForm = { productSku: "", quantity: "" };
+const EMPTY_TARGET: TargetForm = { productSku: "", quantity: "", tolerance: "20" };
 
 const WEIGHED_MESSAGE = `Informe o pesado, com até ${WEIGHING_PLACES} casas decimais.`;
 
@@ -217,7 +222,7 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
   );
 }
 
-type Planned = { target: PreWeighingTarget; plan: PreWeighingPlan };
+type Planned = { target: PreWeighingTarget; tolerance: number; plan: PreWeighingPlan };
 
 /** The active products that are manufactured: only those have a recipe to pre-weigh. The server page narrows the catalog to them. */
 export function PreWeighingPage({ products: offered }: { products: Product[] }) {
@@ -232,12 +237,12 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
 
   const form = useForm<TargetForm>({ resolver: zodResolver(targetFormSchema), defaultValues: EMPTY_TARGET });
 
-  function calculate(target: PreWeighingTarget): void {
+  function calculate(target: PreWeighingTarget, tolerance: number): void {
     setRecorded(null);
     setPlanFailure(null);
     startPlanning(async () => {
       try {
-        const result = await planPreWeighing(target);
+        const result = await planPreWeighing(target, tolerance);
 
         if (!result.ok) {
           setPlanned(null);
@@ -246,7 +251,7 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
         }
 
         setRound((current) => current + 1);
-        setPlanned({ target, plan: result.data });
+        setPlanned({ target, tolerance, plan: result.data });
       } catch (error) {
         setPlanned(null);
         setPlanFailure(messageForFailure(error));
@@ -269,7 +274,10 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
       {offered.length > 0 ? (
         <form
           onSubmit={form.handleSubmit((values) =>
-            calculate({ productSku: values.productSku, quantity: toApiDecimal(values.quantity) }),
+            calculate(
+              { productSku: values.productSku, quantity: toApiDecimal(values.quantity) },
+              Number(values.tolerance),
+            ),
           )}
           className="flex max-w-md flex-col gap-4"
           noValidate
@@ -293,6 +301,12 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
             {errors.quantity ? <p className="text-sm text-destructive">{errors.quantity.message}</p> : null}
           </div>
 
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="pre-weighing-tolerance">Aceitar até</Label>
+            <NumericInput id="pre-weighing-tolerance" className="w-32" trailing="%" {...form.register("tolerance")} />
+            {errors.tolerance ? <p className="text-sm text-destructive">{errors.tolerance.message}</p> : null}
+          </div>
+
           <Button type="submit" variant="outline" disabled={planning} className="self-start">
             Calcular
           </Button>
@@ -305,6 +319,17 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
         <p role="alert" className="text-sm text-destructive">
           {planFailure}
         </p>
+      ) : null}
+
+      {planned !== null && planned.plan.waste !== null ? (
+        <WasteSection
+          waste={planned.plan.waste}
+          unit={planned.plan.product.unit}
+          onProduce={(quantity) => {
+            form.setValue("quantity", formatDecimal(quantity));
+            calculate({ productSku: planned.target.productSku, quantity }, planned.tolerance);
+          }}
+        />
       ) : null}
 
       {planned !== null ? (

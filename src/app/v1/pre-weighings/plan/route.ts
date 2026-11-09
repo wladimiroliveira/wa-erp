@@ -16,7 +16,7 @@ export const GET = apiHandler(
     response: { 200: preWeighingPlanSchema, 404: messageSchema, 409: messageSchema },
   },
   async (request, reply) => {
-    const result = await previewPreWeighing(request.query.productSku, request.query.quantity);
+    const result = await previewPreWeighing(request.query.productSku, request.query.quantity, request.query.tolerance);
 
     if (!result.ok) return reply.code(result.status).send({ message: result.message });
 

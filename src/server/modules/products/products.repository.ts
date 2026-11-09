@@ -11,6 +11,7 @@ const PRODUCT_FIELDS = {
     kind: true,
     unit: true,
     isActive: true,
+    isStorableOnceOpened: true,
     stock: { select: { minimumQuantity: true } },
     packagings: { select: { id: true, content: true, gtin: true, isActive: true }, orderBy: { content: "asc" } },
   },
@@ -91,6 +92,7 @@ export function insertProduct({
   description: string;
   kind: ProductKind;
   unit: MeasurementUnit;
+  isStorableOnceOpened: boolean;
   minimumQuantity?: string;
   packagings: { content: string; gtin: string | null }[];
 }) {
@@ -112,7 +114,13 @@ export function updateProduct(
     minimumQuantity,
     packagings,
     ...changes
-  }: { description?: string; isActive?: boolean; minimumQuantity?: string | null; packagings?: PackagingWrite[] },
+  }: {
+    description?: string;
+    isActive?: boolean;
+    isStorableOnceOpened?: boolean;
+    minimumQuantity?: string | null;
+    packagings?: PackagingWrite[];
+  },
 ) {
   return prisma.$transaction(async (client) => {
     await client.product.update({ where: { sku }, data: changes, select: { sku: true } });

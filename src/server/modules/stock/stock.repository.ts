@@ -136,6 +136,8 @@ type UsableLot = {
   unitCost: Prisma.Decimal;
   expiresAt: Date | null;
   createdAt: Date;
+  /** What one packaging of the lot holds; null for a lot received loose. */
+  packageContent: Prisma.Decimal | null;
 };
 
 // The lots a quantity may be taken from, in the order they are to be used. An expired lot is not
@@ -145,7 +147,9 @@ async function usableLots(
   { productSku, today, lock }: { productSku: string; today: string; lock: boolean },
 ) {
   const held = await client.$queryRaw<UsableLot[]>`
-    SELECT id, quantity, unit_cost AS "unitCost", expires_at AS "expiresAt", created_at AS "createdAt"
+    SELECT id, quantity, unit_cost AS "unitCost", expires_at AS "expiresAt", created_at AS "createdAt",
+      -- A scalar subquery, not a join, so that FOR UPDATE locks the lots alone.
+      (SELECT content FROM product_packagings WHERE product_packagings.id = stock_lots.packaging_id) AS "packageContent"
     FROM stock_lots
     WHERE product_sku = ${productSku}::uuid
       AND quantity > 0

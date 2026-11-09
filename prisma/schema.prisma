@@ -129,24 +129,26 @@ enum MeasurementUnit {
 }
 
 model Product {
-  sku              String                @id @default(uuid(7)) @db.Uuid
-  description      String                @unique
-  kind             ProductKind
-  unit             MeasurementUnit
-  stock            ProductStock?
-  lots             StockLot[]
-  movements        StockMovement[]
-  recipe           Recipe?
-  usedIn           RecipeIngredient[]
-  preWeighings     PreWeighing[]
-  preWeighingItems PreWeighingItem[]
-  productionItems  ProductionItem[]
-  productionInputs ProductionItemInput[]
-  markup           ProductMarkup?
-  packagings       ProductPackaging[]
-  isActive         Boolean               @default(true) @map("is_active")
-  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sku                  String                @id @default(uuid(7)) @db.Uuid
+  description          String                @unique
+  kind                 ProductKind
+  unit                 MeasurementUnit
+  // Whether what is left of an opened packaging can be stored for later productions.
+  isStorableOnceOpened Boolean               @default(true) @map("is_storable_once_opened")
+  stock                ProductStock?
+  lots                 StockLot[]
+  movements            StockMovement[]
+  recipe               Recipe?
+  usedIn               RecipeIngredient[]
+  preWeighings         PreWeighing[]
+  preWeighingItems     PreWeighingItem[]
+  productionItems      ProductionItem[]
+  productionInputs     ProductionItemInput[]
+  markup               ProductMarkup?
+  packagings           ProductPackaging[]
+  isActive             Boolean               @default(true) @map("is_active")
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("products")
 }

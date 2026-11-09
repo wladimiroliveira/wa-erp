@@ -66,6 +66,7 @@ export function aProduct(over: Partial<Product> = {}): Product {
     kind: "GOODS",
     unit: "KILOGRAM",
     isActive: true,
+    isStorableOnceOpened: true,
     minimumQuantity: null,
     packagings: [],
     ...over,
@@ -194,6 +195,7 @@ export function aPreWeighingPlan(over: Partial<PreWeighingPlan> = {}): PreWeighi
         shortfall: "0",
       },
     ],
+    waste: null,
     ...over,
   };
 }

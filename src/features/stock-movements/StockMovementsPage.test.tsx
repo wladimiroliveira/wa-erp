@@ -70,12 +70,28 @@ describe("StockMovementsPage", () => {
     expect(within(consumption!).getByText("Saída")).toBeInTheDocument();
     expect(within(consumption!).getByText("Consumo na produção")).toBeInTheDocument();
     expect(within(consumption!).getByText("−2,5 kg")).toBeInTheDocument();
-    expect(within(consumption!).getByText("R$ 4,25")).toBeInTheDocument();
+    expect(within(consumption!).getByText("R$ 4,25/kg")).toBeInTheDocument();
     expect(within(consumption!).getByText("Ana")).toBeInTheDocument();
 
     expect(within(entry!).getByText("Entrada")).toBeInTheDocument();
     expect(within(entry!).getByText("Lançamento de entrada")).toBeInTheDocument();
     expect(within(entry!).getByText("+10 kg")).toBeInTheDocument();
+  });
+
+  it("shows the cost of a product kept in grams per kilogram", async () => {
+    renderPage(
+      onePage([
+        aStockMovement({
+          product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Castanha", unit: "GRAM" },
+          quantity: "380",
+          unitCost: "0.03398",
+        }),
+      ]),
+    );
+
+    const [, movement] = await screen.findAllByRole("row");
+
+    expect(within(movement!).getByText("R$ 33,98/kg")).toBeInTheDocument();
   });
 
   it("says nothing has moved instead of showing a bare table", async () => {

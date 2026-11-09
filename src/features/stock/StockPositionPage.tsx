@@ -6,10 +6,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import Link from "next/link";
-import { dayOf, moneyOf, quantityOf } from "@/features/stock/stock-format";
+import { amountOf, dayOf, unitCostOf } from "@/features/stock/stock-format";
 import { needsAttention, statusReading } from "@/features/stock/stock-status";
 import type { StockPosition } from "@/lib/api";
 import { formatMoney } from "@/lib/decimal";
+import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
 
 export function StockPositionPage({ position }: { position: StockPosition }) {
@@ -75,16 +76,21 @@ export function StockPositionPage({ position }: { position: StockPosition }) {
                     </Link>
                   ),
                 },
-                { key: "quantity", header: "Saldo", cell: (item) => quantityOf(item.quantity, item.product.unit) },
-                {
-                  key: "minimum",
-                  header: "Mínimo",
-                  cell: (item) => quantityOf(item.minimumQuantity, item.product.unit),
-                },
+                { key: "quantity", header: "Saldo", cell: (item) => amountOf(item.quantity) },
+                { key: "unit", header: "Un.", cell: (item) => unitLabel(item.product.unit) },
+                { key: "minimum", header: "Mínimo", cell: (item) => amountOf(item.minimumQuantity) },
                 { key: "lots", header: "Lotes", cell: (item) => item.lotCount },
                 { key: "next-expiry", header: "Próxima validade", cell: (item) => dayOf(item.nextExpiresAt) },
-                { key: "last-cost", header: "Último custo", cell: (item) => moneyOf(item.lastEntryCost) },
-                { key: "average-cost", header: "Custo médio", cell: (item) => moneyOf(item.averageCost) },
+                {
+                  key: "last-cost",
+                  header: "Último custo",
+                  cell: (item) => unitCostOf(item.lastEntryCost, item.product.unit),
+                },
+                {
+                  key: "average-cost",
+                  header: "Custo médio",
+                  cell: (item) => unitCostOf(item.averageCost, item.product.unit),
+                },
                 { key: "value", header: "Valor", cell: (item) => formatMoney(item.value) },
                 {
                   key: "status",

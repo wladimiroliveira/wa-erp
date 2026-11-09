@@ -397,11 +397,69 @@ describe("GET /v1/stock/:sku", () => {
           value: "18.00",
           createdAt: sooner.createdAt.toISOString(),
           status: "EXPIRING_SOON",
+          packaging: null,
         },
         expect.objectContaining({ id: later.id, expiresAt: daysFromToday(90), supplier: null, status: "OK" }),
         expect.objectContaining({ id: never.id, expiresAt: null, value: "2.00", status: "OK" }),
       ],
+      packagings: [],
     });
+  });
+
+  it("tells the packaging of each lot, and what each packaging was bought at, depleted lots included", async () => {
+    const { headers } = await authenticateAs([Permission.REPORTS_READ]);
+    const nuts = await testPrisma.product.create({ data: { description: "NUTS", kind: "GOODS", unit: "GRAM" } });
+    const mill = await testPrisma.supplier.create({ data: { name: "Santa Clara Mill" } });
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "380" } });
+    const unused = await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "1000" } });
+    await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "5000", isActive: false } });
+    const lotIn = (quantity: string, price: string, createdAt: string, supplierId?: string) =>
+      testPrisma.stockLot.create({
+        data: {
+          productSku: nuts.sku,
+          supplierId,
+          packagingId: bag.id,
+          packageCount: 2,
+          packagePrice: price,
+          initialQuantity: "760",
+          quantity,
+          unitCost: "0.033",
+          createdAt: new Date(createdAt),
+        },
+      });
+    const depleted = await lotIn("0", "12.50", "2026-10-01T12:00:00Z");
+    const held = await lotIn("760", "12.91", "2026-11-05T12:00:00Z", mill.id);
+    const loose = await createLot(nuts.sku, { quantity: "100", unitCost: "0.03" });
+
+    const response = (await getProductStock(headers, nuts.sku)).json();
+
+    expect(response.lots).toEqual([
+      expect.objectContaining({ id: held.id, packaging: { id: bag.id, content: "380", count: 2, price: "12.91" } }),
+      expect.objectContaining({ id: loose.id, packaging: null }),
+    ]);
+    expect(response.packagings).toEqual([
+      {
+        id: bag.id,
+        content: "380",
+        isActive: true,
+        lastEntry: {
+          price: "12.91",
+          createdAt: "2026-11-05T12:00:00.000Z",
+          supplier: { id: mill.id, name: "Santa Clara Mill" },
+        },
+        history: [
+          {
+            lotId: held.id,
+            createdAt: "2026-11-05T12:00:00.000Z",
+            supplier: { id: mill.id, name: "Santa Clara Mill" },
+            count: 2,
+            price: "12.91",
+          },
+          { lotId: depleted.id, createdAt: "2026-10-01T12:00:00.000Z", supplier: null, count: 2, price: "12.5" },
+        ],
+      },
+      { id: unused.id, content: "1000", isActive: true, lastEntry: null, history: [] },
+    ]);
   });
 
   it("puts the lot that came in first ahead of another that expires on the same day", async () => {

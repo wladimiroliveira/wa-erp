@@ -96,14 +96,30 @@ describe("stock lot packaging", () => {
     const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
     const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
 
-    await expect(testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id } })).rejects.toThrow(
-      /ck_stock_lots_packaging_count_together/,
-    );
+    await expect(
+      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packagePrice: "1" } }),
+    ).rejects.toThrow(/ck_stock_lots_packaging_count_together/);
     await expect(testPrisma.stockLot.create({ data: { ...lot, packageCount: 2 } })).rejects.toThrow(
       /ck_stock_lots_packaging_count_together/,
     );
     await expect(
-      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packageCount: 2 } }),
+      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packageCount: 2, packagePrice: "1" } }),
     ).resolves.toBeDefined();
+  });
+
+  it("refuses a packaging without its price, a price without a packaging and a negative price", async () => {
+    const product = await createProduct();
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
+    const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
+
+    await expect(
+      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packageCount: 2 } }),
+    ).rejects.toThrow(/ck_stock_lots_package_price_together/);
+    await expect(testPrisma.stockLot.create({ data: { ...lot, packagePrice: "1" } })).rejects.toThrow(
+      /ck_stock_lots_package_price_together/,
+    );
+    await expect(
+      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packageCount: 2, packagePrice: "-1" } }),
+    ).rejects.toThrow(/ck_stock_lots_package_price_non_negative/);
   });
 });

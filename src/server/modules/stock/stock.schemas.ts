@@ -60,6 +60,29 @@ export const productStockSchema = stockItemSchema.extend({
       value: z.string(),
       createdAt: z.iso.datetime(),
       status: z.enum(LotStatus),
+      // The packaging the lot came in, its content in the product's unit, and the price of one; null for a loose lot.
+      packaging: z.object({ id: z.uuid(), content: z.string(), count: z.number().int(), price: z.string() }).nullable(),
+    }),
+  ),
+  // What each packaging of the product was bought at, the smallest first.
+  packagings: z.array(
+    z.object({
+      id: z.uuid(),
+      content: z.string(),
+      isActive: z.boolean(),
+      lastEntry: z
+        .object({ price: z.string(), createdAt: z.iso.datetime(), supplier: supplierSchema.nullable() })
+        .nullable(),
+      // Every entry of the packaging, the newest first, depleted lots included.
+      history: z.array(
+        z.object({
+          lotId: z.uuid(),
+          createdAt: z.iso.datetime(),
+          supplier: supplierSchema.nullable(),
+          count: z.number().int(),
+          price: z.string(),
+        }),
+      ),
     }),
   ),
 });

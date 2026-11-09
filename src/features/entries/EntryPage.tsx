@@ -15,7 +15,7 @@ import { DeficitDialog } from "@/features/entries/DeficitDialog";
 import { createEntry, type CreateEntryResult } from "@/features/entries/actions";
 import { findByGtin } from "@/features/entries/barcode";
 import { MAX_PACKAGE_COUNT } from "@/server/modules/entries/entries.schemas";
-import { quantityOf } from "@/features/stock/stock-format";
+import { packagingOf, quantityOf } from "@/features/stock/stock-format";
 import type { CreateEntryBody, Entry, Product, Supplier } from "@/lib/api";
 import { formatDate, todayIso } from "@/lib/dates";
 import { formatDecimal, formatMoney, isDecimalInput, toApiDecimal } from "@/lib/decimal";
@@ -23,7 +23,6 @@ import { messageForFailure } from "@/lib/form-errors";
 import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
 import { packagedQuantity, packageUnitCost } from "@/shared/packaging-entry";
-import { readableQuantity } from "@/shared/units";
 
 /** What the packaging select holds when the entry is in the product's own unit. */
 const LOOSE = "LOOSE";
@@ -117,20 +116,13 @@ function toBody(values: EntryForm): CreateEntryBody {
 const defaultPackagingOf = (product: Product | undefined) =>
   product === undefined ? "" : (product.packagings.find(({ isActive }) => isActive)?.id ?? "");
 
-/** How a packaging reads in a list: its content in the unit that shows it best. */
-const packagingLabel = (content: string, unit: Product["unit"]) => {
-  const readable = readableQuantity(content, unit);
-
-  return quantityOf(readable.quantity, readable.unit);
-};
-
 /** What the recorded entry amounts to: "10 × 380 g (3,8 kg)" when it came in packagings. */
 function receivedOf({ quantity, product, lot }: Entry): string {
   const total = quantityOf(quantity, product.unit);
 
   if (lot.packaging === null) return total;
 
-  return `${lot.packaging.count} × ${packagingLabel(lot.packaging.content, product.unit)} (${total})`;
+  return `${lot.packaging.count} × ${packagingOf(lot.packaging.content, product.unit)} (${total})`;
 }
 
 /** The 409 that carries `deficit` is the negative balance waiting to be settled, not a refusal. */
@@ -302,7 +294,7 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
               <NativeSelect key={chosenSku} id="entry-packaging" {...form.register("packaging")}>
                 {offered.map(({ id, content }) => (
                   <option key={id} value={id}>
-                    {packagingLabel(content, chosen!.unit)}
+                    {packagingOf(content, chosen!.unit)}
                   </option>
                 ))}
                 <option value={LOOSE}>Sem embalagem ({chosenUnit})</option>

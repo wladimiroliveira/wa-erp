@@ -52,8 +52,8 @@ export const entrySchema = z.object({
     expiresAt: z.iso.date().nullable(),
     supplier: supplierSchema.nullable(),
     quantity: z.string(),
-    // The packaging the lot came in, with its content in the product's unit; null for a loose entry.
-    packaging: z.object({ id: z.uuid(), content: z.string(), count: z.number().int() }).nullable(),
+    // The packaging the lot came in, with its content in the product's unit and the price of one; null for a loose entry.
+    packaging: z.object({ id: z.uuid(), content: z.string(), count: z.number().int(), price: z.string() }).nullable(),
   }),
   stock: z.object({ quantity: z.string(), lastEntryCost: z.string(), averageCost: z.string() }),
 });

@@ -10,6 +10,9 @@ describe("stock schema", () => {
   it("remembers which packaging a lot came in and how many of them, or neither", () => {
     expect(SCHEMA).toMatch(fieldOf("StockLot", String.raw`packagingId\s+String\?\s+@map\("packaging_id"\) @db\.Uuid`));
     expect(SCHEMA).toMatch(fieldOf("StockLot", String.raw`packageCount\s+Int\?\s+@map\("package_count"\)`));
+    expect(SCHEMA).toMatch(
+      fieldOf("StockLot", String.raw`packagePrice\s+Decimal\?\s+@map\("package_price"\) @db\.Decimal\(14, 2\)`),
+    );
     expect(SCHEMA).toMatch(fieldOf("StockLot", String.raw`packaging\s+ProductPackaging\?.*onDelete: Restrict`));
     expect(SCHEMA).toMatch(
       fieldOf("StockLot", String.raw`@@index\(\[packagingId\], map: "idx_stock_lots_packaging_id"\)`),

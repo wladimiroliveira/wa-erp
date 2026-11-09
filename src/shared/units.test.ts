@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MeasurementUnit } from "./enums";
-import { compatibleUnits, convert, IncompatibleUnitsError, readableQuantity } from "./units";
+import { compatibleUnits, convert, costPerReadableUnit, IncompatibleUnitsError, readableQuantity } from "./units";
 
 describe("convert", () => {
   it.each<[string, MeasurementUnit, MeasurementUnit, string]>([
@@ -45,4 +45,18 @@ describe("readableQuantity", () => {
   ])("%s %s reads best as %o", (quantity, unit, expected) => {
     expect(readableQuantity(quantity, unit)).toEqual(expected);
   });
+});
+
+describe("costPerReadableUnit", () => {
+  it.each<[string, MeasurementUnit, string, MeasurementUnit]>([
+    ["0.03398", "GRAM", "33.98", "KILOGRAM"],
+    ["0.0045", "MILLILITER", "4.5", "LITER"],
+    ["0.000001", "GRAM", "0.001", "KILOGRAM"],
+    ["0", "GRAM", "0", "KILOGRAM"],
+    ["12.5", "KILOGRAM", "12.5", "KILOGRAM"],
+    ["3", "LITER", "3", "LITER"],
+    ["2.75", "UNIT", "2.75", "UNIT"],
+  ])("reads a cost of %s per %s as %s per %s", (cost, unit, expected, expectedUnit) =>
+    expect(costPerReadableUnit(cost, unit)).toEqual({ cost: expected, unit: expectedUnit }),
+  );
 });

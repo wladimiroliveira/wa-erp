@@ -18,5 +18,12 @@ export function fromScaled(value: bigint, places: number): string {
 
 export const divideHalfUp = (dividend: bigint, divisor: bigint) => (2n * dividend + divisor) / (2n * divisor);
 
+/** A non-negative decimal string rounded half up to `places` (at least 1), written with exactly that many. */
+export function roundHalfUp(value: string, places: number): string {
+  const digits = Math.max(places, value.split(".")[1]?.length ?? 0);
+
+  return fromScaled(divideHalfUp(toScaled(value, digits), scale(digits - places)), places);
+}
+
 /** An amount of money as it is shown: in cents, rounded half up. */
-export const roundToCents = (value: string): string => fromScaled(divideHalfUp(toScaled(value, 6), scale(4)), 2);
+export const roundToCents = (value: string): string => roundHalfUp(value, 2);

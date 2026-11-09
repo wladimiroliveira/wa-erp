@@ -48,6 +48,24 @@ describe("PreWeighingDetailPage", () => {
     expect(within(salt!).getByText("118,5 g")).toBeInTheDocument();
   });
 
+  it("shows a small ingredient in the unit its plan reads best in, with at most 3 places", () => {
+    open(
+      aPreWeighing({
+        items: [
+          {
+            product: { sku: "sku-3", description: "Fermento", unit: "KILOGRAM" },
+            plannedQuantity: "0.0123456",
+            weighedQuantity: "0.0125",
+          },
+        ],
+      }),
+    );
+
+    const [, yeast] = screen.getAllByRole("row");
+    expect(within(yeast!).getByText("12,346 g")).toBeInTheDocument();
+    expect(within(yeast!).getByText("12,5 g")).toBeInTheDocument();
+  });
+
   it("leads back to the list", () => {
     open();
 

@@ -5,6 +5,7 @@ import { createEntry, type CreateEntryResult } from "@/features/entries/actions"
 import { EntryPage } from "@/features/entries/EntryPage";
 import type { CreateEntryBody, Product, Supplier } from "@/lib/api";
 import { todayIso } from "@/lib/dates";
+import { ENTRY_REFUSALS } from "@/server/modules/entries/entries.schemas";
 import { renderWithProviders } from "@/tests/render";
 import { aPackaging, aProduct, aSupplier, anEntry } from "@/tests/samples";
 
@@ -361,6 +362,36 @@ describe("EntryPage, by packaging", () => {
 
     expect(await screen.findByText("Código não cadastrado em nenhuma embalagem ativa.")).toBeInTheDocument();
     expect(screen.getByLabelText("Produto")).toHaveValue("");
+  });
+
+  it("lets go of the unknown-code message as soon as another code is typed", async () => {
+    renderStock();
+
+    await scan("0000000000000");
+    await screen.findByText("Código não cadastrado em nenhuma embalagem ativa.");
+    await userEvent.type(screen.getByLabelText("Código de barras"), "7");
+
+    expect(screen.queryByText("Código não cadastrado em nenhuma embalagem ativa.")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [404, ENTRY_REFUSALS.packagingNotFound, "Essa embalagem não existe mais. Atualize a página."],
+    [409, ENTRY_REFUSALS.packagingInactive, "Essa embalagem foi inativada e não recebe entradas. Atualize a página."],
+    [400, ENTRY_REFUSALS.quantityTooLarge, "Essa quantidade de embalagens passa do que o estoque guarda."],
+    [
+      400,
+      ENTRY_REFUSALS.costTooLarge,
+      "Esse preço por embalagem dá um custo por unidade maior do que o estoque guarda.",
+    ],
+  ] as const)("says what the refusal %i %j of a packaged entry is, in Portuguese", async (status, message, shown) => {
+    createEntryMock.mockResolvedValue({ ok: false, status, message });
+    renderStock();
+
+    await scan(BAG.gtin!);
+    await fillPackaged();
+    await userEvent.click(screen.getByRole("button", { name: "Lançar entrada" }));
+
+    expect(await screen.findByText(shown)).toBeInTheDocument();
   });
 
   it("offers the active packagings and the product's own unit, the first packaging chosen", async () => {

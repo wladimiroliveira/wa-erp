@@ -62,6 +62,14 @@ describe("createProduct", () => {
     expect(repository.insertProduct).toHaveBeenCalledWith(expect.objectContaining({ description: "AÇÚCAR" }));
   });
 
+  it("keeps a product once opened unless it is said otherwise", () => {
+    const body = { description: "leite condensado", kind: "GOODS", unit: "GRAM" };
+
+    expect(createProductBodySchema.parse(body).isStorableOnceOpened).toBe(true);
+    expect(createProductBodySchema.parse({ ...body, isStorableOnceOpened: false }).isStorableOnceOpened).toBe(false);
+    expect(updateProductBodySchema.parse({ isStorableOnceOpened: false })).toEqual({ isStorableOnceOpened: false });
+  });
+
   it("writes each packaging content in the product's unit", async () => {
     await create({
       packagings: [

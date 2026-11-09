@@ -3,7 +3,7 @@ import { localToday, toOptionalDateString } from "@/server/lib/dates";
 import { toPage } from "@/server/lib/pagination";
 import { fail, succeed, type Result } from "@/server/lib/result";
 import { suggestLots } from "@/server/modules/stock/stock.repository";
-import { planQuantity } from "./pre-weighings.plan";
+import { planQuantity, suggestQuantities, type Suggestion } from "./pre-weighings.plan";
 import {
   findPreWeighingById,
   findProductWithRecipe,
@@ -17,7 +17,15 @@ type ProductSummary = { sku: string; description: string; unit: MeasurementUnit 
 export type PreWeighingPlan = {
   product: ProductSummary;
   quantity: Prisma.Decimal;
-  items: { product: ProductSummary; plannedQuantity: Prisma.Decimal }[];
+  yieldQuantity: Prisma.Decimal;
+  items: {
+    product: ProductSummary;
+    plannedQuantity: Prisma.Decimal;
+    // What the waste of the plan is counted from.
+    recipeQuantity: Prisma.Decimal;
+    isStorableOnceOpened: boolean;
+    averageCost: Prisma.Decimal | null;
+  }[];
 };
 
 type PlanFailure = 404 | 409;
@@ -50,10 +58,16 @@ export async function planPreWeighing(
 
     if (plannedQuantity === null) return fail(409, "Quantity is out of range for this recipe.");
 
-    items.push({ product: summaryOf(ingredient.product), plannedQuantity });
+    items.push({
+      product: summaryOf(ingredient.product),
+      plannedQuantity,
+      recipeQuantity: ingredient.quantity,
+      isStorableOnceOpened: ingredient.product.isStorableOnceOpened,
+      averageCost: ingredient.product.stock?.averageCost ?? null,
+    });
   }
 
-  return succeed({ product: summaryOf(product), quantity: new Prisma.Decimal(quantity), items });
+  return succeed({ product: summaryOf(product), quantity: new Prisma.Decimal(quantity), yieldQuantity, items });
 }
 
 /** A pre-weighing as the screens and the mobile app read it: every amount as a decimal string. */
@@ -71,16 +85,56 @@ export const presentPreWeighing = (preWeighing: PreWeighingRecord) => ({
 
 export type PresentedPreWeighing = ReturnType<typeof presentPreWeighing>;
 
+const presentSuggestion = ({ quantity, loss, leftovers }: Suggestion) => ({
+  quantity: quantity.toString(),
+  loss: loss.toFixed(2),
+  leftovers: leftovers.map(({ product, leftover, loss: lost }) => ({
+    product,
+    leftover: leftover.toString(),
+    loss: lost === null ? null : lost.toFixed(2),
+  })),
+});
+
+// What the opened packagings of the ingredients that cannot be kept leave behind, and quantities
+// that leave less. Each is counted in the packaging of the first lot it would be weighed from.
+function wasteOf(plan: PreWeighingPlan, firstPackageContents: (Prisma.Decimal | null)[], tolerance: number) {
+  const lost = plan.items.flatMap((item, index) =>
+    item.isStorableOnceOpened ? [] : [{ ...item, content: firstPackageContents[index] ?? null }],
+  );
+
+  if (lost.length === 0) return null;
+
+  const counted = lost.flatMap(({ content, ...item }) => (content === null ? [] : [{ ...item, content }]));
+  const { requested, alternatives } = suggestQuantities({
+    quantity: plan.quantity,
+    yieldQuantity: plan.yieldQuantity,
+    unit: plan.product.unit,
+    tolerance,
+    ingredients: counted,
+  });
+
+  return {
+    tolerance,
+    requested: presentSuggestion(requested),
+    alternatives: alternatives.map(presentSuggestion),
+    unpackaged: lost.filter(({ content }) => content === null).map(({ product }) => product),
+    uncosted: counted.filter(({ averageCost }) => averageCost === null).map(({ product }) => product),
+  };
+}
+
 // The plan with, for each ingredient, where to weigh it from as the stock stands now.
-export async function previewPreWeighing(productSku: string, quantity: string) {
+export async function previewPreWeighing(productSku: string, quantity: string, tolerance = 20) {
   const result = await planPreWeighing(productSku, quantity);
 
   if (!result.ok) return result;
 
   const today = localToday();
+  const firstPackageContents: (Prisma.Decimal | null)[] = [];
   const items = await Promise.all(
-    result.data.items.map(async ({ product, plannedQuantity }) => {
+    result.data.items.map(async ({ product, plannedQuantity }, index) => {
       const { takes, shortfall } = await suggestLots({ productSku: product.sku, quantity: plannedQuantity, today });
+
+      firstPackageContents[index] = takes[0]?.lot.packageContent ?? null;
 
       return {
         product,
@@ -95,7 +149,12 @@ export async function previewPreWeighing(productSku: string, quantity: string) {
     }),
   );
 
-  return succeed({ product: result.data.product, quantity: result.data.quantity.toString(), items });
+  return succeed({
+    product: result.data.product,
+    quantity: result.data.quantity.toString(),
+    items,
+    waste: wasteOf(result.data, firstPackageContents, tolerance),
+  });
 }
 
 export async function recordPreWeighing(input: {

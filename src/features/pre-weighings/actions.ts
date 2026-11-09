@@ -30,17 +30,17 @@ const LIST_PATH = "/pre-weighings";
 const INVALID_INPUT = "Invalid input.";
 const DENIED = "Permission denied.";
 
-/** The plan for a target, with the lots to weigh from as the stock stands now. */
-export async function planPreWeighing(target: PreWeighingTarget): Promise<PlanResult> {
+/** The plan for a target, with the lots to weigh from as the stock stands now and, within `tolerance` percent, quantities that waste less. */
+export async function planPreWeighing(target: PreWeighingTarget, tolerance?: number): Promise<PlanResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
 
-  const parsed = preWeighingPlanQuerySchema.safeParse(target);
+  const parsed = preWeighingPlanQuerySchema.safeParse({ ...target, tolerance });
 
   if (!parsed.success) return fail(400, INVALID_INPUT);
 
-  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity);
+  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity, parsed.data.tolerance);
 }
 
 export async function createPreWeighing(body: CreatePreWeighingBody): Promise<PreWeighingResult> {

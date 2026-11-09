@@ -21,6 +21,8 @@ export const packagingSchema = z.object({
 export const productSchema = productSummarySchema.extend({
   kind: productKindSchema,
   isActive: z.boolean(),
+  // Whether what is left of an opened packaging can be stored; one that cannot is lost.
+  isStorableOnceOpened: z.boolean(),
   // The quantity below which the stock asks for replenishment; null when none was set.
   minimumQuantity: z.string().nullable(),
   // Ordered by content, the smallest first.
@@ -78,6 +80,7 @@ export const createProductBodySchema = z.object({
   description: descriptionSchema,
   kind: productKindSchema,
   unit: measurementUnitSchema,
+  isStorableOnceOpened: z.boolean().default(true),
   minimumQuantity: positiveDecimalSchema.optional(),
   packagings: packagingList(createPackagingSchema).optional(),
 });
@@ -87,6 +90,7 @@ export const updateProductBodySchema = z
   .object({
     description: descriptionSchema.optional(),
     isActive: z.boolean().optional(),
+    isStorableOnceOpened: z.boolean().optional(),
     minimumQuantity: positiveDecimalSchema.nullable().optional(),
     // The whole list wanted: a stored packaging left out of it is removed. Absent, nothing changes.
     packagings: packagingList(updatePackagingSchema).optional(),

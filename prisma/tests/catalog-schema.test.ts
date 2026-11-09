@@ -59,6 +59,12 @@ describe("catalog schema", () => {
     expect(SCHEMA).toMatch(productField(String.raw`isActive\s+Boolean\s+@default\(true\)\s+@map\("is_active"\)`));
   });
 
+  it("says whether a product keeps once its packaging is opened, keeping by default", () => {
+    expect(SCHEMA).toMatch(
+      productField(String.raw`isStorableOnceOpened\s+Boolean\s+@default\(true\)\s+@map\("is_storable_once_opened"\)`),
+    );
+  });
+
   it("violates no rule of the table convention", () => {
     expect(findSchemaConventionViolations(SCHEMA)).toEqual([]);
   });

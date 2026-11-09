@@ -6,7 +6,11 @@ import { listsEachProductOnce, productSummarySchema } from "@/server/modules/pro
 // The quantity is how much of the product is to be produced, in the unit of the product.
 const targetSchema = { productSku: z.uuid(), quantity: positiveDecimalSchema };
 
-export const preWeighingPlanQuerySchema = z.object(targetSchema);
+// How much more than asked for, in percent, a production may be to leave less behind of what cannot be kept.
+export const preWeighingPlanQuerySchema = z.object({
+  ...targetSchema,
+  tolerance: z.coerce.number().int().min(0).max(100).default(20),
+});
 
 export const createPreWeighingBodySchema = z.object({
   ...targetSchema,
@@ -26,6 +30,13 @@ export const listPreWeighingsQuerySchema = pageQuerySchema.extend({
     .optional(),
 });
 
+// A quantity to produce and what it leaves of the opened packagings, the money lost in cents.
+const wasteSuggestionSchema = z.object({
+  quantity: z.string(),
+  loss: z.string(),
+  leftovers: z.array(z.object({ product: productSummarySchema, leftover: z.string(), loss: z.string().nullable() })),
+});
+
 export const preWeighingPlanSchema = z.object({
   product: productSummarySchema,
   quantity: z.string(),
@@ -38,6 +49,19 @@ export const preWeighingPlanSchema = z.object({
       shortfall: z.string(),
     }),
   ),
+  // What the opened packagings of the ingredients that cannot be kept would leave behind; null when
+  // the recipe takes none of them.
+  waste: z
+    .object({
+      tolerance: z.number().int(),
+      requested: wasteSuggestionSchema,
+      // Quantities up to `tolerance` percent more that lose less, the lowest loss first.
+      alternatives: z.array(wasteSuggestionSchema),
+      // Ingredients left out of the count: no packaging is known for them, or no average cost.
+      unpackaged: z.array(productSummarySchema),
+      uncosted: z.array(productSummarySchema),
+    })
+    .nullable(),
 });
 
 export const preWeighingSchema = z.object({

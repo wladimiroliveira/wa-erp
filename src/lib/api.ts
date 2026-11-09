@@ -103,6 +103,8 @@ export type PackagingEntry = PackagingCost["history"][number];
 export type LotStatus = StockLot["status"];
 
 export type PreWeighingPlan = z.output<typeof preWeighingPlanSchema>;
+export type PreWeighingWaste = NonNullable<PreWeighingPlan["waste"]>;
+export type WasteSuggestion = PreWeighingWaste["requested"];
 export type CreatePreWeighingBody = z.input<typeof createPreWeighingBodySchema>;
 export type PreWeighing = z.output<typeof preWeighingSchema>;
 export type PreWeighingPage = z.output<typeof preWeighingPageSchema>;

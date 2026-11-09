@@ -94,7 +94,58 @@ describe("GET /v1/pre-weighings/plan", () => {
           shortfall: "30",
         },
       ],
+      waste: null,
     });
+  });
+
+  it("prices what the cans that cannot be kept leave behind, and offers a quantity that closes them", async () => {
+    const { headers } = await canRead();
+    const pudding = await createProduct("Pudding", { kind: "MANUFACTURED" });
+    const milk = await testPrisma.product.create({
+      data: { description: "Condensed milk", kind: "GOODS", unit: "GRAM", isStorableOnceOpened: false },
+    });
+    const can = await testPrisma.productPackaging.create({ data: { productSku: milk.sku, content: "395" } });
+    await testPrisma.recipe.create({
+      data: {
+        productSku: pudding.sku,
+        yieldQuantity: "1",
+        ingredients: { create: [{ productSku: milk.sku, quantity: "300" }] },
+      },
+    });
+    await testPrisma.productStock.create({ data: { productSku: milk.sku, quantity: "3950", averageCost: "0.02" } });
+    await testPrisma.stockLot.create({
+      data: {
+        productSku: milk.sku,
+        packagingId: can.id,
+        packageCount: 10,
+        packagePrice: "7.90",
+        initialQuantity: "3950",
+        quantity: "3950",
+        unitCost: "0.02",
+      },
+    });
+
+    const response = await getPlan(headers, { productSku: pudding.sku, quantity: "10", tolerance: "20" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().waste).toMatchObject({
+      tolerance: 20,
+      requested: {
+        quantity: "10",
+        loss: "3.20",
+        leftovers: [{ product: { sku: milk.sku }, leftover: "160", loss: "3.20" }],
+      },
+      unpackaged: [],
+      uncosted: [],
+    });
+    expect(response.json().waste.alternatives[0]).toMatchObject({ quantity: "10.533", loss: "0.00" });
+  });
+
+  it("answers 400 for a tolerance out of 0 to 100", async () => {
+    const { headers } = await canRead();
+    const { dough } = await createDough();
+
+    expect((await getPlan(headers, { productSku: dough.sku, quantity: "10", tolerance: "101" })).statusCode).toBe(400);
   });
 
   it("tells which lots to weigh each ingredient from, the first to expire first, leaving expired ones out", async () => {

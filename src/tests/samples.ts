@@ -230,6 +230,7 @@ export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionI
         product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM" },
         quantity: "6",
         unitCost: null,
+        leftovers: [],
       },
     ],
     ...over,
@@ -243,6 +244,7 @@ export function aProduction(over: Partial<Production> = {}): Production {
     createdAt: "2026-10-14T12:00:00.000Z",
     finishedAt: null,
     canceledAt: null,
+    hasLeftoversInCost: null,
     items: [aProductionItem()],
     ...over,
   };

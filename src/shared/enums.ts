@@ -55,6 +55,7 @@ export const STOCK_MOVEMENT_TYPES = [
   "PRODUCTION_OUTPUT",
   "BALANCE_ADJUSTMENT",
   "LOSS",
+  "OPENED_LEFTOVER",
 ] as const satisfies readonly PrismaStockMovementType[];
 
 export const stockMovementTypeSchema = z.enum(STOCK_MOVEMENT_TYPES);

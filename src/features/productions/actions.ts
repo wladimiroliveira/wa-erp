@@ -18,6 +18,7 @@ import {
 import * as productions from "@/server/modules/productions/productions.service";
 import type {
   FinishProductionBody,
+  LeftoversPreview,
   PreWeighingPage,
   PreWeighingPlan,
   Production,
@@ -27,6 +28,7 @@ import type {
 } from "@/lib/api";
 
 export type ProductionResult = { ok: true; data: Production } | Failure;
+export type LeftoversPreviewResult = { ok: true; data: LeftoversPreview } | Failure;
 export type ProductionPageResult = { ok: true; data: ProductionPage } | Failure;
 export type PlanResult = { ok: true; data: PreWeighingPlan } | Failure;
 export type PreWeighingPageResult = { ok: true; data: PreWeighingPage } | Failure;
@@ -56,6 +58,19 @@ export async function startProduction(body: StartProductionBody): Promise<Produc
   revalidatePath(PRE_WEIGHINGS_PATH);
 
   return result;
+}
+
+/** What finishing the production would discard of the opened packagings, as the stock stands now. */
+export async function previewLeftovers(id: string): Promise<LeftoversPreviewResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
+
+  const params = productionIdParamsSchema.safeParse({ id });
+
+  if (!params.success) return fail(400, INVALID_INPUT);
+
+  return productions.previewLeftovers(params.data.id);
 }
 
 export async function finishProduction(id: string, body: FinishProductionBody): Promise<ProductionResult> {

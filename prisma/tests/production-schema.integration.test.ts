@@ -163,3 +163,39 @@ describe("production_item_inputs", () => {
     await expect(testPrisma.productionItem.delete({ where: { id: data.productionItemId } })).rejects.toThrow();
   });
 });
+
+describe("production_leftovers", () => {
+  async function leftoverInput(overrides: { quantity?: string; unitCost?: string } = {}) {
+    const input = await testPrisma.productionItemInput.create({ data: await inputInput() });
+    const user = await testPrisma.user.findFirstOrThrow();
+    const lot = await testPrisma.stockLot.create({
+      data: { productSku: input.productSku, initialQuantity: "1", quantity: "1", unitCost: "1" },
+    });
+    const movement = await testPrisma.stockMovement.create({
+      data: {
+        productSku: input.productSku,
+        lotId: lot.id,
+        type: "OPENED_LEFTOVER",
+        quantity: "0.1",
+        unitCost: "1",
+        createdById: user.id,
+      },
+    });
+
+    return { inputId: input.id, lotId: lot.id, movementId: movement.id, quantity: "0.1", unitCost: "1", ...overrides };
+  }
+
+  it("records what was discarded of a lot, tied to the input and to its movement", async () => {
+    await expect(testPrisma.productionLeftover.create({ data: await leftoverInput() })).resolves.toBeDefined();
+  });
+
+  it("refuses a leftover of nothing and a negative cost", async () => {
+    await expect(
+      testPrisma.productionLeftover.create({ data: await leftoverInput({ quantity: "0" }) }),
+    ).rejects.toThrow(/ck_production_leftovers_quantity_positive/);
+    await resetDatabase();
+    await expect(
+      testPrisma.productionLeftover.create({ data: await leftoverInput({ unitCost: "-1" }) }),
+    ).rejects.toThrow(/ck_production_leftovers_unit_cost_non_negative/);
+  });
+});

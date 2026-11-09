@@ -14,6 +14,7 @@ const MOVEMENT_TYPES: Record<StockMovementType, { origin: string; direction: Dir
   // Brings a negative balance back to zero, so it adds what was owed.
   BALANCE_ADJUSTMENT: { origin: "Ajuste de saldo", direction: IN },
   LOSS: { origin: "Avaria", direction: OUT },
+  OPENED_LEFTOVER: { origin: "Sobra de embalagem aberta", direction: OUT },
 };
 
 /** What made the stock move: an entry, a production, a loss. */

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MeasurementUnit, Permission, ProductKind } from "@prisma/client";
 import * as productionCancel from "@/app/v1/productions/[id]/cancel/route";
 import * as productionFinish from "@/app/v1/productions/[id]/finish/route";
+import * as productionLeftovers from "@/app/v1/productions/[id]/leftovers/route";
 import * as productionById from "@/app/v1/productions/[id]/route";
 import * as productions from "@/app/v1/productions/route";
 import { rateLimiter } from "@/server/http/rate-limit";
@@ -160,7 +161,7 @@ const listProductions = (headers: Headers, query: Record<string, string> = {}) =
 
 // Every finished item says whether what it produced expires; the tests that are not about it say
 // it does not.
-const postFinish = (headers: Headers, id: string, payload: { items?: unknown[] }) =>
+const postFinish = (headers: Headers, id: string, payload: { items?: unknown[]; hasLeftoversInCost?: boolean }) =>
   inject(productionFinish, {
     method: "POST",
     url: `/v1/productions/${id}/finish`,
@@ -192,6 +193,7 @@ describe("POST /v1/productions", () => {
       createdAt: expect.any(String),
       finishedAt: null,
       canceledAt: null,
+      hasLeftoversInCost: null,
       items: [
         {
           id: expect.any(String),
@@ -201,11 +203,17 @@ describe("POST /v1/productions", () => {
           producedQuantity: null,
           unitCost: null,
           inputs: [
-            { product: { sku: water.sku, description: "Water", unit: "LITER" }, quantity: "18", unitCost: null },
+            {
+              product: { sku: water.sku, description: "Water", unit: "LITER" },
+              quantity: "18",
+              unitCost: null,
+              leftovers: [],
+            },
             {
               product: { sku: flour.sku, description: "Wheat flour", unit: "KILOGRAM" },
               quantity: "30",
               unitCost: null,
+              leftovers: [],
             },
           ],
         },
@@ -231,8 +239,8 @@ describe("POST /v1/productions", () => {
         preWeighingId: preWeighing.id,
         expectedQuantity: "50",
         inputs: [
-          { product: expect.objectContaining({ sku: water.sku }), quantity: "17.9", unitCost: null },
-          { product: expect.objectContaining({ sku: flour.sku }), quantity: "30.25", unitCost: null },
+          { product: expect.objectContaining({ sku: water.sku }), quantity: "17.9", unitCost: null, leftovers: [] },
+          { product: expect.objectContaining({ sku: flour.sku }), quantity: "30.25", unitCost: null, leftovers: [] },
         ],
       }),
     ]);
@@ -1061,5 +1069,173 @@ describe("finishing two productions that share inputs at the same time", () => {
     await gate;
 
     expect((await Promise.all(finishing)).map((response) => response.statusCode)).toEqual([200, 200]);
+  });
+});
+
+describe("leftovers of opened packagings", () => {
+  // A pudding of 1 kg takes 300 g of condensed milk, bought in cans of 395 g at 0.02 a gram.
+  async function startPudding(
+    headers: Headers,
+    { storable = false, packaged = true, withFlan = false, dose = "300" } = {},
+  ) {
+    const pudding = await createProduct("Pudding", { kind: "MANUFACTURED" });
+    const milk = await testPrisma.product.create({
+      data: { description: "Condensed milk", kind: "GOODS", unit: "GRAM", isStorableOnceOpened: storable },
+    });
+    const can = await testPrisma.productPackaging.create({ data: { productSku: milk.sku, content: "395" } });
+    await testPrisma.recipe.create({
+      data: {
+        productSku: pudding.sku,
+        yieldQuantity: "1",
+        ingredients: { create: [{ productSku: milk.sku, quantity: dose }] },
+      },
+    });
+    await testPrisma.productStock.create({
+      data: { productSku: milk.sku, quantity: "3950", averageCost: "0.02", lastEntryCost: "0.02" },
+    });
+    const milkLot = await testPrisma.stockLot.create({
+      data: {
+        productSku: milk.sku,
+        initialQuantity: "3950",
+        quantity: "3950",
+        unitCost: "0.02",
+        ...(packaged ? { packagingId: can.id, packageCount: 10, packagePrice: "7.90" } : {}),
+      },
+    });
+    const made = [pudding];
+
+    if (withFlan) {
+      const flan = await createProduct("Flan", { kind: "MANUFACTURED" });
+      await testPrisma.recipe.create({
+        data: {
+          productSku: flan.sku,
+          yieldQuantity: "1",
+          ingredients: { create: [{ productSku: milk.sku, quantity: dose }] },
+        },
+      });
+      made.push(flan);
+    }
+
+    const started = await postProduction(headers, {
+      items: made.map(({ sku }) => ({ productSku: sku, quantity: "1" })),
+    });
+
+    return { milk, milkLot, production: started.json() };
+  }
+
+  const finishAll = (headers: Headers, production: { id: string; items: { id: string }[] }, body = {}) =>
+    postFinish(headers, production.id, {
+      items: production.items.map(({ id }) => ({ id, producedQuantity: "1" })),
+      ...body,
+    });
+
+  it("discards what is left of the opened can and puts its cost into what was produced", async () => {
+    const { headers } = await canDoBoth();
+    const { milk, milkLot, production } = await startPudding(headers);
+
+    const response = await finishAll(headers, production);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      hasLeftoversInCost: true,
+      items: [{ unitCost: "7.9", inputs: [{ leftovers: [{ lotId: milkLot.id, quantity: "95", unitCost: "0.02" }] }] }],
+    });
+    expect(await lotQuantity(milkLot.id)).toBe("3555");
+    expect(await stockOf(milk.sku)).toMatchObject({ quantity: "3555" });
+    const discarded = await testPrisma.stockMovement.findMany({ where: { type: "OPENED_LEFTOVER" } });
+    expect(discarded.map(({ lotId, quantity }) => ({ lotId, quantity: quantity.toString() }))).toEqual([
+      { lotId: milkLot.id, quantity: "95" },
+    ]);
+    expect(await testPrisma.productionLeftover.count()).toBe(1);
+  });
+
+  it("discards it and keeps its cost out of what was produced when asked to", async () => {
+    const { headers } = await canDoBoth();
+    const { production } = await startPudding(headers);
+
+    const response = await finishAll(headers, production, { hasLeftoversInCost: false });
+
+    expect(response.json()).toMatchObject({ hasLeftoversInCost: false, items: [{ unitCost: "6" }] });
+  });
+
+  it("discards nothing of what can be kept once opened, nor of a lot received loose", async () => {
+    const { headers } = await canDoBoth();
+    const storable = await startPudding(headers, { storable: true });
+
+    await finishAll(headers, storable.production);
+    expect(await lotQuantity(storable.milkLot.id)).toBe("3650");
+
+    await resetDatabase();
+    const again = await canDoBoth();
+    const loose = await startPudding(again.headers, { packaged: false });
+
+    await finishAll(again.headers, loose.production);
+    expect(await lotQuantity(loose.milkLot.id)).toBe("3650");
+    expect(await testPrisma.productionLeftover.count()).toBe(0);
+  });
+
+  it("lets the items of a production share an opened can, splitting what is left by what each took", async () => {
+    // A flan and a pudding finished together, 100 g each, out of the same can lot: one can is opened
+    // for 200 g, so 195 g are left, half for each.
+    const { headers } = await canDoBoth();
+    const { milkLot, production } = await startPudding(headers, { withFlan: true, dose: "100" });
+
+    const response = await finishAll(headers, production);
+
+    expect(await lotQuantity(milkLot.id)).toBe("3555");
+    const leftovers = await testPrisma.productionLeftover.findMany();
+    expect(leftovers.map(({ quantity }) => quantity.toString())).toEqual(["97.5", "97.5"]);
+    expect(response.json().items.map(({ unitCost }: { unitCost: string }) => unitCost)).toEqual(["3.95", "3.95"]);
+  });
+
+  it("previews the shared can the same way", async () => {
+    const { headers } = await canDoBoth();
+    const { production } = await startPudding(headers, { withFlan: true, dose: "100" });
+
+    const response = await inject(productionLeftovers, {
+      method: "GET",
+      url: `/v1/productions/${production.id}/leftovers`,
+      params: { id: production.id },
+      headers,
+    });
+
+    expect(response.json().totalCost).toBe("3.90");
+  });
+
+  it("previews the leftovers without moving the stock, and only while the production is in progress", async () => {
+    const { headers } = await canDoBoth();
+    const { milkLot, production } = await startPudding(headers);
+    const preview = () =>
+      inject(productionLeftovers, {
+        method: "GET",
+        url: `/v1/productions/${production.id}/leftovers`,
+        params: { id: production.id },
+        headers,
+      });
+
+    const response = await preview();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      items: [
+        {
+          itemId: production.items[0].id,
+          leftovers: [
+            {
+              product: expect.objectContaining({ description: "Condensed milk" }),
+              lotId: milkLot.id,
+              quantity: "95",
+              unitCost: "0.02",
+              cost: "1.90",
+            },
+          ],
+        },
+      ],
+      totalCost: "1.90",
+    });
+    expect(await lotQuantity(milkLot.id)).toBe("3950");
+
+    await finishAll(headers, production);
+    expect((await preview()).statusCode).toBe(409);
   });
 });

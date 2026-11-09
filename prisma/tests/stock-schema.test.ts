@@ -45,9 +45,16 @@ describe("stock schema", () => {
     const values = block![1]!
       .split("\n")
       .map((line) => line.trim())
-      .filter((line) => line !== "" && !line.startsWith("@@"));
+      .filter((line) => line !== "" && !line.startsWith("@@") && !line.startsWith("//"));
 
-    expect(values).toEqual(["ENTRY", "PRODUCTION_CONSUMPTION", "PRODUCTION_OUTPUT", "BALANCE_ADJUSTMENT", "LOSS"]);
+    expect(values).toEqual([
+      "ENTRY",
+      "PRODUCTION_CONSUMPTION",
+      "PRODUCTION_OUTPUT",
+      "BALANCE_ADJUSTMENT",
+      "LOSS",
+      "OPENED_LEFTOVER",
+    ]);
     expect(SCHEMA).toMatch(/enum StockMovementType \{[\s\S]*?@@map\("stock_movement_type"\)/);
   });
 

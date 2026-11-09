@@ -94,6 +94,16 @@ describe("StockMovementsPage", () => {
     expect(within(movement!).getByText("R$ 33,98/kg")).toBeInTheDocument();
   });
 
+  it("names the leftover of an opened packaging as something that left the stock", async () => {
+    renderPage(onePage([aStockMovement({ type: "OPENED_LEFTOVER", quantity: "95" })]));
+
+    const [, movement] = await screen.findAllByRole("row");
+
+    expect(within(movement!).getByText("Saída")).toBeInTheDocument();
+    expect(within(movement!).getByText("Sobra de embalagem aberta")).toBeInTheDocument();
+    expect(within(movement!).getByText("−95 kg")).toBeInTheDocument();
+  });
+
   it("says nothing has moved instead of showing a bare table", async () => {
     renderPage(onePage([]));
 

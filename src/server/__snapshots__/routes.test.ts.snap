@@ -11,6 +11,7 @@ GET /v1/pre-weighings/plan -> PRODUCTION_READ
 GET /v1/pre-weighings/{id} -> PRODUCTION_READ
 GET /v1/productions -> PRODUCTION_READ
 GET /v1/productions/{id} -> PRODUCTION_READ
+GET /v1/productions/{id}/leftovers -> PRODUCTION_READ
 GET /v1/products -> CATALOG_READ
 GET /v1/products/{sku}/recipe -> CATALOG_READ
 GET /v1/recipes -> CATALOG_READ

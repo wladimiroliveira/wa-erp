@@ -2,12 +2,12 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { finishProduction } from "@/features/productions/actions";
+import { finishProduction, previewLeftovers } from "@/features/productions/actions";
 import { FinishProductionForm } from "@/features/productions/FinishProductionForm";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser, aProduction } from "@/tests/samples";
 
-vi.mock("@/features/productions/actions", () => ({ finishProduction: vi.fn() }));
+vi.mock("@/features/productions/actions", () => ({ finishProduction: vi.fn(), previewLeftovers: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const PRODUCTION = aProduction();
@@ -21,7 +21,10 @@ function open() {
 
 const finish = () => userEvent.click(screen.getByRole("button", { name: "Finalizar produção" }));
 
+const NO_LEFTOVERS = { ok: true as const, data: { items: [], totalCost: "0.00" } };
+
 beforeEach(() => {
+  vi.mocked(previewLeftovers).mockReset().mockResolvedValue(NO_LEFTOVERS);
   vi.mocked(finishProduction).mockReset();
   vi.mocked(toast.error).mockReset();
   vi.mocked(toast.success).mockReset();
@@ -39,6 +42,7 @@ describe("FinishProductionForm", () => {
     await waitFor(() =>
       expect(finishProduction).toHaveBeenCalledWith(PRODUCTION.id, {
         items: [{ id: ITEM.id, producedQuantity: "9.5", expiresAt: "2099-01-31" }],
+        hasLeftoversInCost: true,
       }),
     );
   });
@@ -53,6 +57,7 @@ describe("FinishProductionForm", () => {
     await waitFor(() =>
       expect(finishProduction).toHaveBeenCalledWith(PRODUCTION.id, {
         items: [{ id: ITEM.id, producedQuantity: "10", expiresAt: null }],
+        hasLeftoversInCost: true,
       }),
     );
   });
@@ -93,5 +98,80 @@ describe("FinishProductionForm", () => {
       ),
     );
     expect(toast.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("FinishProductionForm, leftovers of opened packagings", () => {
+  const MILK = { sku: "018f0000-0000-7000-8000-000000000024", description: "Leite condensado", unit: "GRAM" as const };
+  const WITH_LEFTOVERS = {
+    ok: true as const,
+    data: {
+      items: [
+        {
+          itemId: ITEM.id,
+          leftovers: [
+            {
+              product: MILK,
+              lotId: "018f0000-0000-7000-8000-000000000060",
+              quantity: "95",
+              unitCost: "0.02",
+              cost: "1.90",
+            },
+          ],
+        },
+      ],
+      totalCost: "1.90",
+    },
+  };
+
+  const section = () => screen.getByRole("region", { name: "Sobras que serão descartadas" });
+
+  it("tells what will be discarded and puts it into the cost unless unchecked", async () => {
+    vi.mocked(previewLeftovers).mockResolvedValue(WITH_LEFTOVERS);
+    vi.mocked(finishProduction).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
+    open();
+
+    expect(await screen.findByText("Leite condensado: 95 g (R$ 1,90)")).toBeInTheDocument();
+    expect(section()).toHaveTextContent("Total: R$ 1,90");
+    const inCost = screen.getByRole("checkbox", { name: "Incluir as sobras no custo da produção" });
+    expect(inCost).toBeChecked();
+
+    await userEvent.click(inCost);
+    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await finish();
+
+    await waitFor(() =>
+      expect(finishProduction).toHaveBeenCalledWith(
+        PRODUCTION.id,
+        expect.objectContaining({ hasLeftoversInCost: false }),
+      ),
+    );
+  });
+
+  it("shows nothing about leftovers when there are none", async () => {
+    open();
+
+    await waitFor(() => expect(previewLeftovers).toHaveBeenCalledWith(PRODUCTION.id));
+    expect(screen.queryByRole("region", { name: "Sobras que serão descartadas" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Incluir as sobras no custo da produção" })).not.toBeInTheDocument();
+  });
+
+  it("still finishes when the leftovers could not be worked out", async () => {
+    vi.mocked(previewLeftovers).mockResolvedValue({ ok: false, status: 403, message: "Permission denied." });
+    vi.mocked(finishProduction).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
+    open();
+
+    expect(await screen.findByText("Não foi possível calcular as sobras.")).toBeInTheDocument();
+    // Whatever the server finds is still the user's to keep out of the cost.
+    await userEvent.click(screen.getByRole("checkbox", { name: "Incluir as sobras no custo da produção" }));
+    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await finish();
+
+    await waitFor(() =>
+      expect(finishProduction).toHaveBeenCalledWith(
+        PRODUCTION.id,
+        expect.objectContaining({ hasLeftoversInCost: false }),
+      ),
+    );
   });
 });

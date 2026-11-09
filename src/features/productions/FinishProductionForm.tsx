@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
@@ -10,8 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NumericInput } from "@/components/ui/numeric-input";
-import { finishProduction } from "@/features/productions/actions";
-import type { Production } from "@/lib/api";
+import { finishProduction, previewLeftovers } from "@/features/productions/actions";
+import { LeftoversInCostCheckbox, LeftoversSection } from "@/features/productions/LeftoversSection";
+import type { LeftoversPreview, Production } from "@/lib/api";
 import { todayIso } from "@/lib/dates";
 import { toApiDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
@@ -45,6 +46,26 @@ export function FinishProductionForm({ production }: { production: Production })
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
   const [finishing, startFinishing] = useTransition();
+  // What finishing would discard, as the stock stood when the form opened; only a guide, the server
+  // works it out again when the production finishes.
+  const [leftovers, setLeftovers] = useState<LeftoversPreview | "failed" | null>(null);
+  const [inCost, setInCost] = useState(true);
+
+  useEffect(() => {
+    let current = true;
+
+    previewLeftovers(production.id)
+      .then((result) => {
+        if (current) setLeftovers(result.ok ? result.data : "failed");
+      })
+      .catch(() => {
+        if (current) setLeftovers("failed");
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [production.id]);
 
   const form = useForm<FinishFormValues>({
     resolver: zodResolver(finishFormSchema),
@@ -59,6 +80,7 @@ export function FinishProductionForm({ production }: { production: Production })
         producedQuantity: toApiDecimal(values.items[index]!.producedQuantity),
         expiresAt: values.items[index]!.expiresAt === "" ? null : values.items[index]!.expiresAt,
       })),
+      hasLeftoversInCost: inCost,
     };
 
     setFailure(null);
@@ -132,6 +154,16 @@ export function FinishProductionForm({ production }: { production: Production })
           </div>
         );
       })}
+
+      {leftovers === "failed" ? (
+        // The server still finds the leftovers when it finishes, so the choice stays the user's.
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">Não foi possível calcular as sobras.</p>
+          <LeftoversInCostCheckbox inCost={inCost} onInCostChange={setInCost} />
+        </div>
+      ) : leftovers !== null && leftovers.items.some((item) => item.leftovers.length > 0) ? (
+        <LeftoversSection preview={leftovers} inCost={inCost} onInCostChange={setInCost} />
+      ) : null}
 
       {failure !== null ? (
         <p role="alert" className="text-sm text-destructive">

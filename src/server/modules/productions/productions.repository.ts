@@ -1,7 +1,14 @@
 import { Prisma, ProductionStatus, StockMovementType } from "@prisma/client";
 import { pageArgs } from "@/server/lib/pagination";
 import { prisma } from "@/server/lib/prisma";
-import { increaseStock, openLot, takeFromLots } from "@/server/modules/stock/stock.repository";
+import {
+  increaseStock,
+  openLot,
+  suggestLots,
+  takeFromLot,
+  takeFromLots,
+} from "@/server/modules/stock/stock.repository";
+import { leftoverOf, splitLeftover } from "./production-leftovers";
 
 const productSelect = { sku: true, description: true, unit: true } satisfies Prisma.ProductSelect;
 
@@ -11,6 +18,7 @@ const productionSelect = {
   createdAt: true,
   finishedAt: true,
   canceledAt: true,
+  hasLeftoversInCost: true,
   items: {
     select: {
       id: true,
@@ -20,7 +28,14 @@ const productionSelect = {
       unitCost: true,
       product: { select: productSelect },
       inputs: {
-        select: { id: true, quantity: true, unitCost: true, product: { select: productSelect } },
+        select: {
+          id: true,
+          quantity: true,
+          unitCost: true,
+          product: { select: { ...productSelect, isStorableOnceOpened: true } },
+          // What was discarded of the opened packagings when the production finished.
+          leftovers: { select: { lotId: true, quantity: true, unitCost: true }, orderBy: { createdAt: "asc" } },
+        },
         orderBy: { product: { description: "asc" } },
       },
     },
@@ -69,15 +84,15 @@ export function inProductionTransaction<T>(work: (tx: Prisma.TransactionClient) 
 async function leaveInProgress(
   tx: Prisma.TransactionClient,
   id: string,
-  data: { status: ProductionStatus; finishedAt?: Date; canceledAt?: Date },
+  data: { status: ProductionStatus; finishedAt?: Date; canceledAt?: Date; hasLeftoversInCost?: boolean },
 ) {
   const { count } = await tx.production.updateMany({ where: { id, status: ProductionStatus.IN_PROGRESS }, data });
 
   return count === 1;
 }
 
-export const markProductionFinished = (tx: Prisma.TransactionClient, id: string) =>
-  leaveInProgress(tx, id, { status: ProductionStatus.FINISHED, finishedAt: new Date() });
+export const markProductionFinished = (tx: Prisma.TransactionClient, id: string, hasLeftoversInCost: boolean) =>
+  leaveInProgress(tx, id, { status: ProductionStatus.FINISHED, finishedAt: new Date(), hasLeftoversInCost });
 
 export const markProductionCanceled = (tx: Prisma.TransactionClient, id: string) =>
   leaveInProgress(tx, id, { status: ProductionStatus.CANCELED, canceledAt: new Date() });
@@ -88,8 +103,9 @@ export function releasePreWeighings(tx: Prisma.TransactionClient, productionId: 
   return tx.productionItem.updateMany({ where: { productionId }, data: { preWeighingId: null } });
 }
 
-// Takes an input from the stock, lot by lot, and answers what all of it cost. Each lot taken from
-// is a movement of its own, at the cost of that lot; the input keeps what a unit of it came to.
+// Takes an input from the stock, lot by lot, and answers what all of it cost and the takes, so the
+// finish can work out what is left of the packagings opened. Each lot taken from is a movement of
+// its own, at the cost of that lot; the input keeps what a unit of it came to.
 export async function consumeProductionInput(
   tx: Prisma.TransactionClient,
   input: { id: string; productSku: string; quantity: Prisma.Decimal; createdById: string; today: string },
@@ -98,15 +114,98 @@ export async function consumeProductionInput(
   const takes = await takeFromLots(tx, { productSku, quantity, today });
 
   await tx.stockMovement.createMany({
-    data: takes.map((take) => ({ ...take, productSku, createdById, type: StockMovementType.PRODUCTION_CONSUMPTION })),
+    data: takes.map(({ lotId, quantity: taken, unitCost }) => ({
+      lotId,
+      quantity: taken,
+      unitCost,
+      productSku,
+      createdById,
+      type: StockMovementType.PRODUCTION_CONSUMPTION,
+    })),
   });
 
   const cost = Prisma.Decimal.sum(0, ...takes.map((take) => take.quantity.mul(take.unitCost)));
 
   await tx.productionItemInput.update({ where: { id }, data: { unitCost: cost.div(quantity).toDecimalPlaces(6) } });
 
-  return cost;
+  return { cost, takes };
 }
+
+// Writes off what an input leaves of a lot's opened packaging: lowers the lot and the balance like
+// any write-off, and ties the movement to the input. The lot is already locked by the consumption.
+export async function discardLeftover(
+  tx: Prisma.TransactionClient,
+  leftover: {
+    inputId: string;
+    lotId: string;
+    productSku: string;
+    quantity: Prisma.Decimal;
+    unitCost: Prisma.Decimal;
+    createdById: string;
+  },
+) {
+  const { inputId, lotId, productSku, quantity, unitCost, createdById } = leftover;
+  const discarded = await takeFromLot(tx, { lotId, quantity });
+
+  // What is left of a lot after a take is never more than it holds, so this is a broken invariant.
+  if ("failure" in discarded) throw new Error(`Could not discard the leftover of lot ${lotId}: ${discarded.failure}.`);
+
+  const movement = await tx.stockMovement.create({
+    data: { productSku, lotId, quantity, unitCost, createdById, type: StockMovementType.OPENED_LEFTOVER },
+  });
+
+  await tx.productionLeftover.create({ data: { inputId, lotId, movementId: movement.id, quantity, unitCost } });
+}
+
+// What finishing a production would discard of the opened packagings, as the stock stands now. The
+// items share what they open, as at the finish: each product is taken once for all of them, and
+// what is left split by what each input needs. It writes nothing: by then, the lots may be others.
+export async function previewProductionLeftovers(production: ProductionRecord, today: string) {
+  const byProduct = new Map<
+    string,
+    {
+      product: ProductionRecord["items"][number]["inputs"][number]["product"];
+      inputs: { itemId: string; inputId: string; taken: Prisma.Decimal }[];
+    }
+  >();
+
+  for (const item of production.items) {
+    for (const { id: inputId, product, quantity } of item.inputs) {
+      if (product.isStorableOnceOpened) continue;
+
+      const entry = byProduct.get(product.sku) ?? { product, inputs: [] };
+
+      entry.inputs.push({ itemId: item.id, inputId, taken: quantity });
+      byProduct.set(product.sku, entry);
+    }
+  }
+
+  const leftovers = new Map(production.items.map((item) => [item.id, [] as PreviewedLeftover[]]));
+
+  for (const { product, inputs } of byProduct.values()) {
+    const needed = Prisma.Decimal.sum(0, ...inputs.map(({ taken }) => taken));
+    const { takes } = await suggestLots({ productSku: product.sku, quantity: needed, today });
+
+    for (const { lot, quantity: taken } of takes) {
+      if (lot.packageContent === null) continue;
+
+      for (const share of splitLeftover(leftoverOf(lot.quantity, taken, lot.packageContent), inputs)) {
+        const { itemId } = inputs.find(({ inputId }) => inputId === share.inputId)!;
+
+        leftovers.get(itemId)!.push({ product, lotId: lot.id, quantity: share.quantity, unitCost: lot.unitCost });
+      }
+    }
+  }
+
+  return production.items.map((item) => ({ itemId: item.id, leftovers: leftovers.get(item.id)! }));
+}
+
+type PreviewedLeftover = {
+  product: ProductionRecord["items"][number]["inputs"][number]["product"];
+  lotId: string;
+  quantity: Prisma.Decimal;
+  unitCost: Prisma.Decimal;
+};
 
 // What was produced comes in as a lot of its own, costing what its inputs cost.
 export async function outputProductionItem(

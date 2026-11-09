@@ -6,7 +6,11 @@ import type { Permission, Production } from "@/lib/api";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser, aProduction, aProductionItem } from "@/tests/samples";
 
-vi.mock("@/features/productions/actions", () => ({ finishProduction: vi.fn(), cancelProduction: vi.fn() }));
+vi.mock("@/features/productions/actions", () => ({
+  finishProduction: vi.fn(),
+  cancelProduction: vi.fn(),
+  previewLeftovers: vi.fn(async () => ({ ok: true, data: { items: [], totalCost: "0.00" } })),
+}));
 
 const RECORDER: Permission[] = ["PRODUCTION_READ", "PRODUCTION_CREATE"];
 
@@ -63,6 +67,53 @@ describe("ProductionDetailPage", () => {
     expect(screen.getByText("9,5 kg")).toBeInTheDocument();
     expect(screen.getByText(moneyOf("2.5"))).toBeInTheDocument();
     expect(screen.getByText(moneyOf("1.2"))).toBeInTheDocument();
+  });
+
+  it("tells what was discarded of opened packagings and whether its cost went into the production", () => {
+    const milk = { sku: "sku-milk", description: "Leite condensado", unit: "GRAM" as const };
+
+    open(
+      aProduction({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T15:00:00.000Z",
+        hasLeftoversInCost: true,
+        items: [
+          aProductionItem({
+            producedQuantity: "1",
+            unitCost: "7.9",
+            inputs: [
+              {
+                product: milk,
+                quantity: "300",
+                unitCost: "0.02",
+                leftovers: [{ lotId: "lot-1", quantity: "95", unitCost: "0.02" }],
+              },
+              { ...aProductionItem().inputs[0]!, unitCost: "1.2", leftovers: [] },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Sobra descartada" })).toBeInTheDocument();
+    const [, milkRow, flourRow] = screen.getAllByRole("row").map((row) => within(row));
+    expect(milkRow!.getByText("95 g · R$ 1,90")).toBeInTheDocument();
+    expect(flourRow!.getByText("—")).toBeInTheDocument();
+    const summary = within(screen.getByRole("group", { name: "Resumo da produção" }));
+    expect(summary.getByText("Sobras no custo")).toBeInTheDocument();
+    expect(summary.getByText("Sim")).toBeInTheDocument();
+  });
+
+  it("says when the leftovers were kept out of the cost, and says nothing while in progress", () => {
+    const { unmount } = open(
+      aProduction({ status: "FINISHED", finishedAt: "2026-10-14T15:00:00.000Z", hasLeftoversInCost: false }),
+    );
+
+    expect(within(screen.getByRole("group", { name: "Resumo da produção" })).getByText("Não")).toBeInTheDocument();
+    unmount();
+
+    open(aProduction());
+    expect(screen.queryByText("Sobras no custo")).not.toBeInTheDocument();
   });
 
   it("offers finishing while in progress to whoever may record production", () => {

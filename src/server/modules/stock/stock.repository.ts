@@ -167,7 +167,14 @@ export async function suggestLots(input: { productSku: string; quantity: Prisma.
   return allocate(lots, input.quantity);
 }
 
-type Take = { lotId: string | null; quantity: Prisma.Decimal; unitCost: Prisma.Decimal };
+type Take = {
+  lotId: string | null;
+  quantity: Prisma.Decimal;
+  unitCost: Prisma.Decimal;
+  // What the lot held before the take, and what one of its packagings holds; null for what was owed.
+  lotQuantity: Prisma.Decimal | null;
+  packageContent: Prisma.Decimal | null;
+};
 
 // Takes a quantity out of the stock, lot by lot. What the lots do not cover is taken anyway and
 // stays owed.
@@ -198,6 +205,8 @@ export async function takeFromLots(
     lotId: lot.id,
     quantity: amount,
     unitCost: lot.unitCost,
+    lotQuantity: lot.quantity,
+    packageContent: lot.packageContent,
   }));
 
   if (shortfall.gt(0)) {
@@ -207,7 +216,7 @@ export async function takeFromLots(
       lastEntry: balance.lastEntryCost,
     });
 
-    taken.push({ lotId: null, quantity: shortfall, unitCost });
+    taken.push({ lotId: null, quantity: shortfall, unitCost, lotQuantity: null, packageContent: null });
   }
 
   return taken;

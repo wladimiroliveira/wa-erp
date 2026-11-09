@@ -5,10 +5,14 @@ import { useSession } from "@/features/auth/use-session";
 import { CancelProductionDialog } from "@/features/productions/CancelProductionDialog";
 import { FinishProductionForm } from "@/features/productions/FinishProductionForm";
 import { ProductionStatusBadge } from "@/features/productions/ProductionStatusBadge";
-import { moneyOf, quantityOf } from "@/features/stock/stock-format";
+import { weighedOf } from "@/features/pre-weighings/weighing-units";
+import { moneyOf, NOTHING, quantityOf } from "@/features/stock/stock-format";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import type { Production, ProductionItem } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
+import { formatMoney } from "@/lib/decimal";
+import { divideHalfUp, fromScaled, scale, toScaled } from "@/shared/fixed-point";
+import { normalizeDecimal, readableQuantity } from "@/shared/units";
 import { PageTitle } from "@/components/layout/PageTitle";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
@@ -55,10 +59,28 @@ function Item({ item }: { item: ProductionItem }) {
           { key: "quantity", header: "Quantidade", cell: (input) => quantityOf(input.quantity, input.product.unit) },
           // Known only once the production finishes: it is what the lots the input left cost.
           { key: "unitCost", header: "Custo unitário", cell: (input) => moneyOf(input.unitCost) },
+          { key: "leftover", header: "Sobra descartada", cell: discardedOf },
         ]}
       />
     </section>
   );
+}
+
+type Input = Production["items"][number]["inputs"][number];
+
+// What finishing discarded of the input's opened packagings, "95 g · R$ 1,90", priced at each lot's cost.
+function discardedOf({ product, leftovers }: Input): string {
+  if (leftovers.length === 0) return NOTHING;
+
+  const quantity = leftovers.reduce((sum, leftover) => sum + toScaled(leftover.quantity, 6), 0n);
+  const cost = leftovers.reduce(
+    (sum, leftover) => sum + toScaled(leftover.quantity, 6) * toScaled(leftover.unitCost, 6),
+    0n,
+  );
+  const amount = normalizeDecimal(fromScaled(quantity, 6));
+  const shown = weighedOf(amount, product.unit, readableQuantity(amount, product.unit).unit);
+
+  return `${shown} · ${formatMoney(fromScaled(divideHalfUp(cost, scale(10)), 2))}`;
 }
 
 export function ProductionDetailPage({ production }: { production: Production }) {
@@ -78,6 +100,9 @@ export function ProductionDetailPage({ production }: { production: Production })
           <ProductionStatusBadge status={production.status} />
         </Fact>
         <Fact label="Iniciada em">{formatDateTime(production.createdAt)}</Fact>
+        {production.hasLeftoversInCost === null ? null : (
+          <Fact label="Sobras no custo">{production.hasLeftoversInCost ? "Sim" : "Não"}</Fact>
+        )}
         {production.finishedAt !== null ? (
           <Fact label="Finalizada em">{formatDateTime(production.finishedAt)}</Fact>
         ) : null}

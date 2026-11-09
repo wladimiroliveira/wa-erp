@@ -2,10 +2,18 @@
 
 import Link from "next/link";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
+import { weighedOf } from "@/features/pre-weighings/weighing-units";
 import { quantityOf } from "@/features/stock/stock-format";
 import type { PreWeighing } from "@/lib/api";
+import { readableQuantity } from "@/shared/units";
 import { formatDateTime } from "@/lib/dates";
 import { PageTitle } from "@/components/layout/PageTitle";
+
+type Item = PreWeighing["items"][number];
+
+// Both quantities of an ingredient in the unit its plan reads best in, so they compare at a glance.
+const shownOf = ({ product, plannedQuantity }: Item, quantity: string) =>
+  weighedOf(quantity, product.unit, readableQuantity(plannedQuantity, product.unit).unit);
 
 export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighing }) {
   return (
@@ -34,8 +42,8 @@ export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighin
         rowKey={(item) => item.product.sku}
         columns={[
           { key: "ingredient", header: "Ingrediente", cell: (item) => item.product.description },
-          { key: "planned", header: "Planejado", cell: (item) => quantityOf(item.plannedQuantity, item.product.unit) },
-          { key: "weighed", header: "Pesado", cell: (item) => quantityOf(item.weighedQuantity, item.product.unit) },
+          { key: "planned", header: "Planejado", cell: (item) => shownOf(item, item.plannedQuantity) },
+          { key: "weighed", header: "Pesado", cell: (item) => shownOf(item, item.weighedQuantity) },
         ]}
       />
     </div>

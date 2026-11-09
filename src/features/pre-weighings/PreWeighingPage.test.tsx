@@ -177,7 +177,7 @@ describe("PreWeighingPage", () => {
     await userEvent.type(await screen.findByLabelText("Pesado de Farinha de trigo"), "6");
     await record();
 
-    expect(await screen.findByText("Informe o pesado, com até 6 casas decimais.")).toBeInTheDocument();
+    expect(await screen.findByText("Informe o pesado, com até 3 casas decimais.")).toBeInTheDocument();
     expect(createPreWeighing).not.toHaveBeenCalled();
   });
 
@@ -289,5 +289,103 @@ describe("PreWeighingPage sizing", () => {
     await record();
 
     expect(await screen.findByRole("link", { name: "Ver a pré-pesagem" })).toHaveClass("min-h-8");
+  });
+});
+
+describe("PreWeighingPage, unit of each weighing", () => {
+  const YEAST = { sku: "018f0000-0000-7000-8000-000000000022", description: "Fermento", unit: "KILOGRAM" } as const;
+  const EGG = { sku: "018f0000-0000-7000-8000-000000000023", description: "Ovo", unit: "UNIT" } as const;
+
+  const WITH_SMALL = aPreWeighingPlan({
+    items: [
+      { product: FLOUR, plannedQuantity: "6", lots: [{ id: "lot-1", expiresAt: null, quantity: "6" }], shortfall: "0" },
+      {
+        product: YEAST,
+        plannedQuantity: "0.0123456",
+        lots: [{ id: "lot-2", expiresAt: null, quantity: "0.01" }],
+        shortfall: "0.0023456",
+      },
+      { product: EGG, plannedQuantity: "4", lots: [], shortfall: "4" },
+    ],
+  });
+
+  const rowOf = (description: string) => within(screen.getByText(description).closest("tr")!);
+  const unitOf = (description: string) => screen.getByLabelText(`Unidade de ${description}`);
+
+  async function calculateSmall() {
+    planning(() => ({ ok: true, data: WITH_SMALL }));
+    recording();
+    open();
+    await calculate();
+    await screen.findByText("Fermento");
+  }
+
+  it("starts each ingredient in the unit that reads best, with at most 3 places", async () => {
+    await calculateSmall();
+
+    expect(unitOf("Farinha de trigo")).toHaveValue("KILOGRAM");
+    expect(unitOf("Fermento")).toHaveValue("GRAM");
+    expect(rowOf("Fermento").getByText("12,346 g")).toBeInTheDocument();
+    expect(rowOf("Fermento").getByText("10 g — sem validade")).toBeInTheDocument();
+    expect(rowOf("Fermento").getByText("Faltam 2,346 g")).toBeInTheDocument();
+  });
+
+  it("shows the plan, the lots and what is missing in the unit chosen", async () => {
+    await calculateSmall();
+
+    await userEvent.selectOptions(unitOf("Fermento"), "kg");
+
+    expect(rowOf("Fermento").getByText("0,012 kg")).toBeInTheDocument();
+    expect(rowOf("Fermento").getByText("0,01 kg — sem validade")).toBeInTheDocument();
+    expect(rowOf("Fermento").getByText("Faltam 0,002 kg")).toBeInTheDocument();
+  });
+
+  it("offers no unit to choose for an ingredient counted in units", async () => {
+    await calculateSmall();
+
+    expect(screen.queryByLabelText("Unidade de Ovo")).not.toBeInTheDocument();
+  });
+
+  it("records what was weighed in the product's own unit", async () => {
+    await calculateSmall();
+
+    await userEvent.type(screen.getByLabelText("Pesado de Farinha de trigo"), "6");
+    await userEvent.type(screen.getByLabelText("Pesado de Fermento"), "12,346");
+    await userEvent.type(screen.getByLabelText("Pesado de Ovo"), "4");
+    await record();
+
+    await waitFor(() =>
+      expect(createPreWeighing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [
+            { productSku: FLOUR.sku, weighedQuantity: "6" },
+            { productSku: YEAST.sku, weighedQuantity: "0.012346" },
+            { productSku: EGG.sku, weighedQuantity: "4" },
+          ],
+        }),
+      ),
+    );
+  });
+
+  it("refuses a weighed quantity with more than 3 places in the unit shown", async () => {
+    await calculateSmall();
+
+    await userEvent.type(screen.getByLabelText("Pesado de Farinha de trigo"), "6,0505");
+    await record();
+
+    expect(
+      await rowOf("Farinha de trigo").findByText("Informe o pesado, com até 3 casas decimais."),
+    ).toBeInTheDocument();
+    expect(createPreWeighing).not.toHaveBeenCalled();
+  });
+
+  it("carries what was already weighed into the unit chosen", async () => {
+    await calculateSmall();
+
+    await userEvent.type(screen.getByLabelText("Pesado de Fermento"), "250");
+    await userEvent.selectOptions(unitOf("Fermento"), "kg");
+
+    expect(screen.getByLabelText("Pesado de Fermento")).toHaveValue("0,25");
+    expect(rowOf("Fermento").getByText("kg", { selector: "span" })).toBeInTheDocument();
   });
 });

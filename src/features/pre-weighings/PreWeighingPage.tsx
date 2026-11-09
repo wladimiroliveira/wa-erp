@@ -14,13 +14,15 @@ import { NumericInput } from "@/components/ui/numeric-input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createPreWeighing, planPreWeighing, type PreWeighingTarget } from "@/features/pre-weighings/actions";
 import { quantityOf } from "@/features/stock/stock-format";
-import type { PreWeighing, PreWeighingPlan, Product } from "@/lib/api";
+import { WEIGHING_PLACES, weighedOf } from "@/features/pre-weighings/weighing-units";
+import type { MeasurementUnit, PreWeighing, PreWeighingPlan, Product } from "@/lib/api";
 import { formatDate } from "@/lib/dates";
-import { toApiDecimal } from "@/lib/decimal";
+import { formatDecimal, isDecimalInput, toApiDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
 import { positiveDecimal } from "@/lib/form-schemas";
 import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
+import { compatibleUnits, convert, readableQuantity } from "@/shared/units";
 
 const targetFormSchema = z.object({
   productSku: z.string().min(1, "Escolha o produto."),
@@ -31,13 +33,16 @@ type TargetForm = z.infer<typeof targetFormSchema>;
 
 const EMPTY_TARGET: TargetForm = { productSku: "", quantity: "" };
 
+const WEIGHED_MESSAGE = `Informe o pesado, com até ${WEIGHING_PLACES} casas decimais.`;
+
 // One per ingredient of the plan, in the order of the plan.
 const weighingFormSchema = z.object({
   items: z.array(
     z.object({
-      weighedQuantity: positiveDecimal(
-        "Informe o pesado, com até 6 casas decimais.",
-        "O pesado deve ser maior que zero.",
+      // Typed in the unit the row shows, with the places a scale shows.
+      weighedQuantity: positiveDecimal(WEIGHED_MESSAGE, "O pesado deve ser maior que zero.").refine(
+        (typed) => (typed.split(",")[1]?.length ?? 0) <= WEIGHING_PLACES,
+        WEIGHED_MESSAGE,
       ),
     }),
   ),
@@ -73,6 +78,21 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
     defaultValues: { items: plan.items.map(() => ({ weighedQuantity: "" })) },
   });
 
+  // The unit each ingredient is weighed in, starting with the one its plan reads best in.
+  const [units, setUnits] = useState<MeasurementUnit[]>(() =>
+    plan.items.map(({ product, plannedQuantity }) => readableQuantity(plannedQuantity, product.unit).unit),
+  );
+
+  // What was already weighed is carried into the new unit, so the number on screen keeps meaning the same amount.
+  function chooseUnit(index: number, unit: MeasurementUnit): void {
+    const field = `items.${index}.weighedQuantity` as const;
+    const typed = form.getValues(field);
+
+    if (isDecimalInput(typed)) form.setValue(field, formatDecimal(convert(toApiDecimal(typed), units[index]!, unit)));
+
+    setUnits((current) => current.map((shown, at) => (at === index ? unit : shown)));
+  }
+
   function save(body: Parameters<typeof createPreWeighing>[0]): void {
     startSaving(async () => {
       try {
@@ -103,7 +123,7 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
           ...target,
           items: plan.items.map(({ product }, index) => ({
             productSku: product.sku,
-            weighedQuantity: toApiDecimal(values.items[index]!.weighedQuantity),
+            weighedQuantity: convert(toApiDecimal(values.items[index]!.weighedQuantity), units[index]!, product.unit),
           })),
         });
       })}
@@ -127,7 +147,25 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
           {plan.items.map(({ product, plannedQuantity, lots, shortfall }, index) => (
             <TableRow key={product.sku}>
               <TableCell>{product.description}</TableCell>
-              <TableCell>{quantityOf(plannedQuantity, product.unit)}</TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <span>{weighedOf(plannedQuantity, product.unit, units[index]!)}</span>
+                  {compatibleUnits(product.unit).length > 1 ? (
+                    <NativeSelect
+                      aria-label={`Unidade de ${product.description}`}
+                      className="w-20"
+                      value={units[index]}
+                      onChange={(event) => chooseUnit(index, event.target.value as MeasurementUnit)}
+                    >
+                      {compatibleUnits(product.unit).map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unitLabel(unit)}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  ) : null}
+                </div>
+              </TableCell>
               <TableCell>
                 {lots.length === 0 ? (
                   <p>Nenhum lote com saldo</p>
@@ -135,7 +173,7 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
                   <ul>
                     {lots.map((lot) => (
                       <li key={lot.id}>
-                        {quantityOf(lot.quantity, product.unit)} —{" "}
+                        {weighedOf(lot.quantity, product.unit, units[index]!)} —{" "}
                         {lot.expiresAt === null ? "sem validade" : `validade ${formatDate(lot.expiresAt)}`}
                       </li>
                     ))}
@@ -143,7 +181,9 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
                 )}
                 {/* A warning, not a lock: the API records a pre-weighing the stock does not cover. */}
                 {Number(shortfall) > 0 ? (
-                  <p className="font-medium text-destructive">Faltam {quantityOf(shortfall, product.unit)}</p>
+                  <p className="font-medium text-destructive">
+                    Faltam {weighedOf(shortfall, product.unit, units[index]!)}
+                  </p>
                 ) : null}
               </TableCell>
               <TableCell>
@@ -153,7 +193,7 @@ function WeighingForm({ target, plan, onRecorded }: WeighingFormProps) {
                     className="w-32"
                     {...form.register(`items.${index}.weighedQuantity`)}
                   />
-                  <span>{unitLabel(product.unit)}</span>
+                  <span>{unitLabel(units[index]!)}</span>
                 </div>
                 {errors.items?.[index]?.weighedQuantity ? (
                   <p className="text-sm text-destructive">{errors.items[index].weighedQuantity.message}</p>

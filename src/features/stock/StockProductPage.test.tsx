@@ -5,7 +5,7 @@ import { StockProductPage } from "@/features/stock/StockProductPage";
 import type { Permission, ProductStock } from "@/lib/api";
 import { navigation } from "@/tests/navigation";
 import { renderWithProviders } from "@/tests/render";
-import { aCurrentUser, aProductStock, aStockLot } from "@/tests/samples";
+import { aCurrentUser, aPackagingCost, aProductStock, aStockLot } from "@/tests/samples";
 import { columnHeaders } from "@/tests/table-layouts";
 import { chooseRowAction } from "@/tests/row-actions";
 
@@ -71,17 +71,36 @@ describe("StockProductPage", () => {
     expect(soon!.getByText("20/10/2026")).toBeInTheDocument();
     expect(soon!.getByText("Moinho Santa Clara")).toBeInTheDocument();
     expect(soon!.getByText(/^02\/10\/2026/)).toBeInTheDocument();
-    expect(soon!.getByText("8 kg")).toBeInTheDocument();
-    expect(soon!.getByText("3 kg")).toBeInTheDocument();
-    expect(soon!.getByText("R$ 6,00")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Un." })).toBeInTheDocument();
+    expect(soon!.getByText("8")).toBeInTheDocument();
+    expect(soon!.getByText("3")).toBeInTheDocument();
+    expect(soon!.getByText("kg")).toBeInTheDocument();
+    expect(soon!.getByText("R$ 6,00/kg")).toBeInTheDocument();
     expect(soon!.getByText("R$ 18,00")).toBeInTheDocument();
     expect(soon!.getByText("Vence em breve")).toBeInTheDocument();
 
     expect(expired!.getByText("Vencido")).toBeInTheDocument();
 
     expect(never!.getByText("Sem validade")).toBeInTheDocument();
-    expect(never!.getByText("—")).toBeInTheDocument();
+    // No supplier, and loose: no packaging nor package price.
+    expect(never!.getAllByText("—")).toHaveLength(3);
     expect(never!.getByText("OK")).toBeInTheDocument();
+  });
+
+  it("shows the cost of a lot of a product kept in grams per kilogram", async () => {
+    renderPage(
+      aProductStock({
+        product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Castanha", unit: "GRAM" },
+        quantity: "380",
+        lots: [aStockLot({ initialQuantity: "380", quantity: "380", unitCost: "0.03398", value: "12.91" })],
+      }),
+    );
+
+    const [lot] = await rows();
+
+    expect(screen.getByRole("group", { name: "Resumo do produto" })).toHaveTextContent("380 g");
+    expect(lot!.getByText("g")).toBeInTheDocument();
+    expect(lot!.getByText("R$ 33,98/kg")).toBeInTheDocument();
   });
 
   it("says the product holds no lots instead of showing a bare table", async () => {
@@ -150,7 +169,7 @@ describe("StockProductPage", () => {
 
       const [held] = await rows();
 
-      expect(held!.getByText("3 kg")).toBeInTheDocument();
+      expect(held!.getByText("3")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Ações do lote" })).not.toBeInTheDocument();
     });
   });
@@ -174,5 +193,94 @@ describe("StockProductPage sizing", () => {
     expect(label).toHaveClass("py-1.5");
     expect(label.parentElement).toHaveClass("min-h-8");
     expect(screen.getByRole("link", { name: "Voltar para a análise de estoque" })).toHaveClass("min-h-8");
+  });
+});
+
+describe("StockProductPage packagings", () => {
+  const NUTS = { sku: "018f0000-0000-7000-8000-000000000020", description: "Castanha", unit: "GRAM" as const };
+  const MILL = { id: "018f0000-0000-7000-8000-000000000401", name: "Moinho Santa Clara" };
+  const BAG = "018f0000-0000-7000-8000-000000000101";
+
+  const bag = aPackagingCost({
+    id: BAG,
+    content: "380",
+    lastEntry: { price: "12.91", createdAt: "2026-11-05T12:00:00.000Z", supplier: MILL },
+    history: [
+      { lotId: "lot-new", createdAt: "2026-11-05T12:00:00.000Z", supplier: MILL, count: 10, price: "12.91" },
+      { lotId: "lot-old", createdAt: "2026-10-01T12:00:00.000Z", supplier: null, count: 4, price: "12.5" },
+    ],
+  });
+
+  const section = () => within(screen.getByRole("region", { name: "Embalagens" }));
+
+  it("tells each packaging's last price, what it amounts to per kilogram, when and from whom", async () => {
+    renderPage(aProductStock({ product: NUTS, lots: [], packagings: [bag] }));
+
+    const row = within((await screen.findByText("380 g")).closest("tr")!);
+
+    expect(row.getByText("R$ 12,91")).toBeInTheDocument();
+    expect(row.getByText("R$ 33,97/kg")).toBeInTheDocument();
+    expect(row.getByText(/^05\/11\/2026/)).toBeInTheDocument();
+    expect(row.getByText("Moinho Santa Clara")).toBeInTheDocument();
+  });
+
+  it("marks an inactive packaging and one that never came in", async () => {
+    renderPage(
+      aProductStock({
+        product: NUTS,
+        lots: [],
+        packagings: [
+          { ...bag, isActive: false },
+          aPackagingCost({ id: "018f0000-0000-7000-8000-000000000102", content: "1000" }),
+        ],
+      }),
+    );
+
+    expect(within((await screen.findByText("380 g")).closest("tr")!).getByText("Inativa")).toBeInTheDocument();
+    expect(within(screen.getByText("1 kg").closest("tr")!).getByText("Sem entradas")).toBeInTheDocument();
+  });
+
+  it("opens the entries of a packaging, the newest first", async () => {
+    renderPage(aProductStock({ product: NUTS, lots: [], packagings: [bag] }));
+
+    await userEvent.click(await section().findByRole("button", { name: "Histórico de 380 g" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+    const [, newest, oldest] = dialog.getAllByRole("row").map((row) => within(row));
+
+    expect(newest!.getByText(/^05\/11\/2026/)).toBeInTheDocument();
+    expect(newest!.getByText("Moinho Santa Clara")).toBeInTheDocument();
+    expect(newest!.getByText("10")).toBeInTheDocument();
+    expect(newest!.getByText("R$ 12,91")).toBeInTheDocument();
+    expect(oldest!.getByText(/^01\/10\/2026/)).toBeInTheDocument();
+    expect(oldest!.getByText("—")).toBeInTheDocument();
+    expect(oldest!.getByText("R$ 12,50")).toBeInTheDocument();
+  });
+
+  it("leaves the section out for a product with no packagings", async () => {
+    renderPage(aProductStock({ packagings: [] }));
+
+    await screen.findAllByRole("row");
+    expect(screen.queryByRole("region", { name: "Embalagens" })).not.toBeInTheDocument();
+  });
+
+  it("tells the packaging and its price on each lot, and a dash on a loose one", async () => {
+    renderPage(
+      aProductStock({
+        product: NUTS,
+        lots: [
+          aStockLot({ id: "lot-1", packaging: { id: BAG, content: "380", count: 10, price: "12.91" } }),
+          aStockLot({ id: "lot-2", packaging: null }),
+        ],
+      }),
+    );
+
+    const [packaged, loose] = await rows();
+
+    expect(screen.getByRole("columnheader", { name: "Embalagem" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Preço emb." })).toBeInTheDocument();
+    expect(packaged!.getByText("10 × 380 g")).toBeInTheDocument();
+    expect(packaged!.getByText("R$ 12,91")).toBeInTheDocument();
+    expect(loose!.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 });

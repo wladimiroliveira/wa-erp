@@ -227,10 +227,11 @@ model StockLot {
   product         Product           @relation(fields: [productSku], references: [sku], onDelete: Restrict)
   supplierId      String?           @map("supplier_id") @db.Uuid
   supplier        Supplier?         @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  // The packaging the lot came in and how many of them; both empty for a lot received loose.
+  // The packaging the lot came in, how many of them and what one cost as typed; all empty for a lot received loose.
   packagingId     String?           @map("packaging_id") @db.Uuid
   packaging       ProductPackaging? @relation(fields: [packagingId], references: [id], onDelete: Restrict)
   packageCount    Int?              @map("package_count")
+  packagePrice    Decimal?          @map("package_price") @db.Decimal(14, 2)
   expiresAt       DateTime?         @map("expires_at") @db.Timestamptz(3)
   initialQuantity Decimal           @map("initial_quantity") @db.Decimal(18, 6)
   quantity        Decimal           @db.Decimal(18, 6)

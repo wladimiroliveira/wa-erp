@@ -245,12 +245,16 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "price": {
+                              "type": "string"
                             }
                           },
                           "required": [
                             "id",
                             "content",
-                            "count"
+                            "count",
+                            "price"
                           ],
                           "additionalProperties": false
                         }
@@ -5342,6 +5346,35 @@
                               "EXPIRING_SOON",
                               "OK"
                             ]
+                          },
+                          "packaging": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "content": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "price": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "content",
+                              "count",
+                              "price"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -5353,7 +5386,127 @@
                           "unitCost",
                           "value",
                           "createdAt",
-                          "status"
+                          "status",
+                          "packaging"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "packagings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "content": {
+                            "type": "string"
+                          },
+                          "isActive": {
+                            "type": "boolean"
+                          },
+                          "lastEntry": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "price": {
+                                "type": "string"
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "supplier": {
+                                "nullable": true,
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "price",
+                              "createdAt",
+                              "supplier"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "history": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "lotId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                },
+                                "supplier": {
+                                  "nullable": true,
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "count": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "price": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "lotId",
+                                "createdAt",
+                                "supplier",
+                                "count",
+                                "price"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "content",
+                          "isActive",
+                          "lastEntry",
+                          "history"
                         ],
                         "additionalProperties": false
                       }
@@ -5369,7 +5522,8 @@
                     "lotCount",
                     "nextExpiresAt",
                     "status",
-                    "lots"
+                    "lots",
+                    "packagings"
                   ],
                   "additionalProperties": false
                 }

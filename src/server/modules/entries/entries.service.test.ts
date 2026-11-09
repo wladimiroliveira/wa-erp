@@ -27,7 +27,11 @@ const FLOUR = {
   ],
 };
 
-const recorded = (packaging: { id: string; content: string } | null, packageCount: number | null) => ({
+const recorded = (
+  packaging: { id: string; content: string } | null,
+  packageCount: number | null,
+  packagePrice: string | null = null,
+) => ({
   movement: {
     id: "018f0000-0000-7000-8000-000000000301",
     type: "ENTRY",
@@ -41,6 +45,7 @@ const recorded = (packaging: { id: string; content: string } | null, packageCoun
     supplier: null,
     quantity: new Prisma.Decimal("3.8"),
     packageCount,
+    packagePrice: packagePrice === null ? null : new Prisma.Decimal(packagePrice),
     packaging: packaging && { id: packaging.id, content: new Prisma.Decimal(packaging.content) },
   },
   stock: {
@@ -63,7 +68,7 @@ const packaged = (over: Record<string, unknown> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   repository.findProductBySku.mockResolvedValue(FLOUR);
-  repository.insertEntry.mockResolvedValue(recorded({ id: BAG, content: "0.38" }, 10));
+  repository.insertEntry.mockResolvedValue(recorded({ id: BAG, content: "0.38" }, 10, "4.50"));
 });
 
 describe("recordEntry by packaging", () => {
@@ -71,14 +76,20 @@ describe("recordEntry by packaging", () => {
     await recordEntry(packaged(), USER);
 
     expect(repository.insertEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ quantity: "3.8", unitCost: "11.842105", packagingId: BAG, packageCount: 10 }),
+      expect.objectContaining({
+        quantity: "3.8",
+        unitCost: "11.842105",
+        packagingId: BAG,
+        packageCount: 10,
+        packagePrice: "4.50",
+      }),
     );
   });
 
-  it("answers the lot with its packaging and count", async () => {
+  it("answers the lot with its packaging, count and price", async () => {
     const result = await recordEntry(packaged(), USER);
 
-    expect(result.ok && result.data.lot.packaging).toEqual({ id: BAG, content: "0.38", count: 10 });
+    expect(result.ok && result.data.lot.packaging).toEqual({ id: BAG, content: "0.38", count: 10, price: "4.5" });
   });
 
   it("refuses a packaging that is not the product's", async () => {

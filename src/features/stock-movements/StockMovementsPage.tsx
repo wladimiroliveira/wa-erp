@@ -14,7 +14,8 @@ import { loadStockMovements } from "@/features/stock-movements/actions";
 import { movementDirection, movementOrigin } from "@/features/stock-movements/movement-types";
 import type { Product, StockMovementPage as MovementPage } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
-import { formatDecimal, formatMoney } from "@/lib/decimal";
+import { formatDecimal } from "@/lib/decimal";
+import { unitCostOf } from "@/features/stock/stock-format";
 import { messageForFailure } from "@/lib/form-errors";
 import { withValues } from "@/lib/url-filters";
 import { unitLabel } from "@/lib/units";
@@ -131,7 +132,11 @@ export function StockMovementsPage({ page, products, productSku }: StockMovement
                 </>
               ),
             },
-            { key: "unit-cost", header: "Custo unitário", cell: (movement) => formatMoney(movement.unitCost) },
+            {
+              key: "unit-cost",
+              header: "Custo unitário",
+              cell: (movement) => unitCostOf(movement.unitCost, movement.product.unit),
+            },
             { key: "author", header: "Lançado por", cell: (movement) => movement.createdBy.name },
           ]}
         />

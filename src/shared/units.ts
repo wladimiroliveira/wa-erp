@@ -65,3 +65,11 @@ export function readableQuantity(quantity: string, unit: MeasurementUnit): { qua
 
 /** A decimal string written one way only, so that two writings of a number compare equal: 1.000000 is 1. */
 export const normalizeDecimal = (value: string): string => shift(value, 0);
+
+/** A cost per `unit` as a cost per kilogram or litre, the units prices are compared in; kg, L and UN stay. */
+export function costPerReadableUnit(cost: string, unit: MeasurementUnit): { cost: string; unit: MeasurementUnit } {
+  const [larger] = compatibleUnits(unit);
+
+  // A cost goes the opposite way to a quantity: what one gram costs, a thousand times, is a kilogram's.
+  return { cost: convert(cost, larger, unit), unit: larger };
+}

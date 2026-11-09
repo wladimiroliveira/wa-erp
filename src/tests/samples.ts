@@ -13,6 +13,7 @@ import type {
   Recipe,
   RecipeSummary,
   Role,
+  PackagingCost,
   ProductStock,
   StockItem,
   StockLot,
@@ -135,12 +136,24 @@ export function aStockLot(over: Partial<StockLot> = {}): StockLot {
     value: "40.00",
     createdAt: "2026-10-01T12:00:00.000Z",
     status: "OK",
+    packaging: null,
+    ...over,
+  };
+}
+
+export function aPackagingCost(over: Partial<PackagingCost> = {}): PackagingCost {
+  return {
+    id: "018f0000-0000-7000-8000-000000000101",
+    content: "380",
+    isActive: true,
+    lastEntry: null,
+    history: [],
     ...over,
   };
 }
 
 export function aProductStock(over: Partial<ProductStock> = {}): ProductStock {
-  return { ...aStockItem(), lots: [aStockLot()], ...over };
+  return { ...aStockItem(), lots: [aStockLot()], packagings: [], ...over };
 }
 
 export function aStockPosition(over: Partial<StockPosition> = {}): StockPosition {

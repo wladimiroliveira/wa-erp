@@ -33,8 +33,7 @@ import { messageForFailure } from "@/lib/form-errors";
 import { UNITS, unitLabel, unitName } from "@/lib/units";
 import { withValues } from "@/lib/url-filters";
 import { PageTitle } from "@/components/layout/PageTitle";
-import { NOTHING, quantityOf } from "@/features/stock/stock-format";
-import { readableQuantity } from "@/shared/units";
+import { NOTHING, packagingOf } from "@/features/stock/stock-format";
 
 const KIND_OPTIONS = PRODUCT_KINDS.map((kind) => ({ value: kind, label: kindLabel(kind) }));
 const UNIT_OPTIONS = UNITS.map((unit) => ({ value: unit, label: unitName(unit) }));
@@ -46,10 +45,7 @@ function packagingsOf({ packagings, unit }: Product): string {
 
   if (active.length === 0) return NOTHING;
 
-  return active
-    .map(({ content }) => readableQuantity(content, unit))
-    .map(({ quantity, unit: shown }) => quantityOf(quantity, shown))
-    .join(" · ");
+  return active.map(({ content }) => packagingOf(content, unit)).join(" · ");
 }
 
 interface ProductsListPageProps {

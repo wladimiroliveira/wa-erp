@@ -466,10 +466,11 @@ describe("POST /v1/entries in packagings", () => {
     expect(response.json()).toMatchObject({
       quantity: "3.8",
       unitCost: "11.842105",
-      lot: { quantity: "3.8", packaging: { id: bag.id, content: "0.38", count: 10 } },
+      lot: { quantity: "3.8", packaging: { id: bag.id, content: "0.38", count: 10, price: "4.5" } },
     });
     const [lot] = await lotsOf(product.sku);
     expect(lot).toMatchObject({ packagingId: bag.id, packageCount: 10 });
+    expect(lot!.packagePrice?.toString()).toBe("4.5");
     expect([lot!.quantity, lot!.unitCost].map(String)).toEqual(["3.8", "11.842105"]);
   });
 

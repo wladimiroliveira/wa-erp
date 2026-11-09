@@ -13,7 +13,13 @@ export type EntryResult = { ok: true; data: Entry } | EntryFailure;
 
 type Product = NonNullable<Awaited<ReturnType<typeof findProductBySku>>>;
 
-type InStockUnit = { quantity: string; unitCost: string; packagingId?: string; packageCount?: number };
+type InStockUnit = {
+  quantity: string;
+  unitCost: string;
+  packagingId?: string;
+  packageCount?: number;
+  packagePrice?: string;
+};
 
 /** The entry in the product's own unit: a packaged one is turned into the quantity and cost it amounts to. */
 function inStockUnit(body: CreateEntryBody, product: Product): Result<InStockUnit, 400 | 404 | 409> {
@@ -34,6 +40,7 @@ function inStockUnit(body: CreateEntryBody, product: Product): Result<InStockUni
     unitCost: packageUnitCost(body.packagePrice, packaging.content),
     packagingId: packaging.id,
     packageCount: body.packageCount,
+    packagePrice: body.packagePrice,
   });
 }
 
@@ -88,9 +95,14 @@ export async function recordEntry(body: CreateEntryBody, createdById: string): P
       supplier: lot.supplier,
       quantity: lot.quantity.toString(),
       packaging:
-        lot.packaging === null || lot.packageCount === null
+        lot.packaging === null || lot.packageCount === null || lot.packagePrice === null
           ? null
-          : { id: lot.packaging.id, content: lot.packaging.content.toString(), count: lot.packageCount },
+          : {
+              id: lot.packaging.id,
+              content: lot.packaging.content.toString(),
+              count: lot.packageCount,
+              price: lot.packagePrice.toString(),
+            },
     },
     stock: {
       quantity: stock!.quantity.toString(),

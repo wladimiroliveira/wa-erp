@@ -10,10 +10,12 @@ import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import { useSession } from "@/features/auth/use-session";
 import { useUrlSearchParams } from "@/hooks/use-url-search-params";
 import { LossDialog } from "@/features/losses/LossDialog";
-import { dayOf, moneyOf, NOTHING, quantityOf } from "@/features/stock/stock-format";
+import { amountOf, dayOf, moneyOf, NOTHING, packagingOf, quantityOf, unitCostOf } from "@/features/stock/stock-format";
+import { PackagingCostsSection } from "@/features/stock/PackagingCostsSection";
 import { lotStatusReading, statusReading } from "@/features/stock/stock-status";
 import type { LossReason, ProductStock, StockLot } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
+import { unitLabel } from "@/lib/units";
 import { withValues } from "@/lib/url-filters";
 import { PageTitle } from "@/components/layout/PageTitle";
 
@@ -68,6 +70,8 @@ export function StockProductPage({ stock, reasons, depleted }: StockProductPageP
         </div>
       </dl>
 
+      {stock.packagings.length === 0 ? null : <PackagingCostsSection packagings={stock.packagings} unit={unit} />}
+
       <div className="flex min-h-8 items-center gap-2">
         <Checkbox
           id="stock-depleted-lots"
@@ -94,11 +98,21 @@ export function StockProductPage({ stock, reasons, depleted }: StockProductPageP
             {
               key: "initial-quantity",
               header: "Qtd. inicial",
-              cell: (lot) => quantityOf(lot.initialQuantity, unit),
+              cell: (lot) => amountOf(lot.initialQuantity),
             },
-            { key: "quantity", header: "Saldo", cell: (lot) => quantityOf(lot.quantity, unit) },
-            { key: "unit-cost", header: "Custo unitário", cell: (lot) => moneyOf(lot.unitCost) },
+            { key: "quantity", header: "Saldo", cell: (lot) => amountOf(lot.quantity) },
+            { key: "unit", header: "Un.", cell: () => unitLabel(unit) },
+            { key: "unit-cost", header: "Custo unitário", cell: (lot) => unitCostOf(lot.unitCost, unit) },
             { key: "value", header: "Valor", cell: (lot) => moneyOf(lot.value) },
+            {
+              key: "packaging",
+              header: "Embalagem",
+              cell: (lot) =>
+                lot.packaging === null
+                  ? NOTHING
+                  : `${lot.packaging.count} × ${packagingOf(lot.packaging.content, unit)}`,
+            },
+            { key: "package-price", header: "Preço emb.", cell: (lot) => moneyOf(lot.packaging?.price ?? null) },
             {
               key: "status",
               header: "Situação",

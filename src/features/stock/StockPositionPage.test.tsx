@@ -41,12 +41,38 @@ describe("StockPositionPage", () => {
     await screen.findByText("Farinha de trigo");
     const flour = rowOf("Farinha de trigo");
 
-    expect(flour.getByText("1.250,5 kg")).toBeInTheDocument();
-    expect(flour.getByText("500 kg")).toBeInTheDocument();
-    expect(flour.getByText("R$ 4,50")).toBeInTheDocument();
-    expect(flour.getByText("R$ 4,25")).toBeInTheDocument();
+    expect(flour.getByText("1.250,5")).toBeInTheDocument();
+    expect(flour.getByText("kg")).toBeInTheDocument();
+    expect(flour.getByText("500")).toBeInTheDocument();
+    expect(flour.getByText("R$ 4,50/kg")).toBeInTheDocument();
+    expect(flour.getByText("R$ 4,25/kg")).toBeInTheDocument();
     expect(flour.getByText("R$ 5.314,63")).toBeInTheDocument();
     expect(flour.getByText("OK")).toBeInTheDocument();
+  });
+
+  it("shows the unit in a column of its own and the costs of a product kept in grams per kilogram", async () => {
+    renderPage(
+      aStockPosition({
+        items: [
+          aStockItem({
+            product: { ...product("Castanha"), unit: "GRAM" },
+            quantity: "380",
+            minimumQuantity: null,
+            lastEntryCost: "0.03398",
+            averageCost: "0.03398",
+            value: "12.91",
+          }),
+        ],
+      }),
+    );
+
+    await screen.findByText("Castanha");
+    const nuts = rowOf("Castanha");
+
+    expect(screen.getByRole("columnheader", { name: "Un." })).toBeInTheDocument();
+    expect(nuts.getByText("380")).toBeInTheDocument();
+    expect(nuts.getByText("g")).toBeInTheDocument();
+    expect(nuts.getAllByText("R$ 33,98/kg")).toHaveLength(2);
   });
 
   it("names each situation in Portuguese", async () => {
@@ -67,7 +93,7 @@ describe("StockPositionPage", () => {
     expect(rowOf("Manteiga").getByText("Vence em breve")).toBeInTheDocument();
     expect(rowOf("Açúcar").getByText("Abaixo do mínimo")).toBeInTheDocument();
     expect(rowOf("Fermento").getByText("Negativo")).toBeInTheDocument();
-    expect(rowOf("Fermento").getByText("-3 kg")).toBeInTheDocument();
+    expect(rowOf("Fermento").getByText("-3")).toBeInTheDocument();
     expect(rowOf("Sal").getByText("Zerado")).toBeInTheDocument();
   });
 

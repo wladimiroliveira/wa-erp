@@ -48,6 +48,7 @@ export function insertEntry(input: {
   createdById: string;
   packagingId?: string;
   packageCount?: number;
+  packagePrice?: string;
 }) {
   const { productSku, quantity, unitCost, createdById } = input;
 
@@ -84,6 +85,7 @@ export function insertEntry(input: {
       supplierId: input.supplierId,
       packagingId: input.packagingId,
       packageCount: input.packageCount,
+      packagePrice: input.packagePrice,
     });
 
     const movement = await tx.stockMovement.create({

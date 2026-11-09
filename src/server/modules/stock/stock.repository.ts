@@ -103,6 +103,7 @@ export function openLot(
     supplierId?: string;
     packagingId?: string;
     packageCount?: number;
+    packagePrice?: string;
   },
 ) {
   return client.stockLot.create({
@@ -111,6 +112,7 @@ export function openLot(
       supplierId: lot.supplierId,
       packagingId: lot.packagingId,
       packageCount: lot.packageCount,
+      packagePrice: lot.packagePrice,
       expiresAt: lot.expiresAt === null ? null : new Date(lot.expiresAt),
       initialQuantity: lot.quantity,
       quantity: lot.left ?? lot.quantity,
@@ -122,6 +124,7 @@ export function openLot(
       quantity: true,
       supplier: { select: { id: true, name: true } },
       packageCount: true,
+      packagePrice: true,
       packaging: { select: { id: true, content: true } },
     },
   });
@@ -328,6 +331,27 @@ export async function findProductWithStock(sku: string, { depleted }: { depleted
           unitCost: true,
           createdAt: true,
           supplier: { select: { id: true, name: true } },
+          packageCount: true,
+          packagePrice: true,
+          packaging: { select: { id: true, content: true } },
+        },
+      },
+      // Every lot each packaging came in, depleted ones too: they are its price history.
+      packagings: {
+        select: {
+          id: true,
+          content: true,
+          isActive: true,
+          lots: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              createdAt: true,
+              packageCount: true,
+              packagePrice: true,
+              supplier: { select: { id: true, name: true } },
+            },
+          },
         },
       },
     },

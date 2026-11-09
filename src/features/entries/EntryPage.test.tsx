@@ -338,7 +338,7 @@ describe("EntryPage, by packaging", () => {
         expiresAt: null,
         supplier: null,
         quantity: "3.8",
-        packaging: { id: BAG.id, content: "0.38", count: 10 },
+        packaging: { id: BAG.id, content: "0.38", count: 10, price: "4.5" },
       },
     }),
   });

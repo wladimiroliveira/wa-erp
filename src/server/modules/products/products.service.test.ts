@@ -55,6 +55,14 @@ beforeEach(() => {
 });
 
 describe("createProduct", () => {
+  it("writes one description one way, however its accents were encoded", () => {
+    const decomposed = "ac\u0327u\u0301car"; // c + combining cedilla, u + combining acute
+
+    expect(
+      createProductBodySchema.parse({ description: decomposed, kind: "GOODS", unit: "KILOGRAM" }).description,
+    ).toBe("AÇÚCAR".normalize("NFC"));
+  });
+
   it("checks and writes the description in upper case", async () => {
     await create({});
 
@@ -225,6 +233,23 @@ describe("editProduct", () => {
     await edit({ isActive: false });
 
     expect(repository.updateProduct).toHaveBeenCalledWith(SKU, { isActive: false });
+  });
+
+  it("lets a unique violation it does not know of through, instead of calling it a description taken", async () => {
+    repository.updateProduct.mockRejectedValue(uniqueViolation(["some_other_column"]));
+
+    await expect(edit({ description: "açúcar mascavo" })).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+  });
+
+  it("refuses a list that names one stored packaging twice", () => {
+    expect(
+      updateProductBodySchema.safeParse({
+        packagings: [
+          { id: BAG_ID, content: "1", unit: "KILOGRAM" },
+          { id: BAG_ID.toUpperCase(), content: "5", unit: "KILOGRAM" },
+        ],
+      }).success,
+    ).toBe(false);
   });
 
   it.each([

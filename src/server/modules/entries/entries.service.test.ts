@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createEntryBodySchema } from "./entries.schemas";
+import { createEntryBodySchema, ENTRY_REFUSALS } from "./entries.schemas";
 import { recordEntry } from "./entries.service";
 
 const repository = vi.hoisted(() => ({ findProductBySku: vi.fn(), insertEntry: vi.fn() }));
@@ -97,6 +97,33 @@ describe("recordEntry by packaging", () => {
 
     expect(result).toEqual({ ok: false, status: 404, message: "Packaging not found." });
     expect(repository.insertEntry).not.toHaveBeenCalled();
+  });
+
+  it("refuses a package price whose cost per unit the stock cannot hold, before writing anything", async () => {
+    repository.findProductBySku.mockResolvedValue({
+      ...FLOUR,
+      packagings: [{ id: BAG, content: "0.000001", isActive: true }],
+    });
+
+    const result = await recordEntry(packaged({ packageCount: 1, packagePrice: "999999999999.99" }), USER);
+
+    expect(result).toEqual({ ok: false, status: 400, message: ENTRY_REFUSALS.costTooLarge });
+    expect(repository.insertEntry).not.toHaveBeenCalled();
+  });
+
+  it("answers 404, not a crash, when the packaging is removed while the entry is written", async () => {
+    repository.insertEntry.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Foreign key constraint violated", {
+        code: "P2003",
+        clientVersion: "6",
+      }),
+    );
+
+    expect(await recordEntry(packaged(), USER)).toEqual({
+      ok: false,
+      status: 404,
+      message: ENTRY_REFUSALS.packagingNotFound,
+    });
   });
 
   it("refuses an inactive packaging", async () => {

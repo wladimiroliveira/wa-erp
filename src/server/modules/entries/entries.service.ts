@@ -1,10 +1,11 @@
 import { toOptionalDateString } from "@/server/lib/dates";
+import { isForeignKeyViolation } from "@/server/lib/prisma-errors";
 import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
 import { findSupplierById } from "@/server/modules/suppliers/suppliers.repository";
 import { decimalSchema } from "@/shared/decimal";
 import { packagedQuantity, packageUnitCost } from "@/shared/packaging-entry";
 import { findProductBySku, insertEntry, NegativeBalancePendingError } from "./entries.repository";
-import type { CreateEntryBody, Entry } from "./entries.schemas";
+import { ENTRY_REFUSALS, type CreateEntryBody, type Entry } from "./entries.schemas";
 
 /** A 409 that carries `deficit` is the negative balance waiting for the entry to say how to settle it. */
 export type EntryFailure = Failure<400 | 404 | 409> & { deficit?: string };
@@ -27,17 +28,22 @@ function inStockUnit(body: CreateEntryBody, product: Product): Result<InStockUni
 
   const packaging = product.packagings.find(({ id }) => id === body.packagingId.toLowerCase());
 
-  if (packaging === undefined) return fail(404, "Packaging not found.");
+  if (packaging === undefined) return fail(404, ENTRY_REFUSALS.packagingNotFound);
 
-  if (!packaging.isActive) return fail(409, "Packaging is inactive.");
+  if (!packaging.isActive) return fail(409, ENTRY_REFUSALS.packagingInactive);
 
   const quantity = packagedQuantity(packaging.content, body.packageCount);
 
-  if (!decimalSchema.safeParse(quantity).success) return fail(400, "The quantity does not fit the stock.");
+  if (!decimalSchema.safeParse(quantity).success) return fail(400, ENTRY_REFUSALS.quantityTooLarge);
+
+  const unitCost = packageUnitCost(body.packagePrice, packaging.content);
+
+  // A price spread over a tiny content can be a cost per unit larger than the column holds.
+  if (!decimalSchema.safeParse(unitCost).success) return fail(400, ENTRY_REFUSALS.costTooLarge);
 
   return succeed({
     quantity,
-    unitCost: packageUnitCost(body.packagePrice, packaging.content),
+    unitCost,
     packagingId: packaging.id,
     packageCount: body.packageCount,
     packagePrice: body.packagePrice,
@@ -72,9 +78,13 @@ export async function recordEntry(body: CreateEntryBody, createdById: string): P
     createdById,
   }).catch((error: unknown) => {
     if (error instanceof NegativeBalancePendingError) return error;
+    // Checked above, but removed from the product between the check and the write.
+    if (isForeignKeyViolation(error)) return fail(404, ENTRY_REFUSALS.packagingNotFound);
 
     throw error;
   });
+
+  if ("ok" in recorded) return recorded;
 
   if (recorded instanceof NegativeBalancePendingError) {
     return { ...fail(409, recorded.message), deficit: recorded.deficit.toString() };

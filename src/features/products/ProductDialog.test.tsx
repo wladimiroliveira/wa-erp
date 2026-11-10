@@ -1,10 +1,10 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createProduct, updateProduct } from "@/features/products/actions";
 import { ProductDialog } from "@/features/products/ProductDialog";
 import { renderWithProviders } from "@/tests/render";
-import { PRODUCT_CONFLICTS } from "@/server/modules/products/products.schemas";
+import { PRODUCT_CONFLICTS, PRODUCT_REFUSALS } from "@/server/modules/products/products.schemas";
 import { aPackaging, aProduct } from "@/tests/samples";
 
 vi.mock("@/features/products/actions", () => ({ createProduct: vi.fn(), updateProduct: vi.fn() }));
@@ -191,6 +191,39 @@ describe("ProductDialog", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(shown);
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it.each([
+    [
+      400,
+      PRODUCT_REFUSALS.contentTooFine,
+      "O conteúdo da embalagem tem mais casas do que a unidade do produto guarda.",
+    ],
+    [400, PRODUCT_REFUSALS.unitMismatch, "A unidade da embalagem não mede esse produto."],
+    [404, PRODUCT_REFUSALS.packagingNotFound, "Essa embalagem não existe mais. Feche o produto e abra de novo."],
+  ] as const)("says what the refusal %i %j is, in Portuguese", async (status, message, shown) => {
+    createMock.mockResolvedValue({ ok: false, status, message });
+
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await fill();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(shown);
+  });
+
+  it("leaves a word being composed alone, and writes it in upper case once composed", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    const description = screen.getByLabelText("Descrição") as HTMLInputElement;
+
+    fireEvent.compositionStart(description);
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setValue.call(description, "açu");
+    description.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+
+    expect(description).toHaveValue("açu");
+
+    fireEvent.compositionEnd(description);
+
+    expect(description).toHaveValue("AÇU");
   });
 
   it("opens empty again after a product was typed and the dialog closed", async () => {

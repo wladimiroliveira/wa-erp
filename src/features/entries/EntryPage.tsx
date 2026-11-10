@@ -14,7 +14,7 @@ import { NumericInput } from "@/components/ui/numeric-input";
 import { DeficitDialog } from "@/features/entries/DeficitDialog";
 import { createEntry, type CreateEntryResult } from "@/features/entries/actions";
 import { findByGtin } from "@/features/entries/barcode";
-import { MAX_PACKAGE_COUNT } from "@/server/modules/entries/entries.schemas";
+import { ENTRY_REFUSALS, MAX_PACKAGE_COUNT } from "@/server/modules/entries/entries.schemas";
 import { packagingOf, quantityOf, unitCostOf } from "@/features/stock/stock-format";
 import type { CreateEntryBody, Entry, Product, Supplier } from "@/lib/api";
 import { formatDate, todayIso } from "@/lib/dates";
@@ -91,6 +91,14 @@ const EMPTY_FORM: EntryForm = {
 const SAVE_MESSAGES = {
   404: "O produto ou o fornecedor já não existe mais. Atualize a página.",
   409: "Esse produto está inativo e não recebe entradas.",
+};
+
+// The refusals of an entry by packaging say which part was refused; each gets its own sentence.
+const REFUSAL_MESSAGES: Record<string, string> = {
+  [ENTRY_REFUSALS.packagingNotFound]: "Essa embalagem não existe mais. Atualize a página.",
+  [ENTRY_REFUSALS.packagingInactive]: "Essa embalagem foi inativada e não recebe entradas. Atualize a página.",
+  [ENTRY_REFUSALS.quantityTooLarge]: "Essa quantidade de embalagens passa do que o estoque guarda.",
+  [ENTRY_REFUSALS.costTooLarge]: "Esse preço por embalagem dá um custo por unidade maior do que o estoque guarda.",
 };
 
 function toBody(values: EntryForm): CreateEntryBody {
@@ -172,7 +180,11 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
       const deficit = deficitOf(result);
 
       if (deficit !== null) setUnsettled({ body, deficit });
-      else setFailure(messageForFailure(result, SAVE_MESSAGES));
+      else
+        setFailure(
+          ("message" in result ? REFUSAL_MESSAGES[result.message] : undefined) ??
+            messageForFailure(result, SAVE_MESSAGES),
+        );
     } catch (error) {
       setFailure(messageForFailure(error));
     } finally {
@@ -249,6 +261,11 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
               maxLength={14}
               autoFocus
               {...barcode}
+              // What was said of the last code is about that code: typing another lets it go.
+              onChange={(event) => {
+                setUnknownBarcode(false);
+                return barcode.onChange(event);
+              }}
               onBlur={(event) => {
                 readBarcode();
                 return barcode.onBlur(event);

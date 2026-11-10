@@ -15,6 +15,7 @@ import {
 } from "./products.repository";
 import {
   PRODUCT_CONFLICTS,
+  PRODUCT_REFUSALS,
   type createPackagingSchema,
   type createProductBodySchema,
   type updatePackagingSchema,
@@ -53,13 +54,12 @@ function contentsIn(unit: MeasurementUnit, packagings: TypedPackaging[]): Result
     try {
       content = convert(packaging.content, packaging.unit, unit);
     } catch (error) {
-      if (error instanceof IncompatibleUnitsError)
-        return fail(400, "The packaging unit does not measure this product.");
+      if (error instanceof IncompatibleUnitsError) return fail(400, PRODUCT_REFUSALS.unitMismatch);
       throw error;
     }
 
     if (!decimalSchema.safeParse(content).success) {
-      return fail(400, "The packaging content does not fit the product's unit.");
+      return fail(400, PRODUCT_REFUSALS.contentTooFine);
     }
 
     contents.push(content);
@@ -81,8 +81,10 @@ function conflictOfViolation(error: unknown) {
 
   if (target.includes("content")) return fail(409, PRODUCT_CONFLICTS.content);
   if (target.includes("gtin")) return fail(409, PRODUCT_CONFLICTS.gtin);
+  if (target.includes("description")) return fail(409, PRODUCT_CONFLICTS.description);
 
-  return fail(409, PRODUCT_CONFLICTS.description);
+  // A unique index this does not know of: saying "description taken" would be a lie.
+  throw error;
 }
 
 export async function createProduct(
@@ -126,7 +128,7 @@ export async function editProduct(
     const stored = new Map(product.packagings.map((packaging) => [packaging.id, packaging]));
 
     if (packagings.some(({ id }) => id !== undefined && !stored.has(id.toLowerCase()))) {
-      return fail(404, "Packaging not found.");
+      return fail(404, PRODUCT_REFUSALS.packagingNotFound);
     }
 
     const listed = new Set(packagings.flatMap(({ id }) => (id === undefined ? [] : [id.toLowerCase()])));

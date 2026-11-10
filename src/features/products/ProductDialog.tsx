@@ -26,7 +26,7 @@ import type { Product } from "@/lib/api";
 import { isDecimalInput, toApiDecimal, toDecimalInput } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
 import { unitLabel, unitName, UNITS } from "@/lib/units";
-import { PRODUCT_CONFLICTS } from "@/server/modules/products/products.schemas";
+import { PRODUCT_CONFLICTS, PRODUCT_REFUSALS } from "@/server/modules/products/products.schemas";
 
 const productFormSchema = z.object({
   description: z
@@ -61,8 +61,11 @@ const valuesOf = (product: Product | null): Partial<ProductFormInput> =>
         packagings: product.packagings.map((packaging) => rowOf(packaging, product.unit)),
       };
 
-// The server's 409 says which value is taken; each gets its own sentence.
-const CONFLICT_MESSAGES: Record<string, string> = {
+// The server's refusal says which value is wrong or taken; each gets its own sentence.
+const REFUSAL_MESSAGES: Record<string, string> = {
+  [PRODUCT_REFUSALS.contentTooFine]: "O conteúdo da embalagem tem mais casas do que a unidade do produto guarda.",
+  [PRODUCT_REFUSALS.unitMismatch]: "A unidade da embalagem não mede esse produto.",
+  [PRODUCT_REFUSALS.packagingNotFound]: "Essa embalagem não existe mais. Feche o produto e abra de novo.",
   [PRODUCT_CONFLICTS.description]: "Já existe um produto com essa descrição.",
   [PRODUCT_CONFLICTS.gtin]: "Esse GTIN já está em outra embalagem.",
   [PRODUCT_CONFLICTS.content]: "O produto já tem uma embalagem com esse conteúdo.",
@@ -82,6 +85,13 @@ interface ProductDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: (product: Product) => void;
+}
+
+function toUpperCase(input: HTMLInputElement): void {
+  const { selectionStart, selectionEnd } = input;
+
+  input.value = input.value.toLocaleUpperCase("pt-BR");
+  input.setSelectionRange(selectionStart, selectionEnd);
 }
 
 export function ProductDialog({ product = null, open, onOpenChange, onCreated }: ProductDialogProps) {
@@ -131,10 +141,7 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
       const result = await send(values);
 
       if (!result.ok) {
-        setFailure(
-          (result.status === 409 ? CONFLICT_MESSAGES[result.message] : undefined) ??
-            messageForFailure(result, SAVE_MESSAGES),
-        );
+        setFailure(REFUSAL_MESSAGES[result.message] ?? messageForFailure(result, SAVE_MESSAGES));
         return;
       }
 
@@ -170,14 +177,16 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
               autoFocus
               autoComplete="off"
               {...description}
-              // Shown as it is stored: in upper case, the caret kept where the operator typed.
+              // Shown as it is stored: in upper case, the caret kept where the operator typed. A word
+              // a phone keyboard is still composing is left alone, and written in upper case once composed.
               onChange={(event) => {
-                const { selectionStart, selectionEnd } = event.target;
-
-                event.target.value = event.target.value.toLocaleUpperCase("pt-BR");
-                event.target.setSelectionRange(selectionStart, selectionEnd);
+                if (!(event.nativeEvent as InputEvent).isComposing) toUpperCase(event.target);
 
                 return description.onChange(event);
+              }}
+              onCompositionEnd={(event) => {
+                toUpperCase(event.currentTarget);
+                void description.onChange({ target: event.currentTarget, type: "change" });
               }}
             />
             {errors.description ? <p className="text-sm text-destructive">{errors.description.message}</p> : null}

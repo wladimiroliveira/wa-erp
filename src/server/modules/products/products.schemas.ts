@@ -35,7 +35,8 @@ export const descriptionSchema = z
   .trim()
   .min(1)
   .max(120)
-  .transform((value) => value.toLocaleUpperCase("pt-BR"));
+  // One way of writing each accent first: a decomposed "ú" would otherwise be another description.
+  .transform((value) => value.normalize("NFC").toLocaleUpperCase("pt-BR"));
 
 export const gtinSchema = z
   .string()
@@ -64,8 +65,27 @@ const listsEachGtinOnce = (packagings: { gtin?: string | null }[]) => {
   return new Set(gtins).size === gtins.length;
 };
 
+// A stored packaging named twice would be written twice, the last one silently winning.
+const listsEachIdOnce = (packagings: object[]) => {
+  const ids = packagings.flatMap((packaging) =>
+    "id" in packaging && typeof packaging.id === "string" ? [packaging.id.toLowerCase()] : [],
+  );
+
+  return new Set(ids).size === ids.length;
+};
+
 const packagingList = <Item extends typeof createPackagingSchema | typeof updatePackagingSchema>(item: Item) =>
-  z.array(item).refine(listsEachGtinOnce, { message: "A GTIN is listed more than once." });
+  z
+    .array(item)
+    .refine(listsEachGtinOnce, { message: "A GTIN is listed more than once." })
+    .refine(listsEachIdOnce, { message: "A packaging is listed more than once." });
+
+/** The messages of the 400s and 404s a product save answers about its packagings, which the form tells apart. */
+export const PRODUCT_REFUSALS = {
+  unitMismatch: "The packaging unit does not measure this product.",
+  contentTooFine: "The packaging content does not fit the product's unit.",
+  packagingNotFound: "Packaging not found.",
+} as const;
 
 /** The messages of the 409s a product save answers, which the form tells apart. */
 export const PRODUCT_CONFLICTS = {

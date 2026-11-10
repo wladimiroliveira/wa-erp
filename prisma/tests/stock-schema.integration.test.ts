@@ -107,6 +107,16 @@ describe("stock lot packaging", () => {
     ).resolves.toBeDefined();
   });
 
+  it("refuses a lot that came in zero packagings", async () => {
+    const product = await createProduct();
+    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
+    const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
+
+    await expect(
+      testPrisma.stockLot.create({ data: { ...lot, packagingId: bag.id, packageCount: 0, packagePrice: "1" } }),
+    ).rejects.toThrow(/ck_stock_lots_package_count_positive/);
+  });
+
   it("refuses a packaging without its price, a price without a packaging and a negative price", async () => {
     const product = await createProduct();
     const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });

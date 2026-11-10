@@ -10,16 +10,17 @@ type PackagingLot = {
   supplier: Supplier | null;
 };
 
-type Packaging = { id: string; content: Prisma.Decimal; isActive: boolean; lots: PackagingLot[] };
+type Packaging = { id: string; brand: string; content: Prisma.Decimal; isActive: boolean; lots: PackagingLot[] };
 
 /**
- * What each packaging of a product was bought at: its entries newest first, the newest as its last
- * price. A packaging no longer used and never received says nothing and is left out.
+ * What each packaging of a product was bought at, by brand and then content: its entries newest
+ * first, the newest as its last price. A packaging no longer used and never received says nothing
+ * and is left out.
  */
 export function packagingCostsOf(packagings: Packaging[]) {
   return [...packagings]
-    .sort((a, b) => a.content.comparedTo(b.content))
-    .map(({ id, content, isActive, lots }) => {
+    .sort((a, b) => a.brand.localeCompare(b.brand, "pt-BR") || a.content.comparedTo(b.content))
+    .map(({ id, brand, content, isActive, lots }) => {
       const history = lots
         .flatMap(({ id: lotId, createdAt, supplier, packageCount, packagePrice }) =>
           packageCount === null || packagePrice === null
@@ -32,6 +33,7 @@ export function packagingCostsOf(packagings: Packaging[]) {
 
       return {
         id,
+        brand,
         content: content.toString(),
         isActive,
         lastEntry:

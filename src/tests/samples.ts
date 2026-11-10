@@ -74,7 +74,14 @@ export function aProduct(over: Partial<Product> = {}): Product {
 }
 
 export function aPackaging(over: Partial<Packaging> = {}): Packaging {
-  return { id: "018f0000-0000-7000-8000-000000000101", content: "1", gtin: null, isActive: true, ...over };
+  return {
+    id: "018f0000-0000-7000-8000-000000000101",
+    brand: "MOÇA",
+    content: "1",
+    gtin: null,
+    isActive: true,
+    ...over,
+  };
 }
 
 export function anEntry(over: Partial<Entry> = {}): Entry {
@@ -145,6 +152,7 @@ export function aStockLot(over: Partial<StockLot> = {}): StockLot {
 export function aPackagingCost(over: Partial<PackagingCost> = {}): PackagingCost {
   return {
     id: "018f0000-0000-7000-8000-000000000101",
+    brand: "MOÇA",
     content: "380",
     isActive: true,
     lastEntry: null,

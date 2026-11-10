@@ -31,6 +31,21 @@ vi.mock("@/components/ui/dialog", () => ({
 }));
 
 describe("PackagingCostsSection", () => {
+  it("tells the packagings apart by brand", () => {
+    renderWithProviders(
+      <PackagingCostsSection
+        packagings={[
+          aPackagingCost({ id: "italac", brand: "ITALAC", content: "395" }),
+          aPackagingCost({ id: "moça", brand: "MOÇA", content: "395" }),
+        ]}
+        unit="GRAM"
+      />,
+    );
+
+    expect(screen.getByRole("cell", { name: "ITALAC 395 g" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "MOÇA 395 g" })).toBeInTheDocument();
+  });
+
   it("keeps the entries of a packaging on screen while its dialog closes", async () => {
     const bag = aPackagingCost({
       content: "380",
@@ -39,11 +54,11 @@ describe("PackagingCostsSection", () => {
     });
     renderWithProviders(<PackagingCostsSection packagings={[bag]} unit="GRAM" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Histórico de 380 g" }));
+    await userEvent.click(screen.getByRole("button", { name: "Histórico de MOÇA 380 g" }));
     await userEvent.click(screen.getByRole("button", { name: "Fechar" }));
 
     expect(screen.getByRole("dialog")).toHaveAttribute("data-open", "false");
-    expect(screen.getByRole("heading", { name: "Entradas de 380 g" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Entradas de MOÇA 380 g" })).toBeInTheDocument();
   });
 
   const withEntries = (count: number) =>
@@ -62,7 +77,7 @@ describe("PackagingCostsSection", () => {
   it("says when the history shows only the latest entries", async () => {
     renderWithProviders(<PackagingCostsSection packagings={[withEntries(HISTORY_LIMIT)]} unit="GRAM" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Histórico de 380 g" }));
+    await userEvent.click(screen.getByRole("button", { name: "Histórico de MOÇA 380 g" }));
 
     expect(screen.getByText(`Mostrando as ${HISTORY_LIMIT} entradas mais recentes.`)).toBeInTheDocument();
   });
@@ -70,7 +85,7 @@ describe("PackagingCostsSection", () => {
   it("says nothing of a limit when the history is whole", async () => {
     renderWithProviders(<PackagingCostsSection packagings={[withEntries(2)]} unit="GRAM" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Histórico de 380 g" }));
+    await userEvent.click(screen.getByRole("button", { name: "Histórico de MOÇA 380 g" }));
 
     expect(screen.queryByText(/entradas mais recentes/)).not.toBeInTheDocument();
   });

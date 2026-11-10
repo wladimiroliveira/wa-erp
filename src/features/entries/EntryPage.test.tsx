@@ -302,7 +302,7 @@ describe("EntryPage sizing", () => {
 
 describe("EntryPage, by packaging", () => {
   const BAG = aPackaging({ id: "018f0000-0000-7000-8000-000000000101", content: "0.38", gtin: "7891000100103" });
-  const SACK = aPackaging({ id: "018f0000-0000-7000-8000-000000000102", content: "1", gtin: null });
+  const SACK = aPackaging({ id: "018f0000-0000-7000-8000-000000000102", brand: "ITALAC", content: "1", gtin: null });
   const RETIRED = aPackaging({ id: "018f0000-0000-7000-8000-000000000103", content: "5", isActive: false });
   const SUGAR = aProduct({
     sku: "018f0000-0000-7000-8000-000000000021",
@@ -339,7 +339,7 @@ describe("EntryPage, by packaging", () => {
         expiresAt: null,
         supplier: null,
         quantity: "3.8",
-        packaging: { id: BAG.id, content: "0.38", count: 10, price: "4.5" },
+        packaging: { id: BAG.id, brand: "MOÇA", content: "0.38", count: 10, price: "4.5" },
       },
     }),
   });
@@ -350,7 +350,7 @@ describe("EntryPage, by packaging", () => {
     await scan("7891000100103");
 
     expect(screen.getByLabelText("Produto")).toHaveValue(SUGAR.sku);
-    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("380 g");
+    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("MOÇA 380 g");
     expect(screen.getByLabelText("Quantidade")).toHaveFocus();
     expect(createEntryMock).not.toHaveBeenCalled();
   });
@@ -400,8 +400,8 @@ describe("EntryPage, by packaging", () => {
     await userEvent.selectOptions(await screen.findByLabelText("Produto"), "AÇÚCAR (kg)");
 
     const options = within(screen.getByLabelText("Embalagem")).getAllByRole("option");
-    expect(options.map((option) => option.textContent)).toEqual(["380 g", "1 kg", "Sem embalagem (kg)"]);
-    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("380 g");
+    expect(options.map((option) => option.textContent)).toEqual(["MOÇA 380 g", "ITALAC 1 kg", "Sem embalagem (kg)"]);
+    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("MOÇA 380 g");
   });
 
   it("asks for no packaging on a product that has none", async () => {
@@ -484,7 +484,7 @@ describe("EntryPage, by packaging", () => {
 
     await submit();
 
-    expect(await screen.findByRole("status")).toHaveTextContent("10 × 380 g (3,8 kg)");
+    expect(await screen.findByRole("status")).toHaveTextContent("10 × MOÇA 380 g (3,8 kg)");
     expect(screen.getByLabelText("Código de barras")).toHaveFocus();
   });
 
@@ -518,7 +518,7 @@ describe("EntryPage, by packaging", () => {
 
     await userEvent.selectOptions(screen.getByLabelText("Produto"), "ÓLEO (L)");
 
-    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("900 mL");
+    expect(screen.getByLabelText("Embalagem")).toHaveDisplayValue("MOÇA 900 mL");
   });
 
   it("sends the new product's packaging when the product changes after a barcode", async () => {

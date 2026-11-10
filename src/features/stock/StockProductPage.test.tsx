@@ -216,7 +216,7 @@ describe("StockProductPage packagings", () => {
   it("tells each packaging's last price, what it amounts to per kilogram, when and from whom", async () => {
     renderPage(aProductStock({ product: NUTS, lots: [], packagings: [bag] }));
 
-    const row = within((await screen.findByText("380 g")).closest("tr")!);
+    const row = within((await screen.findByText("MOÇA 380 g")).closest("tr")!);
 
     expect(row.getByText("R$ 12,91")).toBeInTheDocument();
     expect(row.getByText("R$ 33,97/kg")).toBeInTheDocument();
@@ -236,14 +236,14 @@ describe("StockProductPage packagings", () => {
       }),
     );
 
-    expect(within((await screen.findByText("380 g")).closest("tr")!).getByText("Inativa")).toBeInTheDocument();
-    expect(within(screen.getByText("1 kg").closest("tr")!).getByText("Sem entradas")).toBeInTheDocument();
+    expect(within((await screen.findByText("MOÇA 380 g")).closest("tr")!).getByText("Inativa")).toBeInTheDocument();
+    expect(within(screen.getByText("MOÇA 1 kg").closest("tr")!).getByText("Sem entradas")).toBeInTheDocument();
   });
 
   it("opens the entries of a packaging, the newest first", async () => {
     renderPage(aProductStock({ product: NUTS, lots: [], packagings: [bag] }));
 
-    await userEvent.click(await section().findByRole("button", { name: "Histórico de 380 g" }));
+    await userEvent.click(await section().findByRole("button", { name: "Histórico de MOÇA 380 g" }));
 
     const dialog = within(await screen.findByRole("dialog"));
     const [, newest, oldest] = dialog.getAllByRole("row").map((row) => within(row));
@@ -269,7 +269,7 @@ describe("StockProductPage packagings", () => {
       aProductStock({
         product: NUTS,
         lots: [
-          aStockLot({ id: "lot-1", packaging: { id: BAG, content: "380", count: 10, price: "12.91" } }),
+          aStockLot({ id: "lot-1", packaging: { id: BAG, brand: "MOÇA", content: "380", count: 10, price: "12.91" } }),
           aStockLot({ id: "lot-2", packaging: null }),
         ],
       }),
@@ -279,7 +279,7 @@ describe("StockProductPage packagings", () => {
 
     expect(screen.getByRole("columnheader", { name: "Embalagem" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Preço emb." })).toBeInTheDocument();
-    expect(packaged!.getByText("10 × 380 g")).toBeInTheDocument();
+    expect(packaged!.getByText("10 × MOÇA 380 g")).toBeInTheDocument();
     expect(packaged!.getByText("R$ 12,91")).toBeInTheDocument();
     expect(loose!.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });

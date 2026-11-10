@@ -1082,7 +1082,9 @@ describe("leftovers of opened packagings", () => {
     const milk = await testPrisma.product.create({
       data: { description: "Condensed milk", kind: "GOODS", unit: "GRAM", isStorableOnceOpened: storable },
     });
-    const can = await testPrisma.productPackaging.create({ data: { productSku: milk.sku, content: "395" } });
+    const can = await testPrisma.productPackaging.create({
+      data: { productSku: milk.sku, brand: "MOÇA", content: "395" },
+    });
     await testPrisma.recipe.create({
       data: {
         productSku: pudding.sku,

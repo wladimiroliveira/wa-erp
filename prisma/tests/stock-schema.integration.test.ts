@@ -93,7 +93,9 @@ describe("stock_movements", () => {
 describe("stock lot packaging", () => {
   it("refuses a lot that names a packaging without a count, or a count without a packaging", async () => {
     const product = await createProduct();
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: product.sku, brand: "MOÇA", content: "1" },
+    });
     const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
 
     await expect(
@@ -109,7 +111,9 @@ describe("stock lot packaging", () => {
 
   it("refuses a lot that came in zero packagings", async () => {
     const product = await createProduct();
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: product.sku, brand: "MOÇA", content: "1" },
+    });
     const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
 
     await expect(
@@ -119,7 +123,9 @@ describe("stock lot packaging", () => {
 
   it("refuses a packaging without its price, a price without a packaging and a negative price", async () => {
     const product = await createProduct();
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, content: "1" } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: product.sku, brand: "MOÇA", content: "1" },
+    });
     const lot = { productSku: product.sku, initialQuantity: "1", quantity: "1", unitCost: "1" };
 
     await expect(

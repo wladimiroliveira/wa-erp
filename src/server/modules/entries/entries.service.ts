@@ -1,6 +1,7 @@
 import { toOptionalDateString } from "@/server/lib/dates";
 import { isForeignKeyViolation } from "@/server/lib/prisma-errors";
 import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
+import { lotPackagingOf } from "@/server/modules/stock/stock.lot-packaging";
 import { findSupplierById } from "@/server/modules/suppliers/suppliers.repository";
 import { decimalSchema } from "@/shared/decimal";
 import { packagedQuantity, packageUnitCost } from "@/shared/packaging-entry";
@@ -104,15 +105,7 @@ export async function recordEntry(body: CreateEntryBody, createdById: string): P
       expiresAt: toOptionalDateString(lot.expiresAt),
       supplier: lot.supplier,
       quantity: lot.quantity.toString(),
-      packaging:
-        lot.packaging === null || lot.packageCount === null || lot.packagePrice === null
-          ? null
-          : {
-              id: lot.packaging.id,
-              content: lot.packaging.content.toString(),
-              count: lot.packageCount,
-              price: lot.packagePrice.toString(),
-            },
+      packaging: lotPackagingOf(lot),
     },
     stock: {
       quantity: stock!.quantity.toString(),

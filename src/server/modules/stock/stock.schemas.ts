@@ -13,6 +13,12 @@ export const lotExpirySchema = z.iso
   .refine((date) => date >= localToday(), { message: "The lot has already expired." })
   .nullable();
 
+// The packaging a lot came in: its brand, its content in the product's unit, how many and the price
+// of one; null for a lot received loose.
+export const lotPackagingSchema = z
+  .object({ id: z.uuid(), brand: z.string(), content: z.string(), count: z.number().int(), price: z.string() })
+  .nullable();
+
 export const listStockMovementsQuerySchema = pageQuerySchema.extend({ productSku: z.uuid().optional() });
 
 export const stockMovementSchema = z.object({
@@ -63,14 +69,14 @@ export const productStockSchema = stockItemSchema.extend({
       value: z.string(),
       createdAt: z.iso.datetime(),
       status: z.enum(LotStatus),
-      // The packaging the lot came in, its content in the product's unit, and the price of one; null for a loose lot.
-      packaging: z.object({ id: z.uuid(), content: z.string(), count: z.number().int(), price: z.string() }).nullable(),
+      packaging: lotPackagingSchema,
     }),
   ),
-  // What each packaging of the product was bought at, the smallest first.
+  // What each packaging of the product was bought at, by brand, then the smallest first.
   packagings: z.array(
     z.object({
       id: z.uuid(),
+      brand: z.string(),
       content: z.string(),
       isActive: z.boolean(),
       lastEntry: z

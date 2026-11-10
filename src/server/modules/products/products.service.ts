@@ -44,7 +44,10 @@ async function conflictOf(input: { description?: string; gtins: string[] }, sku?
   return null;
 }
 
-/** Each content in the product's unit, or why one cannot be: another dimension, or more digits than are kept. */
+/**
+ * Each content in the product's unit, or why one cannot be: another dimension, more digits than are
+ * kept, or a brand listed twice with one content.
+ */
 function contentsIn(unit: MeasurementUnit, packagings: TypedPackaging[]): Result<string[], 400 | 409> {
   const contents: string[] = [];
 
@@ -65,8 +68,10 @@ function contentsIn(unit: MeasurementUnit, packagings: TypedPackaging[]): Result
     contents.push(content);
   }
 
-  // `convert` writes a number one way only, so equal contents are equal strings.
-  if (new Set(contents).size !== contents.length) return fail(409, PRODUCT_CONFLICTS.content);
+  // `convert` writes a number one way only, and the schema a brand, so equal pairs are equal strings.
+  const pairs = new Set(contents.map((content, index) => `${packagings[index]!.brand}\u0000${content}`));
+
+  if (pairs.size !== contents.length) return fail(409, PRODUCT_CONFLICTS.brandAndContent);
 
   return succeed(contents);
 }
@@ -79,7 +84,7 @@ function conflictOfViolation(error: unknown) {
 
   const target = String(error.meta?.target ?? "");
 
-  if (target.includes("content")) return fail(409, PRODUCT_CONFLICTS.content);
+  if (target.includes("content")) return fail(409, PRODUCT_CONFLICTS.brandAndContent);
   if (target.includes("gtin")) return fail(409, PRODUCT_CONFLICTS.gtin);
   if (target.includes("description")) return fail(409, PRODUCT_CONFLICTS.description);
 
@@ -104,6 +109,7 @@ export async function createProduct(
       await insertProduct({
         ...input,
         packagings: packagings.map((packaging, index) => ({
+          brand: packaging.brand,
           content: contents.data[index]!,
           gtin: packaging.gtin ?? null,
         })),
@@ -150,8 +156,9 @@ export async function editProduct(
 
     if (changesLockedContent) return fail(409, PRODUCT_CONFLICTS.contentLocked);
 
-    writes = packagings.map(({ id, gtin, isActive }, index) => ({
+    writes = packagings.map(({ id, brand, gtin, isActive }, index) => ({
       ...(id === undefined ? {} : { id: id.toLowerCase() }),
+      brand,
       content: contents.data[index]!,
       gtin: gtin ?? null,
       isActive: isActive ?? (id === undefined || stored.get(id.toLowerCase())!.isActive),

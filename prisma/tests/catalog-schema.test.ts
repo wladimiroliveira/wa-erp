@@ -44,9 +44,10 @@ describe("catalog schema", () => {
     expect(SCHEMA).toMatch(packagingField(String.raw`gtin\s+String\?\s+@unique`));
   });
 
-  it("measures a packaging's content in its product's unit, once per product", () => {
+  it("measures a packaging's content in its product's unit, once per brand of the product", () => {
+    expect(SCHEMA).toMatch(packagingField(String.raw`brand\s+String\s*\n`));
     expect(SCHEMA).toMatch(packagingField(String.raw`content\s+Decimal\s+@db\.Decimal\(18, 6\)`));
-    expect(SCHEMA).toMatch(packagingField(String.raw`@@unique\(\[productSku, content\]`));
+    expect(SCHEMA).toMatch(packagingField(String.raw`@@unique\(\[productSku, brand, content\]`));
   });
 
   it("measures a product in a single unit from a fixed set", () => {

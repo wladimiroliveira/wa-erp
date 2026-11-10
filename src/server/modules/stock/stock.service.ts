@@ -2,6 +2,7 @@ import { MeasurementUnit, Prisma } from "@prisma/client";
 import { localToday, toOptionalDateString } from "@/server/lib/dates";
 import { toPage } from "@/server/lib/pagination";
 import { fail, succeed } from "@/server/lib/result";
+import { lotPackagingOf } from "./stock.lot-packaging";
 import { packagingCostsOf } from "./stock.packaging-costs";
 import { lotCountOf, lotStatusOf, lotValueOf, nextExpiryOf, statusOf, valueOf } from "./stock.position";
 import { findProductWithStock, listProductsWithStock, listStockMovements } from "./stock.repository";
@@ -87,15 +88,7 @@ export async function productStockPosition(sku: string, options: { depleted: boo
       value: lotValueOf(lot).toFixed(2),
       createdAt: lot.createdAt.toISOString(),
       status: lotStatusOf(lot, today),
-      packaging:
-        lot.packaging === null || lot.packageCount === null || lot.packagePrice === null
-          ? null
-          : {
-              id: lot.packaging.id,
-              content: lot.packaging.content.toString(),
-              count: lot.packageCount,
-              price: lot.packagePrice.toString(),
-            },
+      packaging: lotPackagingOf(lot),
     })),
     packagings: packagingCostsOf(packagings),
   });

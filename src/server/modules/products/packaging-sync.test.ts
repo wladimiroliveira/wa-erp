@@ -5,9 +5,15 @@ const BAG = "018f0000-0000-7000-8000-000000000101";
 const SACK = "018f0000-0000-7000-8000-000000000102";
 const BOX = "018f0000-0000-7000-8000-000000000103";
 
-const stored = (id: string, content: string, gtin: string | null = null) => ({ id, content, gtin });
-const write = (id: string | undefined, content: string, gtin: string | null = null) => ({
+const stored = (id: string, content: string, gtin: string | null = null, brand = "MOÇA") => ({
+  id,
+  brand,
+  content,
+  gtin,
+});
+const write = (id: string | undefined, content: string, gtin: string | null = null, brand = "MOÇA") => ({
   ...(id === undefined ? {} : { id }),
+  brand,
   content,
   gtin,
   isActive: true,
@@ -49,6 +55,34 @@ describe("planPackagingSync", () => {
 
     expect(plan.updates).toEqual([write(BAG, "2")]);
     expect(plan.creates).toEqual([write(undefined, "1")]);
+  });
+
+  it("changes a packaging only after the one holding its new brand and content has moved away", () => {
+    const plan = planPackagingSync(
+      [stored(BAG, "0.395", null, "MOÇA"), stored(SACK, "0.395", null, "ITALAC")],
+      [write(BAG, "0.395", null, "ITALAC"), write(SACK, "0.395", null, "PIRACANJUBA")],
+    );
+
+    expect(plan.updates.map(({ id }) => id)).toEqual([SACK, BAG]);
+  });
+
+  it("lets the same content under different brands be written in any order", () => {
+    const plan = planPackagingSync(
+      [stored(BAG, "0.395", null, "MOÇA"), stored(SACK, "1", null, "ITALAC")],
+      [write(BAG, "0.395", null, "MOÇA"), write(SACK, "0.395", null, "ITALAC")],
+    );
+
+    expect(plan.updates.map(({ id }) => id)).toEqual([BAG, SACK]);
+  });
+
+  it("renames a brand while a new packaging takes the old pair", () => {
+    const plan = planPackagingSync(
+      [stored(BAG, "0.395", null, "MOÇA")],
+      [write(BAG, "0.395", null, "ITALAC"), write(undefined, "0.395", null, "MOÇA")],
+    );
+
+    expect(plan.updates).toEqual([write(BAG, "0.395", null, "ITALAC")]);
+    expect(plan.creates).toEqual([write(undefined, "0.395", null, "MOÇA")]);
   });
 
   it("still lists both sides of a swap, which no order can save", () => {

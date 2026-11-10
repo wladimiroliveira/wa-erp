@@ -446,7 +446,9 @@ describe("POST /v1/entries", () => {
 describe("POST /v1/entries in packagings", () => {
   const createPackaged = async (packaging: { content: string; isActive?: boolean } = { content: "0.38" }) => {
     const product = await createProduct();
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: product.sku, ...packaging } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: product.sku, brand: "MOÇA", ...packaging },
+    });
 
     return { product, bag };
   };
@@ -466,7 +468,7 @@ describe("POST /v1/entries in packagings", () => {
     expect(response.json()).toMatchObject({
       quantity: "3.8",
       unitCost: "11.842105",
-      lot: { quantity: "3.8", packaging: { id: bag.id, content: "0.38", count: 10, price: "4.5" } },
+      lot: { quantity: "3.8", packaging: { id: bag.id, brand: "MOÇA", content: "0.38", count: 10, price: "4.5" } },
     });
     const [lot] = await lotsOf(product.sku);
     expect(lot).toMatchObject({ packagingId: bag.id, packageCount: 10 });
@@ -504,7 +506,9 @@ describe("POST /v1/entries in packagings", () => {
     const other = await testPrisma.product.create({
       data: { description: "Rye flour", kind: "GOODS", unit: "KILOGRAM" },
     });
-    const otherBag = await testPrisma.productPackaging.create({ data: { productSku: other.sku, content: "1" } });
+    const otherBag = await testPrisma.productPackaging.create({
+      data: { productSku: other.sku, brand: "MOÇA", content: "1" },
+    });
 
     const response = await postEntry(headers, {
       productSku: product.sku,

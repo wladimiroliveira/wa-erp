@@ -10,7 +10,15 @@ import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import { useSession } from "@/features/auth/use-session";
 import { useUrlSearchParams } from "@/hooks/use-url-search-params";
 import { LossDialog } from "@/features/losses/LossDialog";
-import { amountOf, dayOf, moneyOf, NOTHING, packagingOf, quantityOf, unitCostOf } from "@/features/stock/stock-format";
+import {
+  amountOf,
+  dayOf,
+  moneyOf,
+  NOTHING,
+  packagingLabel,
+  quantityOf,
+  unitCostOf,
+} from "@/features/stock/stock-format";
 import { PackagingCostsSection } from "@/features/stock/PackagingCostsSection";
 import { lotStatusReading, statusReading } from "@/features/stock/stock-status";
 import type { LossReason, ProductStock, StockLot } from "@/lib/api";
@@ -110,7 +118,7 @@ export function StockProductPage({ stock, reasons, depleted }: StockProductPageP
               cell: (lot) =>
                 lot.packaging === null
                   ? NOTHING
-                  : `${lot.packaging.count} × ${packagingOf(lot.packaging.content, unit)}`,
+                  : `${lot.packaging.count} × ${packagingLabel(lot.packaging.brand, lot.packaging.content, unit)}`,
             },
             { key: "package-price", header: "Preço emb.", cell: (lot) => moneyOf(lot.packaging?.price ?? null) },
             {

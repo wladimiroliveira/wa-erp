@@ -19,13 +19,15 @@ beforeEach(() => {
 
 async function fill({
   description = "Farinha de trigo",
-  packaging = null as null | { content: string; unit?: string; gtin?: string },
+  packaging = null as null | { brand?: string; content: string; unit?: string; gtin?: string },
 } = {}) {
   await userEvent.type(screen.getByLabelText("Descrição"), description);
   await userEvent.selectOptions(screen.getByLabelText("Tipo"), "Mercadoria");
   await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
   if (packaging !== null) {
     await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+    if (packaging.brand !== "")
+      await userEvent.type(screen.getByLabelText("Marca da embalagem 1"), packaging.brand ?? "União");
     await userEvent.type(screen.getByLabelText("Conteúdo da embalagem 1"), packaging.content);
     if (packaging.unit) await userEvent.selectOptions(screen.getByLabelText("Unidade da embalagem 1"), packaging.unit);
     if (packaging.gtin) await userEvent.type(screen.getByLabelText("GTIN da embalagem 1"), packaging.gtin);
@@ -106,6 +108,7 @@ describe("ProductDialog", () => {
     await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
     for (const position of [1, 2]) {
       await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+      await userEvent.type(screen.getByLabelText(`Marca da embalagem ${position}`), "União");
       await userEvent.type(screen.getByLabelText(`Conteúdo da embalagem ${position}`), String(position));
       await userEvent.type(screen.getByLabelText(`GTIN da embalagem ${position}`), "7891000100103");
     }
@@ -113,6 +116,69 @@ describe("ProductDialog", () => {
 
     expect(await screen.findByText("Cada GTIN só pode aparecer em uma embalagem.")).toBeInTheDocument();
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("writes the brand of a packaging in upper case as it is typed, and sends it", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await fill({ packaging: { brand: "moça", content: "395", unit: "g" } });
+
+    expect(screen.getByLabelText("Marca da embalagem 1")).toHaveValue("MOÇA");
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({ packagings: [{ brand: "MOÇA", content: "395", unit: "GRAM" }] }),
+      ),
+    );
+  });
+
+  it("asks for the brand of a packaging", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await fill({ packaging: { brand: "", content: "1" } });
+
+    expect(await screen.findByText("Informe a marca da embalagem.")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses the same brand and content twice, whatever unit the content was typed in", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
+    for (const [position, brand, content, unit] of [
+      [1, "Moça", "395", "g"],
+      [2, "MOÇA", "0,395", "kg"],
+    ] as const) {
+      await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+      await userEvent.type(screen.getByLabelText(`Marca da embalagem ${position}`), brand);
+      await userEvent.type(screen.getByLabelText(`Conteúdo da embalagem ${position}`), content);
+      await userEvent.selectOptions(screen.getByLabelText(`Unidade da embalagem ${position}`), unit);
+    }
+    await fill();
+
+    expect(await screen.findByText("Cada marca só pode ter uma embalagem com esse conteúdo.")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("takes the same content under two brands", async () => {
+    renderWithProviders(<ProductDialog open onOpenChange={() => undefined} />);
+    await userEvent.selectOptions(screen.getByLabelText("Unidade"), "Quilograma (kg)");
+    for (const [position, brand] of [
+      [1, "Moça"],
+      [2, "Italac"],
+    ] as const) {
+      await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+      await userEvent.type(screen.getByLabelText(`Marca da embalagem ${position}`), brand);
+      await userEvent.type(screen.getByLabelText(`Conteúdo da embalagem ${position}`), "1");
+    }
+    await fill();
+
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packagings: [
+            { brand: "MOÇA", content: "1", unit: "KILOGRAM" },
+            { brand: "ITALAC", content: "1", unit: "KILOGRAM" },
+          ],
+        }),
+      ),
+    );
   });
 
   it("hands over the product it registered", async () => {
@@ -138,7 +204,7 @@ describe("ProductDialog", () => {
         kind: "GOODS",
         unit: "KILOGRAM",
         isStorableOnceOpened: true,
-        packagings: [{ content: "380", unit: "GRAM", gtin: "7891000100103" }],
+        packagings: [{ brand: "UNIÃO", content: "380", unit: "GRAM", gtin: "7891000100103" }],
       }),
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -154,7 +220,7 @@ describe("ProductDialog", () => {
         kind: "GOODS",
         unit: "KILOGRAM",
         isStorableOnceOpened: true,
-        packagings: [{ content: "1.5", unit: "KILOGRAM" }],
+        packagings: [{ brand: "UNIÃO", content: "1.5", unit: "KILOGRAM" }],
       }),
     );
   });
@@ -176,7 +242,7 @@ describe("ProductDialog", () => {
   it.each([
     [PRODUCT_CONFLICTS.description, "Já existe um produto com essa descrição."],
     [PRODUCT_CONFLICTS.gtin, "Esse GTIN já está em outra embalagem."],
-    [PRODUCT_CONFLICTS.content, "O produto já tem uma embalagem com esse conteúdo."],
+    [PRODUCT_CONFLICTS.brandAndContent, "O produto já tem uma embalagem dessa marca com esse conteúdo."],
     [PRODUCT_CONFLICTS.inUse, "Essa embalagem já recebeu entradas e não pode ser removida; inative-a."],
     [
       PRODUCT_CONFLICTS.contentLocked,
@@ -281,7 +347,7 @@ describe("ProductDialog", () => {
 describe("ProductDialog, editing a product", () => {
   const BAG = aPackaging({ id: "018f0000-0000-7000-8000-000000000101", content: "0.38", gtin: "7891000100103" });
   const FLOUR = aProduct({ description: "FARINHA DE TRIGO", minimumQuantity: "1234.5", packagings: [BAG] });
-  const SENT_BAG = { id: BAG.id, content: "380", unit: "GRAM", gtin: "7891000100103", isActive: true };
+  const SENT_BAG = { id: BAG.id, brand: "MOÇA", content: "380", unit: "GRAM", gtin: "7891000100103", isActive: true };
 
   /** Answers the edit with what was sent, and keeps it to be checked. */
   function editServer() {
@@ -301,6 +367,7 @@ describe("ProductDialog, editing a product", () => {
 
     expect(await screen.findByRole("dialog", { name: "Editar produto" })).toBeInTheDocument();
     expect(screen.getByLabelText("Descrição")).toHaveValue("FARINHA DE TRIGO");
+    expect(screen.getByLabelText("Marca da embalagem 1")).toHaveValue("MOÇA");
     expect(screen.getByLabelText("Conteúdo da embalagem 1")).toHaveValue("380");
     expect(screen.getByLabelText("Unidade da embalagem 1")).toHaveDisplayValue("g");
     expect(screen.getByLabelText("GTIN da embalagem 1")).toHaveValue("7891000100103");
@@ -359,6 +426,7 @@ describe("ProductDialog, editing a product", () => {
     await userEvent.click(screen.getByRole("button", { name: "Inativar embalagem 1" }));
     expect(screen.getByRole("button", { name: "Reativar embalagem 1" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Adicionar embalagem" }));
+    await userEvent.type(screen.getByLabelText("Marca da embalagem 2"), "Italac");
     await userEvent.type(screen.getByLabelText("Conteúdo da embalagem 2"), "5");
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
@@ -370,7 +438,7 @@ describe("ProductDialog, editing a product", () => {
           isStorableOnceOpened: true,
           packagings: [
             { ...SENT_BAG, isActive: false },
-            { content: "5", unit: "KILOGRAM", gtin: null, isActive: true },
+            { brand: "ITALAC", content: "5", unit: "KILOGRAM", gtin: null, isActive: true },
           ],
         },
       ]),

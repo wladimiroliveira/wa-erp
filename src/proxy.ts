@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { REQUEST_PATH_HEADER, SESSION_COOKIE } from "@/server/auth/proxy-contract";
-import { SIGN_IN_PATH, signInUrl } from "@/shared/sign-in";
+import { SESSION_ENDED_PATH, SIGN_IN_PATH, signInUrl } from "@/shared/sign-in";
 
 /**
  * Keeps anonymous visitors out of the screens and signed-in ones out of the sign-in screen. It
@@ -10,6 +10,9 @@ import { SIGN_IN_PATH, signInUrl } from "@/shared/sign-in";
 export function proxy(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   const hasCookie = request.cookies.has(SESSION_COOKIE);
+
+  // Where a stale cookie is dropped: it must be reached with the cookie, and harmlessly without it.
+  if (pathname === SESSION_ENDED_PATH) return NextResponse.next();
 
   if (pathname === SIGN_IN_PATH) {
     return hasCookie ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();

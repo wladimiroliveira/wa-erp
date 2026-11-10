@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import type { Permission } from "@prisma/client";
 import type { AuthenticatedUser } from "@/server/modules/auth/auth.access";
 import { hasPermission } from "@/server/modules/auth/auth.permissions";
-import { signInUrl } from "@/shared/sign-in";
+import { sessionEndedUrl, signInUrl } from "@/shared/sign-in";
 import { REQUEST_PATH_HEADER, SESSION_COOKIE } from "./proxy-contract";
 import { findSessionUser } from "./session";
 
@@ -27,7 +27,13 @@ export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> 
 export async function requireUser(): Promise<AuthenticatedUser> {
   const user = await getCurrentUser();
 
-  if (user === null) redirect(signInUrl((await headers()).get(REQUEST_PATH_HEADER)));
+  if (user === null) {
+    const returnTo = (await headers()).get(REQUEST_PATH_HEADER);
+    const hasCookie = (await cookies()).get(SESSION_COOKIE) !== undefined;
+
+    // A stale cookie goes where it is dropped; left in place, the proxy would bounce it back here.
+    redirect(hasCookie ? sessionEndedUrl(returnTo) : signInUrl(returnTo));
+  }
 
   return user;
 }

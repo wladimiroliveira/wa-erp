@@ -51,11 +51,13 @@ describe("requireUser", () => {
     await expect(requireUser()).rejects.toThrow("NEXT_REDIRECT /login");
   });
 
-  it("keeps the way back when a stale cookie is found out", async () => {
+  // The render cannot drop a cookie: a route does, or the proxy would send the stale cookie away
+  // from the sign-in screen and back here, round and round.
+  it("sends a stale cookie to be dropped, keeping the way back", async () => {
     cookieJar.set(SESSION_COOKIE, "stale");
     requestHeaders.set(REQUEST_PATH_HEADER, "/stock/sku-1?tab=2");
 
-    await expect(requireUser()).rejects.toThrow("NEXT_REDIRECT /login?from=%2Fstock%2Fsku-1%3Ftab%3D2");
+    await expect(requireUser()).rejects.toThrow("NEXT_REDIRECT /session-ended?from=%2Fstock%2Fsku-1%3Ftab%3D2");
   });
 
   it("hands back the signed-in user", async () => {

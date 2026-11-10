@@ -75,6 +75,15 @@ describe("proxy", () => {
     expect(proxy(request).headers.get("location")).toBeNull();
   });
 
+  it.each([
+    ["with", { cookie: `${SESSION_COOKIE}=stale` }],
+    ["without", {}],
+  ])("lets a visitor %s the cookie reach the end of a stale session", (_, headers) => {
+    const request = new NextRequest("http://localhost:3000/session-ended?from=%2Fdaf", { headers });
+
+    expect(proxy(request).headers.get("location")).toBeNull();
+  });
+
   // A cookie that no longer opens a session is found out later, by the layout; the proxy hands it
   // the requested path so that sign-in screen can still offer the way back. Next carries a
   // rewritten request header to the render as `x-middleware-request-<name>`.

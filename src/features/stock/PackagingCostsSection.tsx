@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { moneyOf, NOTHING, packagingOf, unitCostOf } from "@/features/stock/stock-format";
 import type { MeasurementUnit, PackagingCost } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
+import { HISTORY_LIMIT } from "@/server/modules/stock/stock.schemas";
 import { packageUnitCost } from "@/shared/packaging-entry";
 
 interface PackagingCostsSectionProps {
@@ -20,7 +21,9 @@ const NEVER = "Sem entradas";
 
 /** What each packaging of the product was bought at, last and over time. */
 export function PackagingCostsSection({ packagings, unit }: PackagingCostsSectionProps) {
+  // The packaging stays chosen while its dialog closes, so the dialog does not empty as it animates out.
   const [showing, setShowing] = useState<PackagingCost | null>(null);
+  const [open, setOpen] = useState(false);
 
   return (
     <section aria-labelledby="stock-packagings" className="flex flex-col gap-2">
@@ -72,7 +75,10 @@ export function PackagingCostsSection({ packagings, unit }: PackagingCostsSectio
                       variant="outline"
                       size="sm"
                       aria-label={`Histórico de ${label}`}
-                      onClick={() => setShowing(packaging)}
+                      onClick={() => {
+                        setShowing(packaging);
+                        setOpen(true);
+                      }}
                     >
                       Histórico
                     </Button>
@@ -84,7 +90,7 @@ export function PackagingCostsSection({ packagings, unit }: PackagingCostsSectio
         </TableBody>
       </Table>
 
-      <Dialog open={showing !== null} onOpenChange={(open) => (open ? null : setShowing(null))}>
+      <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           {showing === null ? null : (
             <>
@@ -111,6 +117,9 @@ export function PackagingCostsSection({ packagings, unit }: PackagingCostsSectio
                   ))}
                 </TableBody>
               </Table>
+              {showing.history.length >= HISTORY_LIMIT ? (
+                <p className="text-sm text-muted-foreground">Mostrando as {HISTORY_LIMIT} entradas mais recentes.</p>
+              ) : null}
             </>
           )}
         </DialogContent>

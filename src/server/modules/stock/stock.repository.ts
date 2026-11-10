@@ -3,6 +3,7 @@ import { pageArgs } from "@/server/lib/pagination";
 import { prisma } from "@/server/lib/prisma";
 import { allocate, costOfShortfall, inOrderOfUse, owedOf } from "./stock.allocation";
 import { expiryOf, LotStatus } from "./stock.position";
+import { HISTORY_LIMIT } from "./stock.schemas";
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -374,6 +375,7 @@ export async function findProductWithStock(sku: string, { depleted }: { depleted
           isActive: true,
           lots: {
             orderBy: { createdAt: "desc" },
+            take: HISTORY_LIMIT,
             select: {
               id: true,
               createdAt: true,

@@ -474,6 +474,30 @@ describe("POST /v1/entries in packagings", () => {
     expect([lot!.quantity, lot!.unitCost].map(String)).toEqual(["3.8", "11.842105"]);
   });
 
+  it.each([
+    [
+      "a quantity the stock cannot hold",
+      { content: "100000000" },
+      { packageCount: 99999, packagePrice: "1" },
+      "The quantity does not fit the stock.",
+    ],
+    [
+      "a cost per unit the stock cannot hold",
+      { content: "0.000001" },
+      { packageCount: 1, packagePrice: "999999999999.99" },
+      "The cost does not fit the stock.",
+    ],
+  ])("answers 400 for %s, and writes nothing", async (_, packaging, entry, message) => {
+    const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const { product, bag } = await createPackaged(packaging);
+
+    const response = await postEntry(headers, { productSku: product.sku, packagingId: bag.id, ...entry });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ message });
+    expect(await lotsOf(product.sku)).toEqual([]);
+  });
+
   it("answers 404 for a packaging of another product, and writes nothing", async () => {
     const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
     const { product } = await createPackaged();

@@ -11,6 +11,14 @@ export const DeficitSettlement = { ZERO: "ZERO", DISCOUNT: "DISCOUNT" } as const
 
 export type DeficitSettlement = (typeof DeficitSettlement)[keyof typeof DeficitSettlement];
 
+/** The messages of the refusals an entry by packaging answers, which the screen tells apart. */
+export const ENTRY_REFUSALS = {
+  packagingNotFound: "Packaging not found.",
+  packagingInactive: "Packaging is inactive.",
+  quantityTooLarge: "The quantity does not fit the stock.",
+  costTooLarge: "The cost does not fit the stock.",
+} as const;
+
 /** The most packagings one entry takes. */
 export const MAX_PACKAGE_COUNT = 99_999;
 

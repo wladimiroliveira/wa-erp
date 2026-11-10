@@ -32,7 +32,7 @@ export type WasteIngredient = {
 
 export type Suggestion = {
   quantity: Prisma.Decimal;
-  /** The money lost on what is left of the opened packagings, in cents; uncosted leftovers stay out. */
+  /** The money lost on what is left of the opened packagings, in reais to the cent; uncosted leftovers stay out. */
   loss: Prisma.Decimal;
   leftovers: { product: ProductSummary; leftover: Prisma.Decimal; loss: Prisma.Decimal | null }[];
 };

@@ -11,6 +11,8 @@ interface WasteSectionProps {
   unit: MeasurementUnit;
   /** Asks the plan again for a quantity suggested, in the API's writing. */
   onProduce: (quantity: string) => void;
+  /** While a plan is being worked out: one ask at a time. */
+  disabled?: boolean;
 }
 
 /** "10 kg: perda de R$ 3,20 (160 g de Leite condensado)", or "10 kg: sem sobras". */
@@ -31,7 +33,7 @@ function lineOf({ quantity, loss, leftovers }: WasteSuggestion, unit: Measuremen
 }
 
 /** What the opened packagings of the ingredients that cannot be kept would leave behind, and quantities that leave less. */
-export function WasteSection({ waste, unit, onProduce }: WasteSectionProps) {
+export function WasteSection({ waste, unit, onProduce, disabled = false }: WasteSectionProps) {
   return (
     <section aria-labelledby="pre-weighing-waste" className="flex flex-col gap-2 rounded-md border p-4">
       <h2 id="pre-weighing-waste" className="text-lg font-semibold">
@@ -52,7 +54,13 @@ export function WasteSection({ waste, unit, onProduce }: WasteSectionProps) {
           {waste.alternatives.map((alternative) => (
             <li key={alternative.quantity} className="flex flex-wrap items-center gap-2">
               <span>{lineOf(alternative, unit)}</span>
-              <Button type="button" variant="outline" size="sm" onClick={() => onProduce(alternative.quantity)}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => onProduce(alternative.quantity)}
+              >
                 Produzir {quantityOf(alternative.quantity, unit)}
               </Button>
             </li>

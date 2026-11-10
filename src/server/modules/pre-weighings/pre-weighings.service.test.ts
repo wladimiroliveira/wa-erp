@@ -136,6 +136,9 @@ describe("preWeighingPlanQuerySchema tolerance", () => {
 
   it("defaults to 20 percent", () => expect(preWeighingPlanQuerySchema.parse(target).tolerance).toBe(20));
 
+  it("takes a tolerance left empty in the query string as the default, not as zero", () =>
+    expect(preWeighingPlanQuerySchema.parse({ ...target, tolerance: "" }).tolerance).toBe(20));
+
   it("takes a whole percent from the query string", () =>
     expect(preWeighingPlanQuerySchema.parse({ ...target, tolerance: "35" }).tolerance).toBe(35));
 

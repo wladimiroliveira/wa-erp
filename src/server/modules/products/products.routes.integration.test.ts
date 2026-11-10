@@ -34,8 +34,8 @@ describe("GET /v1/products", () => {
         unit: "KILOGRAM",
         packagings: {
           create: [
-            { content: "5", gtin: "7891000100103" },
-            { content: "1", isActive: false },
+            { brand: "MOÇA", content: "5", gtin: "7891000100103" },
+            { brand: "MOÇA", content: "1", isActive: false },
           ],
         },
       },
@@ -70,8 +70,8 @@ describe("GET /v1/products", () => {
         isStorableOnceOpened: true,
         minimumQuantity: "12.5",
         packagings: [
-          { id: bag!.id, content: "1", gtin: null, isActive: false },
-          { id: sack!.id, content: "5", gtin: "7891000100103", isActive: true },
+          { id: bag!.id, brand: "MOÇA", content: "1", gtin: null, isActive: false },
+          { id: sack!.id, brand: "MOÇA", content: "5", gtin: "7891000100103", isActive: true },
         ],
       },
     ]);
@@ -116,8 +116,8 @@ describe("GET /v1/products with filters", () => {
       (await testPrisma.product.findUniqueOrThrow({ where: { description } })).sku;
     await testPrisma.productPackaging.createMany({
       data: [
-        { productSku: await skuOf("Farinha de trigo"), content: "1", gtin: "7891000100103" },
-        { productSku: await skuOf("Fermento biológico"), content: "500", gtin: "7896000200204" },
+        { productSku: await skuOf("Farinha de trigo"), brand: "MOÇA", content: "1", gtin: "7891000100103" },
+        { productSku: await skuOf("Fermento biológico"), brand: "MOÇA", content: "500", gtin: "7896000200204" },
       ],
     });
   });
@@ -178,8 +178,8 @@ describe("POST /v1/products", () => {
     const response = await postProduct(headers, {
       ...FLOUR,
       packagings: [
-        { content: "5", unit: "KILOGRAM", gtin: "7891000100103" },
-        { content: "380", unit: "GRAM" },
+        { brand: "MOÇA", content: "5", unit: "KILOGRAM", gtin: "7891000100103" },
+        { brand: "MOÇA", content: "380", unit: "GRAM" },
       ],
     });
 
@@ -191,8 +191,8 @@ describe("POST /v1/products", () => {
       isStorableOnceOpened: true,
       minimumQuantity: null,
       packagings: [
-        { id: expect.any(String), content: "0.38", gtin: null, isActive: true },
-        { id: expect.any(String), content: "5", gtin: "7891000100103", isActive: true },
+        { id: expect.any(String), brand: "MOÇA", content: "0.38", gtin: null, isActive: true },
+        { id: expect.any(String), brand: "MOÇA", content: "5", gtin: "7891000100103", isActive: true },
       ],
     });
     expect(await testPrisma.product.findUnique({ where: { sku: response.json().sku } })).toMatchObject(FLOUR);
@@ -250,7 +250,7 @@ describe("POST /v1/products", () => {
 
   it("answers 409 for a GTIN already on a packaging of another product, and writes nothing", async () => {
     const { headers } = await authenticateAs([Permission.CATALOG_CREATE]);
-    const bag = { content: "1", unit: "KILOGRAM", gtin: "7891000100103" };
+    const bag = { brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "7891000100103" };
     await postProduct(headers, { ...FLOUR, packagings: [bag] });
 
     const response = await postProduct(headers, { ...FLOUR, description: "RYE FLOUR", packagings: [bag] });
@@ -266,13 +266,42 @@ describe("POST /v1/products", () => {
     const response = await postProduct(headers, {
       ...FLOUR,
       packagings: [
-        { content: "1", unit: "KILOGRAM" },
-        { content: "1000", unit: "GRAM" },
+        { brand: "MOÇA", content: "1", unit: "KILOGRAM" },
+        { brand: "MOÇA", content: "1000", unit: "GRAM" },
       ],
     });
 
     expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ message: "The product already has a packaging with this content." });
+    expect(response.json()).toEqual({
+      message: "The product already has a packaging of this brand with this content.",
+    });
+    expect(await testPrisma.product.count()).toBe(0);
+  });
+
+  it("keeps one product with the same content under two brands, ordered by brand", async () => {
+    const { headers } = await authenticateAs([Permission.CATALOG_CREATE]);
+
+    const response = await postProduct(headers, {
+      ...FLOUR,
+      packagings: [
+        { brand: "Moça", content: "395", unit: "GRAM" },
+        { brand: "Italac", content: "0.395", unit: "KILOGRAM" },
+      ],
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().packagings).toEqual([
+      { id: expect.any(String), brand: "ITALAC", content: "0.395", gtin: null, isActive: true },
+      { id: expect.any(String), brand: "MOÇA", content: "0.395", gtin: null, isActive: true },
+    ]);
+  });
+
+  it("answers 400 for a packaging without a brand", async () => {
+    const { headers } = await authenticateAs([Permission.CATALOG_CREATE]);
+
+    const response = await postProduct(headers, { ...FLOUR, packagings: [{ content: "1", unit: "KILOGRAM" }] });
+
+    expect(response.statusCode).toBe(400);
     expect(await testPrisma.product.count()).toBe(0);
   });
 
@@ -282,15 +311,24 @@ describe("POST /v1/products", () => {
     ["an unknown kind", { kind: "SERVICE" }],
     ["an unknown unit", { unit: "POUND" }],
     ["a missing unit", { unit: undefined }],
-    ["a GTIN that is not made of digits", { packagings: [{ content: "1", unit: "KILOGRAM", gtin: "78910001001AB" }] }],
-    ["a GTIN shorter than 8 digits", { packagings: [{ content: "1", unit: "KILOGRAM", gtin: "1234567" }] }],
-    ["a GTIN longer than 14 digits", { packagings: [{ content: "1", unit: "KILOGRAM", gtin: "123456789012345" }] }],
+    [
+      "a GTIN that is not made of digits",
+      { packagings: [{ brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "78910001001AB" }] },
+    ],
+    [
+      "a GTIN shorter than 8 digits",
+      { packagings: [{ brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "1234567" }] },
+    ],
+    [
+      "a GTIN longer than 14 digits",
+      { packagings: [{ brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "123456789012345" }] },
+    ],
     [
       "a GTIN whose check digit does not match",
-      { packagings: [{ content: "1", unit: "KILOGRAM", gtin: "7891000100104" }] },
+      { packagings: [{ brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "7891000100104" }] },
     ],
-    ["a packaging in a unit of another dimension", { packagings: [{ content: "1", unit: "LITER" }] }],
-    ["a packaging of zero content", { packagings: [{ content: "0", unit: "KILOGRAM" }] }],
+    ["a packaging in a unit of another dimension", { packagings: [{ brand: "MOÇA", content: "1", unit: "LITER" }] }],
+    ["a packaging of zero content", { packagings: [{ brand: "MOÇA", content: "0", unit: "KILOGRAM" }] }],
     ["a minimum quantity of zero", { minimumQuantity: "0" }],
     ["a minimum quantity that is not a decimal string", { minimumQuantity: 10 }],
   ])("answers 400 for %s", async (_label, overrides) => {
@@ -328,7 +366,7 @@ describe("PATCH /v1/products/:sku", () => {
   it("renames a product in upper case, keeping its kind, unit and packagings", async () => {
     const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
     const flour = await createFlour();
-    await testPrisma.productPackaging.create({ data: { productSku: flour.sku, content: "1" } });
+    await testPrisma.productPackaging.create({ data: { productSku: flour.sku, brand: "MOÇA", content: "1" } });
 
     const response = await patchProduct(headers, flour.sku, { description: "  Whole wheat flour " });
 
@@ -341,7 +379,7 @@ describe("PATCH /v1/products/:sku", () => {
       isActive: true,
       isStorableOnceOpened: true,
       minimumQuantity: null,
-      packagings: [{ id: expect.any(String), content: "1", gtin: null, isActive: true }],
+      packagings: [{ id: expect.any(String), brand: "MOÇA", content: "1", gtin: null, isActive: true }],
     });
   });
 
@@ -350,15 +388,15 @@ describe("PATCH /v1/products/:sku", () => {
     const flour = await createFlour();
     const [bag, sack] = await testPrisma.productPackaging.createManyAndReturn({
       data: [
-        { productSku: flour.sku, content: "1", gtin: "7891000100103" },
-        { productSku: flour.sku, content: "5" },
+        { productSku: flour.sku, brand: "MOÇA", content: "1", gtin: "7891000100103" },
+        { productSku: flour.sku, brand: "MOÇA", content: "5" },
       ],
     });
 
     const response = await patchProduct(headers, flour.sku, {
       packagings: [
-        { id: bag!.id, content: "1000", unit: "GRAM", gtin: "78910003", isActive: false },
-        { content: "380", unit: "GRAM" },
+        { id: bag!.id, brand: "MOÇA", content: "1000", unit: "GRAM", gtin: "78910003", isActive: false },
+        { brand: "MOÇA", content: "380", unit: "GRAM" },
       ],
     });
 
@@ -378,10 +416,12 @@ describe("PATCH /v1/products/:sku", () => {
     const rye = await testPrisma.product.create({
       data: { description: "RYE FLOUR", kind: "GOODS", unit: "KILOGRAM" },
     });
-    const ryeBag = await testPrisma.productPackaging.create({ data: { productSku: rye.sku, content: "1" } });
+    const ryeBag = await testPrisma.productPackaging.create({
+      data: { productSku: rye.sku, brand: "MOÇA", content: "1" },
+    });
 
     const response = await patchProduct(headers, flour.sku, {
-      packagings: [{ id: ryeBag.id, content: "2", unit: "KILOGRAM" }],
+      packagings: [{ id: ryeBag.id, brand: "MOÇA", content: "2", unit: "KILOGRAM" }],
     });
 
     expect(response.statusCode).toBe(404);
@@ -441,12 +481,12 @@ describe("PATCH /v1/products/:sku", () => {
     const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
     const flour = await createFlour();
     const bag = await testPrisma.productPackaging.create({
-      data: { productSku: flour.sku, content: "1", gtin: "7891000100103" },
+      data: { productSku: flour.sku, brand: "MOÇA", content: "1", gtin: "7891000100103" },
     });
 
     const response = await patchProduct(headers, flour.sku, {
       description: "Wheat flour",
-      packagings: [{ id: bag.id, content: "1", unit: "KILOGRAM", gtin: "7891000100103" }],
+      packagings: [{ id: bag.id, brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "7891000100103" }],
     });
 
     expect(response.statusCode).toBe(200);
@@ -482,12 +522,12 @@ describe("PATCH /v1/products/:sku", () => {
         description: "RYE FLOUR",
         kind: "GOODS",
         unit: "KILOGRAM",
-        packagings: { create: { content: "1", gtin: "7891000100103" } },
+        packagings: { create: { brand: "MOÇA", content: "1", gtin: "7891000100103" } },
       },
     });
 
     const response = await patchProduct(headers, flour.sku, {
-      packagings: [{ content: "1", unit: "KILOGRAM", gtin: "7891000100103" }],
+      packagings: [{ brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "7891000100103" }],
     });
 
     expect(response.statusCode).toBe(409);
@@ -500,20 +540,22 @@ describe("PATCH /v1/products/:sku", () => {
     const flour = await createFlour();
     const [bag, sack] = await testPrisma.productPackaging.createManyAndReturn({
       data: [
-        { productSku: flour.sku, content: "1" },
-        { productSku: flour.sku, content: "5" },
+        { productSku: flour.sku, brand: "MOÇA", content: "1" },
+        { productSku: flour.sku, brand: "MOÇA", content: "5" },
       ],
     });
 
     const response = await patchProduct(headers, flour.sku, {
       packagings: [
-        { id: bag!.id, content: "5", unit: "KILOGRAM" },
-        { id: sack!.id, content: "1", unit: "KILOGRAM" },
+        { id: bag!.id, brand: "MOÇA", content: "5", unit: "KILOGRAM" },
+        { id: sack!.id, brand: "MOÇA", content: "1", unit: "KILOGRAM" },
       ],
     });
 
     expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ message: "The product already has a packaging with this content." });
+    expect(response.json()).toEqual({
+      message: "The product already has a packaging of this brand with this content.",
+    });
     expect((await packagingsOf(flour.sku)).map(({ id, content }) => [id, String(content)])).toEqual([
       [bag!.id, "1"],
       [sack!.id, "5"],
@@ -525,15 +567,15 @@ describe("PATCH /v1/products/:sku", () => {
     const flour = await createFlour();
     const [bag, sack] = await testPrisma.productPackaging.createManyAndReturn({
       data: [
-        { productSku: flour.sku, content: "1" },
-        { productSku: flour.sku, content: "5", gtin: "7891000100103" },
+        { productSku: flour.sku, brand: "MOÇA", content: "1" },
+        { productSku: flour.sku, brand: "MOÇA", content: "5", gtin: "7891000100103" },
       ],
     });
 
     const response = await patchProduct(headers, flour.sku, {
       packagings: [
-        { id: bag!.id, content: "5", unit: "KILOGRAM", gtin: "7891000100103" },
-        { id: sack!.id, content: "10", unit: "KILOGRAM" },
+        { id: bag!.id, brand: "MOÇA", content: "5", unit: "KILOGRAM", gtin: "7891000100103" },
+        { id: sack!.id, brand: "MOÇA", content: "10", unit: "KILOGRAM" },
       ],
     });
 
@@ -549,8 +591,8 @@ describe("PATCH /v1/products/:sku", () => {
     const flour = await createFlour();
     const [bag, sack] = await testPrisma.productPackaging.createManyAndReturn({
       data: [
-        { productSku: flour.sku, content: "1" },
-        { productSku: flour.sku, content: "5" },
+        { productSku: flour.sku, brand: "MOÇA", content: "1" },
+        { productSku: flour.sku, brand: "MOÇA", content: "5" },
       ],
     });
     await testPrisma.stockLot.create({
@@ -566,7 +608,7 @@ describe("PATCH /v1/products/:sku", () => {
     });
 
     const response = await patchProduct(headers, flour.sku, {
-      packagings: [{ id: bag!.id, content: "1", unit: "KILOGRAM" }],
+      packagings: [{ id: bag!.id, brand: "MOÇA", content: "1", unit: "KILOGRAM" }],
     });
 
     expect(response.statusCode).toBe(409);
@@ -577,7 +619,9 @@ describe("PATCH /v1/products/:sku", () => {
   it("answers 409 for a new content on a packaging stock lots came in, and writes nothing", async () => {
     const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
     const flour = await createFlour();
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: flour.sku, content: "1" } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: flour.sku, brand: "MOÇA", content: "1" },
+    });
     await testPrisma.stockLot.create({
       data: {
         productSku: flour.sku,
@@ -591,12 +635,44 @@ describe("PATCH /v1/products/:sku", () => {
     });
 
     const response = await patchProduct(headers, flour.sku, {
-      packagings: [{ id: bag.id, content: "2", unit: "KILOGRAM" }],
+      packagings: [{ id: bag.id, brand: "MOÇA", content: "2", unit: "KILOGRAM" }],
     });
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ message: "A packaging with stock lots cannot change its content." });
     expect(String((await testPrisma.productPackaging.findUniqueOrThrow({ where: { id: bag.id } })).content)).toBe("1");
+  });
+
+  it("corrects the brand of a packaging stock lots came in while a new packaging takes the old brand", async () => {
+    const { headers } = await authenticateAs([Permission.CATALOG_UPDATE]);
+    const flour = await createFlour();
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: flour.sku, brand: "MOCA", content: "1" },
+    });
+    await testPrisma.stockLot.create({
+      data: {
+        productSku: flour.sku,
+        packagingId: bag.id,
+        packageCount: 2,
+        packagePrice: "1",
+        initialQuantity: "2",
+        quantity: "2",
+        unitCost: "1",
+      },
+    });
+
+    const response = await patchProduct(headers, flour.sku, {
+      packagings: [
+        { id: bag.id, brand: "Italac", content: "1", unit: "KILOGRAM" },
+        { brand: "moca", content: "1", unit: "KILOGRAM" },
+      ],
+    });
+
+    expect(response.statusCode).toBe(200);
+    const stored = await packagingsOf(flour.sku);
+
+    expect(stored.find(({ id }) => id === bag.id)?.brand).toBe("ITALAC");
+    expect(stored.filter(({ id }) => id !== bag.id).map(({ brand }) => brand)).toEqual(["MOCA"]);
   });
 
   it("answers 404 for a product that does not exist", async () => {
@@ -612,13 +688,16 @@ describe("PATCH /v1/products/:sku", () => {
     ["an empty body", {}],
     ["only fields that cannot change", { kind: "MANUFACTURED", unit: "GRAM" }],
     ["a blank description", { description: "  " }],
-    ["a GTIN that is not made of digits", { packagings: [{ content: "1", unit: "KILOGRAM", gtin: "78910001001AB" }] }],
+    [
+      "a GTIN that is not made of digits",
+      { packagings: [{ brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "78910001001AB" }] },
+    ],
     [
       "the same GTIN on two packagings",
       {
         packagings: [
-          { content: "1", unit: "KILOGRAM", gtin: "7891000100103" },
-          { content: "5", unit: "KILOGRAM", gtin: "7891000100103" },
+          { brand: "MOÇA", content: "1", unit: "KILOGRAM", gtin: "7891000100103" },
+          { brand: "MOÇA", content: "5", unit: "KILOGRAM", gtin: "7891000100103" },
         ],
       },
     ],

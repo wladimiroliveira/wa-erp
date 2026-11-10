@@ -26,6 +26,7 @@ import type { Product } from "@/lib/api";
 import { isDecimalInput, toApiDecimal, toDecimalInput } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
 import { unitLabel, unitName, UNITS } from "@/lib/units";
+import { upperCaseAsTyped } from "@/features/products/upper-case-input";
 import { PRODUCT_CONFLICTS, PRODUCT_REFUSALS } from "@/server/modules/products/products.schemas";
 
 const productFormSchema = z.object({
@@ -68,7 +69,7 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   [PRODUCT_REFUSALS.packagingNotFound]: "Essa embalagem não existe mais. Feche o produto e abra de novo.",
   [PRODUCT_CONFLICTS.description]: "Já existe um produto com essa descrição.",
   [PRODUCT_CONFLICTS.gtin]: "Esse GTIN já está em outra embalagem.",
-  [PRODUCT_CONFLICTS.content]: "O produto já tem uma embalagem com esse conteúdo.",
+  [PRODUCT_CONFLICTS.brandAndContent]: "O produto já tem uma embalagem dessa marca com esse conteúdo.",
   [PRODUCT_CONFLICTS.inUse]: "Essa embalagem já recebeu entradas e não pode ser removida; inative-a.",
   [PRODUCT_CONFLICTS.contentLocked]:
     "Essa embalagem já recebeu entradas e o conteúdo dela não pode mudar; cadastre uma nova embalagem.",
@@ -85,13 +86,6 @@ interface ProductDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: (product: Product) => void;
-}
-
-function toUpperCase(input: HTMLInputElement): void {
-  const { selectionStart, selectionEnd } = input;
-
-  input.value = input.value.toLocaleUpperCase("pt-BR");
-  input.setSelectionRange(selectionStart, selectionEnd);
 }
 
 export function ProductDialog({ product = null, open, onOpenChange, onCreated }: ProductDialogProps) {
@@ -160,7 +154,7 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
   const isStorableOnceOpened = form.watch("isStorableOnceOpened");
   const chosenUnit = UNITS.includes(unit) ? unit : undefined;
   const editing = product !== null;
-  const description = form.register("description");
+  const description = upperCaseAsTyped(form.register("description"));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -172,23 +166,7 @@ export function ProductDialog({ product = null, open, onOpenChange, onCreated }:
         <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
           <div className="flex flex-col gap-2">
             <Label htmlFor="product-description">Descrição</Label>
-            <Input
-              id="product-description"
-              autoFocus
-              autoComplete="off"
-              {...description}
-              // Shown as it is stored: in upper case, the caret kept where the operator typed. A word
-              // a phone keyboard is still composing is left alone, and written in upper case once composed.
-              onChange={(event) => {
-                if (!(event.nativeEvent as InputEvent).isComposing) toUpperCase(event.target);
-
-                return description.onChange(event);
-              }}
-              onCompositionEnd={(event) => {
-                toUpperCase(event.currentTarget);
-                void description.onChange({ target: event.currentTarget, type: "change" });
-              }}
-            />
+            <Input id="product-description" autoFocus autoComplete="off" {...description} />
             {errors.description ? <p className="text-sm text-destructive">{errors.description.message}</p> : null}
           </div>
 

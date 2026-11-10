@@ -2,7 +2,7 @@ import { z } from "zod";
 import { stockMovementTypeSchema } from "@/shared/enums";
 import { decimalSchema, moneySchema, positiveDecimalSchema } from "@/shared/decimal";
 import { productSummarySchema } from "@/server/modules/products/products.schemas";
-import { lotExpirySchema } from "@/server/modules/stock/stock.schemas";
+import { lotExpirySchema, lotPackagingSchema } from "@/server/modules/stock/stock.schemas";
 import { supplierSchema } from "@/server/modules/suppliers/suppliers.schemas";
 
 // How an entry settles a balance that went negative: bring it to zero first, so the whole entry is
@@ -60,8 +60,7 @@ export const entrySchema = z.object({
     expiresAt: z.iso.date().nullable(),
     supplier: supplierSchema.nullable(),
     quantity: z.string(),
-    // The packaging the lot came in, with its content in the product's unit and the price of one; null for a loose entry.
-    packaging: z.object({ id: z.uuid(), content: z.string(), count: z.number().int(), price: z.string() }).nullable(),
+    packaging: lotPackagingSchema,
   }),
   stock: z.object({ quantity: z.string(), lastEntryCost: z.string(), averageCost: z.string() }),
 });

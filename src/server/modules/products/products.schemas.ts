@@ -13,6 +13,7 @@ export const productSummarySchema = z.object({
 // The content is in the unit of its product, whatever unit it was typed in.
 export const packagingSchema = z.object({
   id: z.uuid(),
+  brand: z.string(),
   content: z.string(),
   gtin: z.string().nullable(),
   isActive: z.boolean(),
@@ -25,18 +26,24 @@ export const productSchema = productSummarySchema.extend({
   isStorableOnceOpened: z.boolean(),
   // The quantity below which the stock asks for replenishment; null when none was set.
   minimumQuantity: z.string().nullable(),
-  // Ordered by content, the smallest first.
+  // Ordered by brand, then content, the smallest first.
   packagings: z.array(packagingSchema),
 });
 
-// Stored in upper case, so that two spellings of one name never become two products.
-export const descriptionSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(120)
-  // One way of writing each accent first: a decomposed "ú" would otherwise be another description.
-  .transform((value) => value.normalize("NFC").toLocaleUpperCase("pt-BR"));
+// Stored in upper case, so that two spellings of one name never become two records.
+const normalizedNameSchema = (max: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    // One way of writing each accent first: a decomposed "ú" would otherwise be another name.
+    .transform((value) => value.normalize("NFC").toLocaleUpperCase("pt-BR"));
+
+export const descriptionSchema = normalizedNameSchema(120);
+
+// The brand a packaging is bought under: the product is the commodity, the packaging the brand of it.
+export const brandSchema = normalizedNameSchema(60);
 
 export const gtinSchema = z
   .string()
@@ -45,6 +52,7 @@ export const gtinSchema = z
 
 // The unit is the one the content was typed in; the service converts it to the product's.
 export const createPackagingSchema = z.object({
+  brand: brandSchema,
   content: positiveDecimalSchema,
   unit: measurementUnitSchema,
   gtin: gtinSchema.optional(),
@@ -53,6 +61,7 @@ export const createPackagingSchema = z.object({
 // An item with an id changes that packaging; one without registers a new one.
 export const updatePackagingSchema = z.object({
   id: z.uuid().optional(),
+  brand: brandSchema,
   content: positiveDecimalSchema,
   unit: measurementUnitSchema,
   gtin: gtinSchema.nullable().optional(),
@@ -91,7 +100,7 @@ export const PRODUCT_REFUSALS = {
 export const PRODUCT_CONFLICTS = {
   description: "A product with this description already exists.",
   gtin: "A packaging with this GTIN already exists.",
-  content: "The product already has a packaging with this content.",
+  brandAndContent: "The product already has a packaging of this brand with this content.",
   inUse: "A packaging with stock lots cannot be removed.",
   contentLocked: "A packaging with stock lots cannot change its content.",
 } as const;

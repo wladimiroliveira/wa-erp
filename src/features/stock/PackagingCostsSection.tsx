@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { moneyOf, NOTHING, packagingOf, unitCostOf } from "@/features/stock/stock-format";
+import { moneyOf, NOTHING, packagingLabel, unitCostOf } from "@/features/stock/stock-format";
 import type { MeasurementUnit, PackagingCost } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
 import { HISTORY_LIMIT } from "@/server/modules/stock/stock.schemas";
@@ -46,7 +46,7 @@ export function PackagingCostsSection({ packagings, unit }: PackagingCostsSectio
         </TableHeader>
         <TableBody>
           {packagings.map((packaging) => {
-            const label = packagingOf(packaging.content, unit);
+            const label = packagingLabel(packaging.brand, packaging.content, unit);
             const { lastEntry } = packaging;
 
             return (
@@ -95,7 +95,7 @@ export function PackagingCostsSection({ packagings, unit }: PackagingCostsSectio
           {showing === null ? null : (
             <>
               <DialogHeader>
-                <DialogTitle>Entradas de {packagingOf(showing.content, unit)}</DialogTitle>
+                <DialogTitle>Entradas de {packagingLabel(showing.brand, showing.content, unit)}</DialogTitle>
               </DialogHeader>
               <Table>
                 <TableHeader>

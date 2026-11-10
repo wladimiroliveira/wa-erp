@@ -18,6 +18,11 @@ export function packagingOf(content: string, unit: MeasurementUnit): string {
   return quantityOf(readable.quantity, readable.unit);
 }
 
+/** How a packaging is told apart from the others of its product: its brand, then its content, "MOÇA 395 g". */
+export function packagingLabel(brand: string, content: string, unit: MeasurementUnit): string {
+  return `${brand} ${packagingOf(content, unit)}`;
+}
+
 /** The number of a quantity alone, for a table that shows its unit in a column of its own. */
 export function amountOf(quantity: string | null): string {
   return quantity === null ? NOTHING : formatDecimal(quantity);

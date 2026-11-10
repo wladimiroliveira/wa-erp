@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { amountOf, unitCostOf } from "@/features/stock/stock-format";
+import { amountOf, packagingLabel, unitCostOf } from "@/features/stock/stock-format";
 
 describe("unitCostOf", () => {
   it("shows a cost per gram per kilogram", () => expect(unitCostOf("0.03398", "GRAM")).toBe("R$ 33,98/kg"));
   it("shows a cost per millilitre per litre", () => expect(unitCostOf("0.0045", "MILLILITER")).toBe("R$ 4,50/L"));
   it("keeps a cost per unit", () => expect(unitCostOf("4.5", "UNIT")).toBe("R$ 4,50/un"));
   it("shows a dash for no cost", () => expect(unitCostOf(null, "GRAM")).toBe("—"));
+});
+
+describe("packagingLabel", () => {
+  it("shows the brand before the content, in the unit that reads best", () =>
+    expect(packagingLabel("MOÇA", "0.395", "KILOGRAM")).toBe("MOÇA 395 g"));
 });
 
 describe("amountOf", () => {

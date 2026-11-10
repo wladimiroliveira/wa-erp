@@ -126,7 +126,7 @@ export function openLot(
       supplier: { select: { id: true, name: true } },
       packageCount: true,
       packagePrice: true,
-      packaging: { select: { id: true, content: true } },
+      packaging: { select: { id: true, brand: true, content: true } },
     },
   });
 }
@@ -364,13 +364,14 @@ export async function findProductWithStock(sku: string, { depleted }: { depleted
           supplier: { select: { id: true, name: true } },
           packageCount: true,
           packagePrice: true,
-          packaging: { select: { id: true, content: true } },
+          packaging: { select: { id: true, brand: true, content: true } },
         },
       },
       // Every lot each packaging came in, depleted ones too: they are its price history.
       packagings: {
         select: {
           id: true,
+          brand: true,
           content: true,
           isActive: true,
           lots: {

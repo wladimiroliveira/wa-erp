@@ -239,6 +239,9 @@
                               "format": "uuid",
                               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                             },
+                            "brand": {
+                              "type": "string"
+                            },
                             "content": {
                               "type": "string"
                             },
@@ -253,6 +256,7 @@
                           },
                           "required": [
                             "id",
+                            "brand",
                             "content",
                             "count",
                             "price"
@@ -3583,6 +3587,9 @@
                               "format": "uuid",
                               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                             },
+                            "brand": {
+                              "type": "string"
+                            },
                             "content": {
                               "type": "string"
                             },
@@ -3596,6 +3603,7 @@
                           },
                           "required": [
                             "id",
+                            "brand",
                             "content",
                             "gtin",
                             "isActive"
@@ -3674,6 +3682,11 @@
                     "items": {
                       "type": "object",
                       "properties": {
+                        "brand": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        },
                         "content": {
                           "type": "string",
                           "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
@@ -3694,6 +3707,7 @@
                         }
                       },
                       "required": [
+                        "brand",
                         "content",
                         "unit"
                       ]
@@ -3762,6 +3776,9 @@
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                           },
+                          "brand": {
+                            "type": "string"
+                          },
                           "content": {
                             "type": "string"
                           },
@@ -3775,6 +3792,7 @@
                         },
                         "required": [
                           "id",
+                          "brand",
                           "content",
                           "gtin",
                           "isActive"
@@ -3895,6 +3913,11 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "brand": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        },
                         "content": {
                           "type": "string",
                           "pattern": "^\\d{1,12}(\\.\\d{1,6})?$"
@@ -3919,6 +3942,7 @@
                         }
                       },
                       "required": [
+                        "brand",
                         "content",
                         "unit"
                       ]
@@ -3982,6 +4006,9 @@
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                           },
+                          "brand": {
+                            "type": "string"
+                          },
                           "content": {
                             "type": "string"
                           },
@@ -3995,6 +4022,7 @@
                         },
                         "required": [
                           "id",
+                          "brand",
                           "content",
                           "gtin",
                           "isActive"
@@ -5930,6 +5958,9 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "brand": {
+                                "type": "string"
+                              },
                               "content": {
                                 "type": "string"
                               },
@@ -5944,6 +5975,7 @@
                             },
                             "required": [
                               "id",
+                              "brand",
                               "content",
                               "count",
                               "price"
@@ -5975,6 +6007,9 @@
                             "type": "string",
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "brand": {
+                            "type": "string"
                           },
                           "content": {
                             "type": "string"
@@ -6077,6 +6112,7 @@
                         },
                         "required": [
                           "id",
+                          "brand",
                           "content",
                           "isActive",
                           "lastEntry",

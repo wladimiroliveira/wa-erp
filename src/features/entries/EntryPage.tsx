@@ -15,7 +15,7 @@ import { DeficitDialog } from "@/features/entries/DeficitDialog";
 import { createEntry, type CreateEntryResult } from "@/features/entries/actions";
 import { findByGtin } from "@/features/entries/barcode";
 import { ENTRY_REFUSALS, MAX_PACKAGE_COUNT } from "@/server/modules/entries/entries.schemas";
-import { packagingOf, quantityOf, unitCostOf } from "@/features/stock/stock-format";
+import { packagingLabel, quantityOf, unitCostOf } from "@/features/stock/stock-format";
 import type { CreateEntryBody, Entry, Product, Supplier } from "@/lib/api";
 import { formatDate, todayIso } from "@/lib/dates";
 import { formatDecimal, formatMoney, isDecimalInput, toApiDecimal } from "@/lib/decimal";
@@ -130,7 +130,7 @@ function receivedOf({ quantity, product, lot }: Entry): string {
 
   if (lot.packaging === null) return total;
 
-  return `${lot.packaging.count} × ${packagingOf(lot.packaging.content, product.unit)} (${total})`;
+  return `${lot.packaging.count} × ${packagingLabel(lot.packaging.brand, lot.packaging.content, product.unit)} (${total})`;
 }
 
 /** The 409 that carries `deficit` is the negative balance waiting to be settled, not a refusal. */
@@ -309,9 +309,9 @@ export function EntryPage({ products, suppliers }: EntryPageProps) {
               <Label htmlFor="entry-packaging">Embalagem</Label>
               {/* Mounted again for each product, so that it takes the packaging chosen for it. */}
               <NativeSelect key={chosenSku} id="entry-packaging" {...form.register("packaging")}>
-                {offered.map(({ id, content }) => (
+                {offered.map(({ id, brand, content }) => (
                   <option key={id} value={id}>
-                    {packagingOf(content, chosen!.unit)}
+                    {packagingLabel(brand, content, chosen!.unit)}
                   </option>
                 ))}
                 <option value={LOOSE}>Sem embalagem ({chosenUnit})</option>

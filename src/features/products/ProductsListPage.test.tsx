@@ -77,8 +77,8 @@ describe("ProductsListPage", () => {
           sku: "sku-1",
           description: "Farinha de trigo",
           packagings: [
-            aPackaging({ id: "p-1", content: "0.38" }),
-            aPackaging({ id: "p-2", content: "1" }),
+            aPackaging({ id: "p-1", brand: "MOÇA", content: "0.38" }),
+            aPackaging({ id: "p-2", brand: "ITALAC", content: "1" }),
             aPackaging({ id: "p-3", content: "5", isActive: false }),
           ],
         }),
@@ -89,7 +89,7 @@ describe("ProductsListPage", () => {
     const flour = within((await screen.findByText("Farinha de trigo")).closest("tr")!);
     expect(flour.getByText("Mercadoria")).toBeInTheDocument();
     expect(flour.getByText("kg")).toBeInTheDocument();
-    expect(flour.getByText("380 g · 1 kg")).toBeInTheDocument();
+    expect(flour.getByText("MOÇA 380 g · ITALAC 1 kg")).toBeInTheDocument();
     expect(flour.getByText("Ativo")).toBeInTheDocument();
 
     const bread = within(screen.getByText("Pão").closest("tr")!);

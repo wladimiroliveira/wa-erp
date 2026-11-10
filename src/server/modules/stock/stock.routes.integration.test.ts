@@ -411,9 +411,15 @@ describe("GET /v1/stock/:sku", () => {
     const { headers } = await authenticateAs([Permission.REPORTS_READ]);
     const nuts = await testPrisma.product.create({ data: { description: "NUTS", kind: "GOODS", unit: "GRAM" } });
     const mill = await testPrisma.supplier.create({ data: { name: "Santa Clara Mill" } });
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "380" } });
-    const unused = await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "1000" } });
-    await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "5000", isActive: false } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: nuts.sku, brand: "MOÇA", content: "380" },
+    });
+    const unused = await testPrisma.productPackaging.create({
+      data: { productSku: nuts.sku, brand: "ITALAC", content: "1000" },
+    });
+    await testPrisma.productPackaging.create({
+      data: { productSku: nuts.sku, brand: "MOÇA", content: "5000", isActive: false },
+    });
     const lotIn = (quantity: string, price: string, createdAt: string, supplierId?: string) =>
       testPrisma.stockLot.create({
         data: {
@@ -435,12 +441,17 @@ describe("GET /v1/stock/:sku", () => {
     const response = (await getProductStock(headers, nuts.sku)).json();
 
     expect(response.lots).toEqual([
-      expect.objectContaining({ id: held.id, packaging: { id: bag.id, content: "380", count: 2, price: "12.91" } }),
+      expect.objectContaining({
+        id: held.id,
+        packaging: { id: bag.id, brand: "MOÇA", content: "380", count: 2, price: "12.91" },
+      }),
       expect.objectContaining({ id: loose.id, packaging: null }),
     ]);
     expect(response.packagings).toEqual([
+      { id: unused.id, brand: "ITALAC", content: "1000", isActive: true, lastEntry: null, history: [] },
       {
         id: bag.id,
+        brand: "MOÇA",
         content: "380",
         isActive: true,
         lastEntry: {
@@ -459,14 +470,40 @@ describe("GET /v1/stock/:sku", () => {
           { lotId: depleted.id, createdAt: "2026-10-01T12:00:00.000Z", supplier: null, count: 2, price: "12.5" },
         ],
       },
-      { id: unused.id, content: "1000", isActive: true, lastEntry: null, history: [] },
     ]);
+  });
+
+  it("shows the corrected brand on the lots that came in the packaging", async () => {
+    const { headers } = await authenticateAs([Permission.REPORTS_READ]);
+    const milk = await testPrisma.product.create({ data: { description: "MILK", kind: "GOODS", unit: "GRAM" } });
+    const can = await testPrisma.productPackaging.create({
+      data: { productSku: milk.sku, brand: "MOCA", content: "395" },
+    });
+    await testPrisma.stockLot.create({
+      data: {
+        productSku: milk.sku,
+        packagingId: can.id,
+        packageCount: 1,
+        packagePrice: "6.49",
+        initialQuantity: "395",
+        quantity: "395",
+        unitCost: "0.016",
+      },
+    });
+    await testPrisma.productPackaging.update({ where: { id: can.id }, data: { brand: "MOÇA" } });
+
+    const response = (await getProductStock(headers, milk.sku)).json();
+
+    expect(response.lots[0].packaging.brand).toBe("MOÇA");
+    expect(response.packagings[0].brand).toBe("MOÇA");
   });
 
   it("lists only the latest entries of a packaging's price history", async () => {
     const { headers } = await authenticateAs([Permission.REPORTS_READ]);
     const nuts = await testPrisma.product.create({ data: { description: "NUTS", kind: "GOODS", unit: "GRAM" } });
-    const bag = await testPrisma.productPackaging.create({ data: { productSku: nuts.sku, content: "380" } });
+    const bag = await testPrisma.productPackaging.create({
+      data: { productSku: nuts.sku, brand: "MOÇA", content: "380" },
+    });
     await testPrisma.stockLot.createMany({
       data: Array.from({ length: HISTORY_LIMIT + 1 }, (_, index) => ({
         productSku: nuts.sku,

@@ -12,8 +12,9 @@ const lot = (id: string, createdAt: string, price: string | null, count = 10, su
   supplier,
 });
 
-const packaging = (id: string, content: string, isActive: boolean, lots: ReturnType<typeof lot>[]) => ({
+const packaging = (id: string, content: string, isActive: boolean, lots: ReturnType<typeof lot>[], brand = "MOÇA") => ({
   id,
+  brand,
   content: new Prisma.Decimal(content),
   isActive,
   lots,
@@ -30,6 +31,7 @@ describe("packagingCostsOf", () => {
 
     expect(bag).toEqual({
       id: "bag",
+      brand: "MOÇA",
       content: "380",
       isActive: true,
       lastEntry: { price: "12.91", createdAt: "2026-11-05T12:00:00.000Z", supplier: MILL },
@@ -42,7 +44,7 @@ describe("packagingCostsOf", () => {
 
   it("keeps an active packaging that never came in, with no last entry", () => {
     expect(packagingCostsOf([packaging("box", "1000", true, [])])).toEqual([
-      { id: "box", content: "1000", isActive: true, lastEntry: null, history: [] },
+      { id: "box", brand: "MOÇA", content: "1000", isActive: true, lastEntry: null, history: [] },
     ]);
   });
 
@@ -69,5 +71,19 @@ describe("packagingCostsOf", () => {
     const [bag] = packagingCostsOf([packaging("bag", "380", true, [lot("a", "2026-10-01T12:00:00Z", null)])]);
 
     expect(bag).toMatchObject({ lastEntry: null, history: [] });
+  });
+
+  it("orders by brand, then content", () => {
+    const costs = packagingCostsOf([
+      packaging("moça-1", "1", true, [], "MOÇA"),
+      packaging("italac-1", "1", true, [], "ITALAC"),
+      packaging("moça-395", "0.395", true, [], "MOÇA"),
+    ]);
+
+    expect(costs.map(({ id, brand }) => [id, brand])).toEqual([
+      ["italac-1", "ITALAC"],
+      ["moça-395", "MOÇA"],
+      ["moça-1", "MOÇA"],
+    ]);
   });
 });

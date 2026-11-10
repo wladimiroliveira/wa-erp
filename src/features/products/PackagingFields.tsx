@@ -14,11 +14,13 @@ import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 import { NumericInput } from "@/components/ui/numeric-input";
 import type { MeasurementUnit, Packaging } from "@/lib/api";
-import { toApiDecimal, toDecimalInput } from "@/lib/decimal";
+import { isDecimalInput, toApiDecimal, toDecimalInput } from "@/lib/decimal";
 import { positiveDecimal } from "@/lib/form-schemas";
 import { UNITS, unitLabel } from "@/lib/units";
 import { hasValidCheckDigit } from "@/shared/gtin";
-import { compatibleUnits, readableQuantity } from "@/shared/units";
+import { compatibleUnits, convert, normalizeDecimal, readableQuantity } from "@/shared/units";
+import { Input } from "@/components/ui/input";
+import { upperCaseAsTyped } from "@/features/products/upper-case-input";
 
 export const gtinField = z
   .string()
@@ -32,17 +34,39 @@ export const gtinField = z
 const packagingRowSchema = z.object({
   // Present on a stored packaging only.
   id: z.string().optional(),
+  brand: z.string().trim().min(1, "Informe a marca da embalagem.").max(60, "A marca pode ter no máximo 60 caracteres."),
   content: positiveDecimal("Informe o conteúdo da embalagem.", "O conteúdo tem de ser maior que zero."),
   unit: z.enum(UNITS),
   gtin: gtinField,
   isActive: z.boolean(),
 });
 
-export const packagingRowsSchema = z.array(packagingRowSchema).refine((rows) => {
-  const gtins = rows.map(({ gtin }) => gtin.trim()).filter((gtin) => gtin !== "");
+// Each row's brand and content in one unit, so that 395 g and 0,395 kg of one brand read alike; a
+// row whose content does not read as a number yet is left to its own error.
+function brandsAndContents(rows: { brand: string; content: string; unit: MeasurementUnit }[]): string[] {
+  const [first] = rows;
 
-  return new Set(gtins).size === gtins.length;
-}, "Cada GTIN só pode aparecer em uma embalagem.");
+  return rows.flatMap(({ brand, content, unit }) => {
+    if (!isDecimalInput(content) || !compatibleUnits(first!.unit).includes(unit)) return [];
+
+    const inFirstUnit = normalizeDecimal(convert(toApiDecimal(content), unit, first!.unit));
+
+    return [`${brand.trim().toLocaleUpperCase("pt-BR")}\u0000${inFirstUnit}`];
+  });
+}
+
+export const packagingRowsSchema = z
+  .array(packagingRowSchema)
+  .refine((rows) => {
+    const gtins = rows.map(({ gtin }) => gtin.trim()).filter((gtin) => gtin !== "");
+
+    return new Set(gtins).size === gtins.length;
+  }, "Cada GTIN só pode aparecer em uma embalagem.")
+  .refine((rows) => {
+    const pairs = brandsAndContents(rows);
+
+    return new Set(pairs).size === pairs.length;
+  }, "Cada marca só pode ter uma embalagem com esse conteúdo.");
 
 export type PackagingRow = z.infer<typeof packagingRowSchema>;
 
@@ -52,6 +76,7 @@ export function rowOf(packaging: Packaging, unit: MeasurementUnit): PackagingRow
 
   return {
     id: packaging.id,
+    brand: packaging.brand,
     content: toDecimalInput(readable.quantity),
     unit: readable.unit,
     gtin: packaging.gtin ?? "",
@@ -60,15 +85,17 @@ export function rowOf(packaging: Packaging, unit: MeasurementUnit): PackagingRow
 }
 
 /** What a new product sends of each row: a blank GTIN is left out. */
-export const toCreatedPackaging = ({ content, unit, gtin }: PackagingRow) => ({
+export const toCreatedPackaging = ({ brand, content, unit, gtin }: PackagingRow) => ({
+  brand,
   content: toApiDecimal(content),
   unit,
   ...(gtin === "" ? {} : { gtin }),
 });
 
 /** What an edit sends of each row: the whole list, a blank GTIN as null so that erasing it sticks. */
-export const toEditedPackaging = ({ id, content, unit, gtin, isActive }: PackagingRow) => ({
+export const toEditedPackaging = ({ id, brand, content, unit, gtin, isActive }: PackagingRow) => ({
   ...(id === undefined ? {} : { id }),
+  brand,
   content: toApiDecimal(content),
   unit,
   gtin: gtin === "" ? null : gtin,
@@ -118,6 +145,13 @@ export function PackagingFields<Form extends FormWithPackagings>(props: Packagin
         return (
           <div key={row.id} className="flex flex-col gap-1">
             <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label={`Marca da embalagem ${position}`}
+                placeholder="Marca"
+                className="w-40"
+                autoComplete="off"
+                {...upperCaseAsTyped(register(`packagings.${index}.brand`))}
+              />
               <NumericInput
                 aria-label={`Conteúdo da embalagem ${position}`}
                 className="w-28"
@@ -162,6 +196,7 @@ export function PackagingFields<Form extends FormWithPackagings>(props: Packagin
                 </Button>
               )}
             </div>
+            {rowErrors?.brand ? <p className="text-sm text-destructive">{rowErrors.brand.message}</p> : null}
             {rowErrors?.content ? <p className="text-sm text-destructive">{rowErrors.content.message}</p> : null}
             {rowErrors?.gtin ? <p className="text-sm text-destructive">{rowErrors.gtin.message}</p> : null}
           </div>
@@ -176,7 +211,7 @@ export function PackagingFields<Form extends FormWithPackagings>(props: Packagin
         className="self-start"
         // The units a packaging is offered in depend on the product's.
         disabled={unit === undefined}
-        onClick={() => unit && rows.append({ content: "", unit, gtin: "", isActive: true })}
+        onClick={() => unit && rows.append({ brand: "", content: "", unit, gtin: "", isActive: true })}
       >
         Adicionar embalagem
       </Button>

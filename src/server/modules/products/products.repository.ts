@@ -13,7 +13,11 @@ const PRODUCT_FIELDS = {
     isActive: true,
     isStorableOnceOpened: true,
     stock: { select: { minimumQuantity: true } },
-    packagings: { select: { id: true, content: true, gtin: true, isActive: true }, orderBy: { content: "asc" } },
+    packagings: {
+      select: { id: true, brand: true, content: true, gtin: true, isActive: true },
+      // Mutable, as Prisma wants it: the `as const` around this would make the list readonly.
+      orderBy: [{ brand: "asc" }, { content: "asc" }] as Prisma.ProductPackagingOrderByWithRelationInput[],
+    },
   },
 } as const;
 
@@ -28,7 +32,7 @@ function toProduct({ stock, packagings, ...product }: ProductRow) {
 }
 
 /** A packaging as the save wants it: with an id it is that stored one, without it is a new one. */
-export type PackagingWrite = { id?: string; content: string; gtin: string | null; isActive: boolean };
+export type PackagingWrite = { id?: string; brand: string; content: string; gtin: string | null; isActive: boolean };
 
 const toOptionalProduct = (row: ProductRow | null) => (row === null ? null : toProduct(row));
 
@@ -94,7 +98,7 @@ export function insertProduct({
   unit: MeasurementUnit;
   isStorableOnceOpened: boolean;
   minimumQuantity?: string;
-  packagings: { content: string; gtin: string | null }[];
+  packagings: { brand: string; content: string; gtin: string | null }[];
 }) {
   return prisma.$transaction(async (client) => {
     const { sku } = await client.product.create({
@@ -138,7 +142,7 @@ export function updateProduct(
 async function syncPackagings(client: Prisma.TransactionClient, productSku: string, packagings: PackagingWrite[]) {
   const stored = await client.productPackaging.findMany({
     where: { productSku },
-    select: { id: true, content: true, gtin: true },
+    select: { id: true, brand: true, content: true, gtin: true },
   });
   const plan = planPackagingSync(
     stored.map(({ content, ...packaging }) => ({ ...packaging, content: content.toString() })),

@@ -302,8 +302,15 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="pre-weighing-tolerance">Aceitar até</Label>
-            <NumericInput id="pre-weighing-tolerance" className="w-32" trailing="%" {...form.register("tolerance")} />
+            <Label htmlFor="pre-weighing-tolerance">Aceitar até (%)</Label>
+            <NumericInput
+              id="pre-weighing-tolerance"
+              className="w-32"
+              format="digits"
+              maxLength={3}
+              trailing="%"
+              {...form.register("tolerance")}
+            />
             {errors.tolerance ? <p className="text-sm text-destructive">{errors.tolerance.message}</p> : null}
           </div>
 
@@ -325,8 +332,12 @@ export function PreWeighingPage({ products: offered }: { products: Product[] }) 
         <WasteSection
           waste={planned.plan.waste}
           unit={planned.plan.product.unit}
+          disabled={planning}
+          // The fields show what is calculated: the plan's product and tolerance, with the quantity suggested.
           onProduce={(quantity) => {
+            form.setValue("productSku", planned.target.productSku);
             form.setValue("quantity", formatDecimal(quantity));
+            form.setValue("tolerance", String(planned.tolerance));
             calculate({ productSku: planned.target.productSku, quantity }, planned.tolerance);
           }}
         />

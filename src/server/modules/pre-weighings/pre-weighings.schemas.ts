@@ -9,7 +9,11 @@ const targetSchema = { productSku: z.uuid(), quantity: positiveDecimalSchema };
 // How much more than asked for, in percent, a production may be to leave less behind of what cannot be kept.
 export const preWeighingPlanQuerySchema = z.object({
   ...targetSchema,
-  tolerance: z.coerce.number().int().min(0).max(100).default(20),
+  // `?tolerance=` left empty means the default, not zero.
+  tolerance: z.preprocess(
+    (value) => (value === "" || value === null ? undefined : value),
+    z.coerce.number().int().min(0).max(100).default(20),
+  ),
 });
 
 export const createPreWeighingBodySchema = z.object({
@@ -30,7 +34,7 @@ export const listPreWeighingsQuerySchema = pageQuerySchema.extend({
     .optional(),
 });
 
-// A quantity to produce and what it leaves of the opened packagings, the money lost in cents.
+// A quantity to produce and what it leaves of the opened packagings, the money lost in reais, to the cent.
 const wasteSuggestionSchema = z.object({
   quantity: z.string(),
   loss: z.string(),

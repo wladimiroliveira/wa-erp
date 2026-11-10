@@ -417,20 +417,20 @@ describe("PreWeighingPage, leftovers of what cannot be kept", () => {
     planning();
     open();
 
-    expect(screen.getByLabelText("Aceitar até")).toHaveValue("20");
-    await userEvent.clear(screen.getByLabelText("Aceitar até"));
-    await userEvent.type(screen.getByLabelText("Aceitar até"), "35");
+    expect(screen.getByLabelText("Aceitar até (%)")).toHaveValue("20");
+    await userEvent.clear(screen.getByLabelText("Aceitar até (%)"));
+    await userEvent.type(screen.getByLabelText("Aceitar até (%)"), "35");
     await calculate();
 
     await waitFor(() => expect(planPreWeighing).toHaveBeenCalledWith({ productSku: BREAD.sku, quantity: "10" }, 35));
   });
 
-  it.each(["101", "1,5", ""])("refuses a tolerance of %j", async (typed) => {
+  it.each(["101", ""])("refuses a tolerance of %j", async (typed) => {
     planning();
     open();
 
-    await userEvent.clear(screen.getByLabelText("Aceitar até"));
-    if (typed !== "") await userEvent.type(screen.getByLabelText("Aceitar até"), typed);
+    await userEvent.clear(screen.getByLabelText("Aceitar até (%)"));
+    if (typed !== "") await userEvent.type(screen.getByLabelText("Aceitar até (%)"), typed);
     await calculate();
 
     expect(await screen.findByText("Informe um número inteiro de 0 a 100.")).toBeInTheDocument();
@@ -461,6 +461,44 @@ describe("PreWeighingPage, leftovers of what cannot be kept", () => {
     await waitFor(() =>
       expect(planPreWeighing).toHaveBeenLastCalledWith({ productSku: BREAD.sku, quantity: "10.533" }, 20),
     );
+  });
+
+  it("produces a suggestion with the plan's own product and tolerance, and shows them", async () => {
+    planning(() => ({ ok: true, data: WITH_WASTE }));
+    open();
+    await calculate();
+    await screen.findByRole("region", { name: "Sobras de abertos" });
+
+    await userEvent.clear(screen.getByLabelText("Aceitar até (%)"));
+    await userEvent.type(screen.getByLabelText("Aceitar até (%)"), "35");
+    await userEvent.click(section().getByRole("button", { name: "Produzir 10,533 kg" }));
+
+    expect(screen.getByLabelText("Aceitar até (%)")).toHaveValue("20");
+    expect(screen.getByLabelText("Produto")).toHaveValue(BREAD.sku);
+    await waitFor(() =>
+      expect(planPreWeighing).toHaveBeenLastCalledWith({ productSku: BREAD.sku, quantity: "10.533" }, 20),
+    );
+  });
+
+  it("offers no suggestion to produce while a plan is being worked out", async () => {
+    planning(() => ({ ok: true, data: WITH_WASTE }));
+    open();
+    await calculate();
+    await screen.findByRole("region", { name: "Sobras de abertos" });
+
+    vi.mocked(planPreWeighing).mockReturnValue(new Promise(() => undefined));
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+
+    await waitFor(() => expect(section().getByRole("button", { name: "Produzir 10,533 kg" })).toBeDisabled());
+  });
+
+  it("takes the tolerance in whole percent, a comma left out", async () => {
+    open();
+
+    await userEvent.clear(screen.getByLabelText("Aceitar até (%)"));
+    await userEvent.type(screen.getByLabelText("Aceitar até (%)"), "2,5");
+
+    expect(screen.getByLabelText("Aceitar até (%)")).toHaveValue("25");
   });
 
   it("says when no quantity within the tolerance leaves less", async () => {

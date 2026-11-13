@@ -182,6 +182,7 @@ export function StartProductionPage({ products, preWeighings }: StartProductionP
               <Label htmlFor={`pre-weighing-${preWeighing.id}`} className="flex-1 py-1.5">
                 {preWeighing.product.description} — {quantityOf(preWeighing.quantity, preWeighing.product.unit)} —{" "}
                 {formatDateTime(preWeighing.createdAt)}
+                {preWeighing.parent === null ? null : ` → para ${preWeighing.parent.product.description}`}
               </Label>
             </li>
           ))}

@@ -1,5 +1,5 @@
 import { MeasurementUnit, Prisma } from "@prisma/client";
-import { toStoredDecimal } from "@/server/lib/decimal";
+import { pickPlacesOf, toStoredDecimal } from "@/server/lib/decimal";
 
 type Amount = Prisma.Decimal.Value;
 
@@ -56,7 +56,7 @@ export function suggestQuantities(input: {
   const { quantity, yieldQuantity, unit, tolerance } = input;
   const ingredients = input.ingredients.filter(({ content, recipeQuantity }) => content.gt(0) && recipeQuantity.gt(0));
   const maximum = quantity.mul(100 + tolerance).div(100);
-  const places = unit === MeasurementUnit.UNIT ? 0 : 3;
+  const places = pickPlacesOf(unit);
 
   const need = (ingredient: WasteIngredient, of: Prisma.Decimal) =>
     ingredient.recipeQuantity.mul(of).div(yieldQuantity);
@@ -111,4 +111,17 @@ export function suggestQuantities(input: {
     .slice(0, MAX_ALTERNATIVES);
 
   return { requested, alternatives };
+}
+
+// What is left to produce of an intermediate: the need minus what the stock already covers, rounded
+// up to a quantity the operator could have picked, so that it covers the need.
+export function defaultToProduce(
+  needed: Prisma.Decimal,
+  inStock: Prisma.Decimal,
+  unit: MeasurementUnit,
+): Prisma.Decimal {
+  return Prisma.Decimal.max(needed.minus(Prisma.Decimal.max(inStock, 0)), 0).toDecimalPlaces(
+    pickPlacesOf(unit),
+    Prisma.Decimal.ROUND_UP,
+  );
 }

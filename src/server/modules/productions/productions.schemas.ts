@@ -3,6 +3,7 @@ import { lotExpirySchema } from "@/server/modules/stock/stock.schemas";
 import { positiveDecimalSchema } from "@/shared/decimal";
 import { productionStatusSchema } from "@/shared/enums";
 import { pageQuerySchema, pageSchema } from "@/server/lib/pagination";
+import { messageSchema } from "@/server/modules/auth/auth.schemas";
 import { productSummarySchema } from "@/server/modules/products/products.schemas";
 
 // An item is produced in one of two ways. Guided, it follows a pre-weighing: the product, the
@@ -35,6 +36,10 @@ export const finishProductionBodySchema = z.object({
 });
 
 export const productionIdParamsSchema = z.object({ id: z.uuid() });
+
+export const productionItemParamsSchema = z.object({ id: z.uuid(), itemId: z.uuid() });
+
+export const reduceProductionItemBodySchema = z.object({ quantity: positiveDecimalSchema });
 
 export const listProductionsQuerySchema = pageQuerySchema.extend({ status: productionStatusSchema.optional() });
 
@@ -88,4 +93,14 @@ export const productionLeftoversSchema = z.object({
     }),
   ),
   totalCost: z.string(),
+});
+
+// Why a production cannot finish yet: an intermediate it takes has not been produced, or the stock
+// of one does not cover what it takes, with the most each short item could make of what there is.
+export const finishConflictSchema = messageSchema.extend({
+  pendingPreWeighings: z.array(z.object({ id: z.uuid(), product: productSummarySchema })).optional(),
+  shortages: z
+    .array(z.object({ itemId: z.uuid(), product: productSummarySchema, needed: z.string(), available: z.string() }))
+    .optional(),
+  items: z.array(z.object({ itemId: z.uuid(), maxQuantity: z.string() })).optional(),
 });

@@ -63,6 +63,11 @@ export function readableQuantity(quantity: string, unit: MeasurementUnit): { qua
   return { quantity: convert(quantity, unit, target), unit: target };
 }
 
+/** Places of a quantity the operator picks: whole for units, grams or millilitres for the rest. */
+export function pickPlacesOf(unit: MeasurementUnit): 0 | 3 {
+  return unit === "UNIT" ? 0 : 3;
+}
+
 /** A decimal string written one way only, so that two writings of a number compare equal: 1.000000 is 1. */
 export const normalizeDecimal = (value: string): string => shift(value, 0);
 

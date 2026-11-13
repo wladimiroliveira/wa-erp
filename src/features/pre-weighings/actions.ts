@@ -30,17 +30,25 @@ const LIST_PATH = "/pre-weighings";
 const INVALID_INPUT = "Invalid input.";
 const DENIED = "Permission denied.";
 
-/** The plan for a target, with the lots to weigh from as the stock stands now and, within `tolerance` percent, quantities that waste less. */
-export async function planPreWeighing(target: PreWeighingTarget, tolerance?: number): Promise<PlanResult> {
+/** The plan for a target, with the lots to weigh from as the stock stands now and, within `tolerance` percent, quantities that waste less; `produce` maps an intermediate to how much to make of it. */
+export async function planPreWeighing(
+  target: PreWeighingTarget,
+  tolerance?: number,
+  produce?: Record<string, string>,
+): Promise<PlanResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
 
-  const parsed = preWeighingPlanQuerySchema.safeParse({ ...target, tolerance });
+  const parsed = preWeighingPlanQuerySchema.safeParse({
+    ...target,
+    tolerance,
+    produce: produce && Object.entries(produce).map(([sku, quantity]) => `${sku}:${quantity}`),
+  });
 
   if (!parsed.success) return fail(400, INVALID_INPUT);
 
-  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity, parsed.data.tolerance);
+  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity, parsed.data.tolerance, parsed.data.produce);
 }
 
 export async function createPreWeighing(body: CreatePreWeighingBody): Promise<PreWeighingResult> {

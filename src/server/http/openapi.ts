@@ -4,17 +4,51 @@ import type { CollectedRoute } from "@/server/routes";
 
 type JsonSchema = Record<string, unknown>;
 
-const toSchema = (schema: z.ZodType, io: "input" | "output"): JsonSchema => {
-  const { $schema: _dropped, ...rest } = z.toJSONSchema(schema, { target: "openapi-3.0", io, unrepresentable: "any" });
+// Named schemas (`.meta({ id })`) come out of zod nested in `definitions`; OpenAPI wants them in
+// `components.schemas`, shared by every route that uses them.
+type Components = Record<string, JsonSchema>;
 
-  return rest;
+const rewriteRefs = (node: unknown): unknown => {
+  if (Array.isArray(node)) return node.map(rewriteRefs);
+  if (node === null || typeof node !== "object") return node;
+
+  return Object.fromEntries(
+    Object.entries(node).map(([key, value]) => [
+      key,
+      key === "$ref" && typeof value === "string"
+        ? value.replace(/^#\/(?:definitions|\$defs)\//, "#/components/schemas/")
+        : rewriteRefs(value),
+    ]),
+  );
+};
+
+const toSchema = (schema: z.ZodType, io: "input" | "output", components: Components): JsonSchema => {
+  const { $schema: _dropped, ...generated } = z.toJSONSchema(schema, {
+    target: "openapi-3.0",
+    io,
+    unrepresentable: "any",
+  });
+  const { definitions, $defs, ...rest } = generated as JsonSchema;
+  const named = { ...(definitions as Components | undefined), ...($defs as Components | undefined) };
+
+  for (const [name, definition] of Object.entries(named)) {
+    const hoisted = rewriteRefs(definition) as JsonSchema;
+
+    if (components[name] !== undefined && JSON.stringify(components[name]) !== JSON.stringify(hoisted)) {
+      throw new Error(`Two different schemas share the id "${name}".`);
+    }
+
+    components[name] = hoisted;
+  }
+
+  return rewriteRefs(rest) as JsonSchema;
 };
 
 /** One `in: path` or `in: query` parameter per property of an object schema. */
-function parametersOf(schema: z.ZodType | undefined, location: "path" | "query"): JsonSchema[] {
+function parametersOf(schema: z.ZodType | undefined, location: "path" | "query", components: Components): JsonSchema[] {
   if (schema === undefined) return [];
 
-  const object = toSchema(schema, "input");
+  const object = toSchema(schema, "input", components);
   const properties = (object.properties ?? {}) as Record<string, JsonSchema>;
   const required = new Set((object.required ?? []) as string[]);
 
@@ -26,10 +60,10 @@ function parametersOf(schema: z.ZodType | undefined, location: "path" | "query")
   }));
 }
 
-function responsesOf(route: CollectedRoute): Record<string, JsonSchema> {
+function responsesOf(route: CollectedRoute, components: Components): Record<string, JsonSchema> {
   return Object.fromEntries(
     Object.entries(route.spec.response).map(([status, schema]) => {
-      const body = toSchema(schema!, "output");
+      const body = toSchema(schema!, "output", components);
       // A `void` response has no body, as a 204 does.
       const hasBody = Object.keys(body).length > 0 && body.not === undefined;
 
@@ -50,6 +84,7 @@ function responsesOf(route: CollectedRoute): Record<string, JsonSchema> {
  */
 export function buildOpenApiDocument(routes: CollectedRoute[]): JsonSchema {
   const paths: Record<string, Record<string, JsonSchema>> = {};
+  const schemas: Components = {};
 
   for (const route of routes) {
     const { spec } = route;
@@ -58,16 +93,16 @@ export function buildOpenApiDocument(routes: CollectedRoute[]): JsonSchema {
       summary: spec.summary,
       ...(spec.auth === PUBLIC ? {} : { security: [{ BearerAuth: [] }] }),
     };
-    const parameters = [...parametersOf(spec.params, "path"), ...parametersOf(spec.query, "query")];
+    const parameters = [...parametersOf(spec.params, "path", schemas), ...parametersOf(spec.query, "query", schemas)];
 
     if (parameters.length > 0) operation.parameters = parameters;
     if (spec.body !== undefined) {
       operation.requestBody = {
         required: true,
-        content: { "application/json": { schema: toSchema(spec.body, "input") } },
+        content: { "application/json": { schema: toSchema(spec.body, "input", schemas) } },
       };
     }
-    operation.responses = responsesOf(route);
+    operation.responses = responsesOf(route, schemas);
 
     paths[route.path] = { ...paths[route.path], [route.method.toLowerCase()]: operation };
   }
@@ -77,6 +112,7 @@ export function buildOpenApiDocument(routes: CollectedRoute[]): JsonSchema {
     info: { title: "wa-erp", description: "API do wa-system", version: "0.0.0" },
     components: {
       securitySchemes: { BearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } },
+      ...(Object.keys(schemas).length > 0 ? { schemas } : {}),
     },
     paths,
   };

@@ -32,7 +32,7 @@ const productionSelect = {
           id: true,
           quantity: true,
           unitCost: true,
-          product: { select: { ...productSelect, isStorableOnceOpened: true } },
+          product: { select: { ...productSelect, isStorableOnceOpened: true, kind: true } },
           // What was discarded of the opened packagings when the production finished.
           leftovers: { select: { lotId: true, quantity: true, unitCost: true }, orderBy: { createdAt: "asc" } },
         },
@@ -62,8 +62,8 @@ export function insertProduction(input: { createdById: string; items: PlannedPro
   });
 }
 
-export function findProductionById(id: string) {
-  return prisma.production.findUnique({ where: { id }, select: productionSelect });
+export function findProductionById(id: string, client: Prisma.TransactionClient = prisma) {
+  return client.production.findUnique({ where: { id }, select: productionSelect });
 }
 
 export function listProductions(query: { status?: ProductionStatus; limit: number; cursor?: string }) {
@@ -89,6 +89,30 @@ async function leaveInProgress(
   const { count } = await tx.production.updateMany({ where: { id, status: ProductionStatus.IN_PROGRESS }, data });
 
   return count === 1;
+}
+
+// Holds the production row until the transaction ends, and answers whether it is in progress. What
+// changes an item of a production in progress waits for this lock, so it cannot slip in between a
+// finish or a cancel and its own write.
+export async function lockProductionInProgress(tx: Prisma.TransactionClient, id: string) {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM productions WHERE id = ${id}::uuid AND status = 'IN_PROGRESS' FOR UPDATE
+  `;
+
+  return rows.length === 1;
+}
+
+// Lowers what an item is expected to yield, and sets each of its inputs to the quantity that
+// yield takes.
+export async function rescaleProductionItem(
+  tx: Prisma.TransactionClient,
+  item: { id: string; expectedQuantity: Prisma.Decimal; inputs: { id: string; quantity: Prisma.Decimal }[] },
+) {
+  await tx.productionItem.update({ where: { id: item.id }, data: { expectedQuantity: item.expectedQuantity } });
+
+  for (const { id, quantity } of item.inputs) {
+    await tx.productionItemInput.update({ where: { id }, data: { quantity } });
+  }
 }
 
 export const markProductionFinished = (tx: Prisma.TransactionClient, id: string, hasLeftoversInCost: boolean) =>

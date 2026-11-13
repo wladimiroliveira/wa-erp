@@ -1,6 +1,11 @@
 import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { planQuantity, suggestQuantities, type Suggestion } from "@/server/modules/pre-weighings/pre-weighings.plan";
+import {
+  defaultToProduce,
+  planQuantity,
+  suggestQuantities,
+  type Suggestion,
+} from "@/server/modules/pre-weighings/pre-weighings.plan";
 
 const plan = (recipeQuantity: string, yieldQuantity: string, quantity: string) =>
   planQuantity({ recipeQuantity, yieldQuantity, quantity })?.toString() ?? null;
@@ -163,4 +168,17 @@ describe("suggestQuantities", () => {
 
     expect(alternatives.length).toBeLessThanOrEqual(3);
   });
+});
+
+describe("defaultToProduce", () => {
+  const D = (v: string) => new Prisma.Decimal(v);
+  it("is the shortfall", () => expect(defaultToProduce(D("2.5"), D("1"), "KILOGRAM").toString()).toBe("1.5"));
+  it("is zero when the stock covers it", () =>
+    expect(defaultToProduce(D("1"), D("3"), "KILOGRAM").toString()).toBe("0"));
+  it("is the whole need when the stock is negative", () =>
+    expect(defaultToProduce(D("1"), D("-2"), "KILOGRAM").toString()).toBe("1"));
+  it("rounds a count up to a whole unit", () =>
+    expect(defaultToProduce(D("2.5"), D("0"), "UNIT").toString()).toBe("3"));
+  it("rounds anything else up to three places", () =>
+    expect(defaultToProduce(D("0.3333333"), D("0"), "KILOGRAM").toString()).toBe("0.334"));
 });

@@ -18,8 +18,12 @@ const repository = vi.hoisted(() => ({
 }));
 
 vi.mock("./productions.repository", () => repository);
-vi.mock("@/server/modules/stock/stock.repository", () => ({ holdStockBalances: vi.fn() }));
-vi.mock("@/server/modules/pre-weighings/pre-weighings.repository", () => ({ findPreWeighingById: vi.fn() }));
+// No intermediate in these productions: nothing is pending, and no balance is checked.
+vi.mock("@/server/modules/stock/stock.repository", () => ({ holdStockBalances: vi.fn(async () => []) }));
+vi.mock("@/server/modules/pre-weighings/pre-weighings.repository", () => ({
+  findPreWeighingById: vi.fn(),
+  findChildrenProgress: vi.fn(async () => []),
+}));
 vi.mock("@/server/modules/pre-weighings/pre-weighings.service", () => ({ planPreWeighing: vi.fn() }));
 
 const D = (value: string) => new Prisma.Decimal(value);
@@ -154,6 +158,22 @@ describe("finishProduction, leftovers of opened packagings", () => {
     expect(
       finishProductionBodySchema.parse({ items: [{ id: ITEM, producedQuantity: "1", expiresAt: null }] }),
     ).toMatchObject({ hasLeftoversInCost: true });
+  });
+});
+
+describe("finishProduction, a production changed while it waited", () => {
+  it("takes what the production holds once it is held, not what it held when asked for", async () => {
+    const reduced = itemOf(ITEM, "Pudim", "input-1");
+    reduced.expectedQuantity = D("0.8");
+    reduced.inputs[0]!.quantity = D("240");
+    repository.findProductionById.mockImplementation(async (_id: string, tx?: object) =>
+      tx === undefined ? production() : production("IN_PROGRESS", [reduced]),
+    );
+    repository.consumeProductionInput.mockResolvedValue(consumed("240", "3950"));
+
+    await finish(true);
+
+    expect(repository.consumeProductionInput.mock.calls[0]![1]).toMatchObject({ quantity: D("240") });
   });
 });
 

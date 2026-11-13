@@ -30,7 +30,7 @@ describe("pre-weighing schema", () => {
     expect(SCHEMA).toMatch(
       fieldOf(
         "PreWeighingItem",
-        String.raw`weighedQuantity\s+Decimal\s+@map\("weighed_quantity"\) @db\.Decimal\(18, 6\)`,
+        String.raw`weighedQuantity\s+Decimal\?\s+@map\("weighed_quantity"\) @db\.Decimal\(18, 6\)`,
       ),
     );
   });

@@ -12,7 +12,8 @@ import { Label } from "@/components/ui/label";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { finishProduction, previewLeftovers } from "@/features/productions/actions";
 import { LeftoversInCostCheckbox, LeftoversSection } from "@/features/productions/LeftoversSection";
-import type { LeftoversPreview, Production } from "@/lib/api";
+import { ShortageDialog } from "@/features/productions/ShortageDialog";
+import type { FinishConflict, LeftoversPreview, Production } from "@/lib/api";
 import { todayIso } from "@/lib/dates";
 import { toApiDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
@@ -45,6 +46,8 @@ const FINISH_MESSAGES = {
 export function FinishProductionForm({ production }: { production: Production }) {
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
+  // What the stock lacks to finish, while the user picks a way out of it.
+  const [shortage, setShortage] = useState<FinishConflict | null>(null);
   const [finishing, startFinishing] = useTransition();
   // What finishing would discard, as the stock stood when the form opened; only a guide, the server
   // works it out again when the production finishes.
@@ -92,6 +95,24 @@ export function FinishProductionForm({ production }: { production: Production })
         const result = await finishProduction(production.id, body);
 
         if (!result.ok) {
+          // A 409 on finishing carries what blocks it, when the block is the intermediates.
+          const conflict = result.status === 409 ? (result.details as FinishConflict | undefined) : undefined;
+
+          // Intermediates still to be weighed or short in stock: the production stays open, so
+          // this form stays on the page to say what to do.
+          if (conflict?.pendingPreWeighings?.length) {
+            // One name per intermediate, however many of its pre-weighings are pending.
+            const pending = [...new Set(conflict.pendingPreWeighings.map(({ product }) => product.description))].join(
+              ", ",
+            );
+            setFailure(`Produza antes: ${pending}.`);
+            return;
+          }
+          if (conflict?.shortages?.length) {
+            setShortage(conflict);
+            return;
+          }
+
           // A 409 refreshes the page, and a production closed meanwhile takes this form off it: the
           // explanation goes where it survives that.
           if (result.status === 409) {
@@ -114,75 +135,91 @@ export function FinishProductionForm({ production }: { production: Production })
   const errors = form.formState.errors.items;
 
   return (
-    <form
-      onSubmit={form.handleSubmit(finish)}
-      aria-label="Finalizar produção"
-      className="flex flex-col gap-4 rounded-md border p-4"
-      noValidate
-    >
-      <h2 className="text-lg font-semibold">Finalizar produção</h2>
+    <>
+      <form
+        onSubmit={form.handleSubmit(finish)}
+        aria-label="Finalizar produção"
+        className="flex flex-col gap-4 rounded-md border p-4"
+        noValidate
+      >
+        <h2 className="text-lg font-semibold">Finalizar produção</h2>
 
-      {production.items.map((item, index) => {
-        const quantityId = `finish-${item.id}-quantity`;
-        const expiryId = `finish-${item.id}-expires-at`;
+        {production.items.map((item, index) => {
+          const quantityId = `finish-${item.id}-quantity`;
+          const expiryId = `finish-${item.id}-expires-at`;
 
-        return (
-          <div key={item.id} className="grid gap-3 sm:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor={quantityId}>
-                Produzido de {item.product.description} ({unitLabel(item.product.unit)})
-              </Label>
-              <NumericInput
-                id={quantityId}
-                aria-label={`Produzido de ${item.product.description}`}
-                {...form.register(`items.${index}.producedQuantity`)}
-              />
-              {errors?.[index]?.producedQuantity ? (
-                <p className="text-sm text-destructive">{errors[index].producedQuantity.message}</p>
-              ) : null}
+          return (
+            <div key={item.id} className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor={quantityId}>
+                  Produzido de {item.product.description} ({unitLabel(item.product.unit)})
+                </Label>
+                <NumericInput
+                  id={quantityId}
+                  aria-label={`Produzido de ${item.product.description}`}
+                  {...form.register(`items.${index}.producedQuantity`)}
+                />
+                {errors?.[index]?.producedQuantity ? (
+                  <p className="text-sm text-destructive">{errors[index].producedQuantity.message}</p>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor={expiryId}>Validade de {item.product.description} (opcional)</Label>
+                <Input
+                  id={expiryId}
+                  type="date"
+                  min={todayIso()}
+                  aria-label={`Validade de ${item.product.description}`}
+                  {...form.register(`items.${index}.expiresAt`)}
+                />
+                {errors?.[index]?.expiresAt ? (
+                  <p className="text-sm text-destructive">{errors[index].expiresAt.message}</p>
+                ) : null}
+              </div>
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor={expiryId}>Validade de {item.product.description} (opcional)</Label>
-              <Input
-                id={expiryId}
-                type="date"
-                min={todayIso()}
-                aria-label={`Validade de ${item.product.description}`}
-                {...form.register(`items.${index}.expiresAt`)}
-              />
-              {errors?.[index]?.expiresAt ? (
-                <p className="text-sm text-destructive">{errors[index].expiresAt.message}</p>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
 
-      {/* Announced as it arrives: it comes after the form, and changes what finishing will do. */}
-      <div role="status" aria-live="polite">
-        {leftovers === null ? (
-          <p className="text-sm text-muted-foreground">Calculando as sobras…</p>
-        ) : leftovers === "failed" ? (
-          // The server still finds the leftovers when it finishes, so the choice stays the user's.
-          <div className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">Não foi possível calcular as sobras.</p>
-            <LeftoversInCostCheckbox inCost={inCost} onInCostChange={setInCost} />
-          </div>
-        ) : leftovers.items.some((item) => item.leftovers.length > 0) ? (
-          <LeftoversSection preview={leftovers} inCost={inCost} onInCostChange={setInCost} />
+        {/* Announced as it arrives: it comes after the form, and changes what finishing will do. */}
+        <div role="status" aria-live="polite">
+          {leftovers === null ? (
+            <p className="text-sm text-muted-foreground">Calculando as sobras…</p>
+          ) : leftovers === "failed" ? (
+            // The server still finds the leftovers when it finishes, so the choice stays the user's.
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-muted-foreground">Não foi possível calcular as sobras.</p>
+              <LeftoversInCostCheckbox inCost={inCost} onInCostChange={setInCost} />
+            </div>
+          ) : leftovers.items.some((item) => item.leftovers.length > 0) ? (
+            <LeftoversSection preview={leftovers} inCost={inCost} onInCostChange={setInCost} />
+          ) : null}
+        </div>
+
+        {failure !== null ? (
+          <p role="alert" className="text-sm text-destructive">
+            {failure}
+          </p>
         ) : null}
-      </div>
 
-      {failure !== null ? (
-        <p role="alert" className="text-sm text-destructive">
-          {failure}
-        </p>
+        {/* Not before the leftovers are known: their cost is the user's to keep out. */}
+        <Button type="submit" className="self-start" disabled={finishing || leftovers === null}>
+          Finalizar produção
+        </Button>
+      </form>
+
+      {/* Outside the form: React carries a submit inside the dialog up to this form, portal or not. */}
+      {shortage !== null ? (
+        <ShortageDialog
+          production={production}
+          conflict={shortage}
+          onClose={() => setShortage(null)}
+          onReduced={() => {
+            // The page brings the reduced production anew, inputs and leftovers included.
+            setShortage(null);
+            router.refresh();
+          }}
+        />
       ) : null}
-
-      {/* Not before the leftovers are known: their cost is the user's to keep out. */}
-      <Button type="submit" className="self-start" disabled={finishing || leftovers === null}>
-        Finalizar produção
-      </Button>
-    </form>
+    </>
   );
 }

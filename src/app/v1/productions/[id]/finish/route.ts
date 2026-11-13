@@ -2,6 +2,7 @@ import { Permission } from "@prisma/client";
 import { apiHandler } from "@/server/http/handler";
 import { messageSchema } from "@/server/modules/auth/auth.schemas";
 import {
+  finishConflictSchema,
   finishProductionBodySchema,
   productionIdParamsSchema,
   productionSchema,
@@ -16,7 +17,7 @@ export const POST = apiHandler(
       "Finaliza uma produção: baixa os insumos, descarta as sobras de embalagens abertas e dá entrada no que foi produzido",
     params: productionIdParamsSchema,
     body: finishProductionBodySchema,
-    response: { 200: productionSchema, 404: messageSchema, 409: messageSchema },
+    response: { 200: productionSchema, 404: messageSchema, 409: finishConflictSchema },
   },
   async (request, reply) => {
     const result = await finishProduction({
@@ -26,7 +27,7 @@ export const POST = apiHandler(
       hasLeftoversInCost: request.body.hasLeftoversInCost,
     });
 
-    if (!result.ok) return reply.code(result.status).send({ message: result.message });
+    if (!result.ok) return reply.code(result.status).send({ ...result.details, message: result.message });
 
     return reply.send(result.data);
   },

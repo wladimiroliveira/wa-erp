@@ -321,10 +321,15 @@ model PreWeighing {
   quantity    Decimal           @db.Decimal(18, 6)
   items       PreWeighingItem[]
   production  ProductionItem?
+  // The pre-weighing whose product takes this one's product as an ingredient; null for a root.
+  parentId    String?           @map("parent_id") @db.Uuid
+  parent      PreWeighing?      @relation("PreWeighingStages", fields: [parentId], references: [id], onDelete: Restrict)
+  children    PreWeighing[]     @relation("PreWeighingStages")
   createdById String            @map("created_by_id") @db.Uuid
   createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
   createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  @@index([parentId], map: "idx_pre_weighings_parent_id")
   @@index([productSku, createdAt(sort: Desc), id(sort: Desc)], map: "idx_pre_weighings_product_sku_created_at")
   @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_pre_weighings_created_at")
   @@map("pre_weighings")
@@ -337,7 +342,9 @@ model PreWeighingItem {
   productSku      String      @map("product_sku") @db.Uuid
   product         Product     @relation(fields: [productSku], references: [sku], onDelete: Restrict)
   plannedQuantity Decimal     @map("planned_quantity") @db.Decimal(18, 6)
-  weighedQuantity Decimal     @map("weighed_quantity") @db.Decimal(18, 6)
+  // Null only on the line of a manufactured ingredient: it is not weighed, it is taken from stock
+  // when the product finishes.
+  weighedQuantity Decimal?    @map("weighed_quantity") @db.Decimal(18, 6)
 
   @@unique([preWeighingId, productSku], map: "uq_pre_weighing_items_pre_weighing_id_product_sku")
   @@index([productSku], map: "idx_pre_weighing_items_product_sku")

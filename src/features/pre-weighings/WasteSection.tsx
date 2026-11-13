@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import { weighedOf } from "@/features/pre-weighings/weighing-units";
 import { quantityOf } from "@/features/stock/stock-format";
@@ -34,9 +35,12 @@ function lineOf({ quantity, loss, leftovers }: WasteSuggestion, unit: Measuremen
 
 /** What the opened packagings of the ingredients that cannot be kept would leave behind, and quantities that leave less. */
 export function WasteSection({ waste, unit, onProduce, disabled = false }: WasteSectionProps) {
+  // A plan shows one of these per stage.
+  const headingId = useId();
+
   return (
-    <section aria-labelledby="pre-weighing-waste" className="flex flex-col gap-2 rounded-md border p-4">
-      <h2 id="pre-weighing-waste" className="text-lg font-semibold">
+    <section aria-labelledby={headingId} className="flex flex-col gap-2 rounded-md border p-4">
+      <h2 id={headingId} className="text-lg font-semibold">
         Sobras de abertos
       </h2>
 

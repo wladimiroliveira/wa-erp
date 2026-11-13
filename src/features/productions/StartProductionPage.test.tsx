@@ -146,6 +146,20 @@ describe("StartProductionPage", () => {
     expect(screen.queryByRole("checkbox", { name: /^Bolo/ })).not.toBeInTheDocument();
   });
 
+  it("tells which pre-weighing an available one is made for", () => {
+    open(
+      [BREAD],
+      page([
+        aPreWeighing({
+          ...WEIGHED,
+          parent: { id: "pre-weighing-9", product: { sku: "sku-9", description: "Bolo", unit: "UNIT" } },
+        }),
+      ]),
+    );
+
+    expect(preWeighingBox()).toHaveAccessibleName(/→ para Bolo$/);
+  });
+
   it("says when no pre-weighing is available", () => {
     open([BREAD], page([]));
 

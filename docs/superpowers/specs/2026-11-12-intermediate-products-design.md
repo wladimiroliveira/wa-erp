@@ -94,7 +94,7 @@ recipe (409 otherwise).
 - **Complement** — the same record call with `parentId` creates a single child of an existing
   pre-weighing (the "new weighing" of a shortage). Its own manufactured ingredients may again have
   stages.
-- **Presentation** — a pre-weighing presents `parentId`, `children: [{ id, product, quantity }]`
+- **Presentation** — a pre-weighing presents `parent: { id, product } | null`, `children: [{ id, product, quantity }]`
   and items with `weighedQuantity` nullable.
 - The proportional quantity (`recipeQuantity × quantity ÷ yield`, stored precision) stays in
   `planQuantity`; scaling by a ratio for a reduction reuses it.
@@ -125,9 +125,9 @@ recipe (409 otherwise).
 
 | Method and path | Change |
 | --- | --- |
-| `GET /v1/pre-weighings/plan` | Accepts `produce[<sku>]=<quantity>`; items gain `needed`, `inStock`, `toProduce`, `stage` (recursive plan, nullable). |
+| `GET /v1/pre-weighings/plan` | Accepts `produce=<sku>:<quantity>`, repeated once per intermediate; items gain `needed`, `inStock`, `toProduce`, `stage` (recursive plan, nullable). |
 | `POST /v1/pre-weighings` | Body: `{ productSku, quantity, parentId?, items, stages[] }`, each stage `{ productSku, quantity, items, stages[] }`; `weighedQuantity` absent on manufactured lines. |
-| `GET /v1/pre-weighings`, `GET /v1/pre-weighings/{id}` | Present `parentId`, `children`, nullable `weighedQuantity`. |
+| `GET /v1/pre-weighings`, `GET /v1/pre-weighings/{id}` | Present `parent` (`{ id, product }` or null), `children`, nullable `weighedQuantity`. |
 | `POST /v1/productions/{id}/items/{itemId}/reduce` | New. Body `{ quantity }`; returns the production. `auth` like finish. |
 | `POST /v1/productions/{id}/finish` | 409 bodies for a pending child (`pendingPreWeighings`) and for a shortage (`shortages`, `items[{ itemId, maxQuantity }]`). |
 

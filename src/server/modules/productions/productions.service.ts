@@ -4,11 +4,7 @@ import { fitsPlacesOf, TOO_MANY_PLACES, toStoredDecimal } from "@/server/lib/dec
 import { toPage } from "@/server/lib/pagination";
 import { isUniqueViolation } from "@/server/lib/prisma-errors";
 import { fail, failWith, succeed, type Failure, type Result } from "@/server/lib/result";
-import {
-  findAncestorIds,
-  findChildrenProgress,
-  findPreWeighingById,
-} from "@/server/modules/pre-weighings/pre-weighings.repository";
+import { findAncestorIds, findPreWeighingById } from "@/server/modules/pre-weighings/pre-weighings.repository";
 import { planPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
 import { holdStockBalances } from "@/server/modules/stock/stock.repository";
 import {
@@ -112,21 +108,6 @@ class ProductionAborted extends Error {
   constructor(readonly result: ProductionFailure) {
     super(result.message);
   }
-}
-
-// An item guided by a pre-weighing with intermediates finishes only after every one of them was
-// produced: one never started, or whose production was canceled, is still pending.
-async function pendingIntermediates(tx: Prisma.TransactionClient, production: ProductionRecord) {
-  const guidedIds = production.items.flatMap((item) => (item.preWeighingId === null ? [] : [item.preWeighingId]));
-  const pending = (await findChildrenProgress(guidedIds, tx)).filter(
-    (child) => child.status !== ProductionStatus.FINISHED,
-  );
-
-  if (pending.length === 0) return null;
-
-  return failWith(409, "An intermediate has not been produced yet.", {
-    pendingPreWeighings: pending.map(({ id, product }) => ({ id, product })),
-  });
 }
 
 // Nothing holds an intermediate for the product that takes it, so the stock of each one is checked
@@ -294,7 +275,7 @@ export async function finishProduction(input: {
         tx,
         production.items.flatMap((item) => [item.product.sku, ...item.inputs.map((input) => input.product.sku)]),
       );
-      const refusal = (await pendingIntermediates(tx, production)) ?? intermediateShortage(production, balances);
+      const refusal = intermediateShortage(production, balances);
 
       if (refusal !== null) throw new ProductionAborted(refusal);
 

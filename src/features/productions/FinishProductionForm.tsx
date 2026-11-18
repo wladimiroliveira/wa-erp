@@ -98,16 +98,8 @@ export function FinishProductionForm({ production }: { production: Production })
           // A 409 on finishing carries what blocks it, when the block is the intermediates.
           const conflict = result.status === 409 ? (result.details as FinishConflict | undefined) : undefined;
 
-          // Intermediates still to be weighed or short in stock: the production stays open, so
-          // this form stays on the page to say what to do.
-          if (conflict?.pendingPreWeighings?.length) {
-            // One name per intermediate, however many of its pre-weighings are pending.
-            const pending = [...new Set(conflict.pendingPreWeighings.map(({ product }) => product.description))].join(
-              ", ",
-            );
-            setFailure(`Produza antes: ${pending}.`);
-            return;
-          }
+          // Intermediates short in stock: the production stays open, so this form stays on the page
+          // to say what to do.
           if (conflict?.shortages?.length) {
             setShortage(conflict);
             return;

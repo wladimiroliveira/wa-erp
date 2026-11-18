@@ -31,7 +31,7 @@ import type {
 } from "@/lib/api";
 
 export type ProductionResult = { ok: true; data: Production } | Failure;
-/** A 409 on finishing says what blocks it: pending pre-weighings, short stock, and the most each short item could make. */
+/** A 409 on finishing says what blocks it: short stock, and the most each short item could make. */
 export type FinishProductionResult = ProductionResult | (Failure<409> & { details: FinishConflict });
 export type LeftoversPreviewResult = { ok: true; data: LeftoversPreview } | Failure;
 export type ProductionPageResult = { ok: true; data: ProductionPage } | Failure;

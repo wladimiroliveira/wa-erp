@@ -1026,29 +1026,24 @@ describe("finishing a product with intermediates", () => {
       items: production.items.map((item, index) => ({ id: item.id, producedQuantity: produced[index] })),
     });
 
-  const pendingMessage = "An intermediate has not been produced yet.";
   const shortageMessage = "Not enough of an intermediate in stock.";
 
-  it("refuses to finish the bombom before its intermediates", async () => {
+  it("finishes the bombom before its intermediates when the stock covers them", async () => {
     const { headers, userId } = await canDoBoth();
-    const { root, filling, shell, fillingStage, shellStage } = await bonbonTree(userId);
+    const { root, filling, shell } = await bonbonTree(userId);
+    await testPrisma.productStock.update({ where: { productSku: filling.sku }, data: { quantity: "1" } });
+    await lot(filling.sku, "0.7", "1");
+    await stock(shell.sku, "50", "0.1");
     const bonbon = await startGuided(headers, [root.id]);
 
     const response = await finishAs(headers, bonbon, ["50"]);
 
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({
-      message: pendingMessage,
-      pendingPreWeighings: [
-        { id: fillingStage.id, product: { sku: filling.sku, description: "Filling", unit: "KILOGRAM" } },
-        { id: shellStage.id, product: { sku: shell.sku, description: "Shell", unit: "UNIT" } },
-      ],
-    });
-    expect(await testPrisma.stockMovement.count()).toBe(0);
-    expect((await getProduction(headers, bonbon.id)).json()).toMatchObject({ status: "IN_PROGRESS" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "FINISHED" });
+    expect(await stockOf(filling.sku)).toMatchObject({ quantity: "0" });
   });
 
-  it("counts a canceled intermediate as pending", async () => {
+  it("answers a canceled intermediate with the shortage it leaves", async () => {
     const { headers, userId } = await canDoBoth();
     const { root, filling, fillingStage, shellStage } = await bonbonTree(userId);
     const fillingProduction = await startGuided(headers, [fillingStage.id]);
@@ -1061,10 +1056,10 @@ describe("finishing a product with intermediates", () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({
-      message: pendingMessage,
-      pendingPreWeighings: [{ id: fillingStage.id, product: { sku: filling.sku } }],
+      message: shortageMessage,
+      shortages: [{ product: { sku: filling.sku }, needed: "1", available: "0.3" }],
     });
-    expect(response.json().pendingPreWeighings).toHaveLength(1);
+    expect(response.json()).not.toHaveProperty("pendingPreWeighings");
     expect(await testPrisma.stockMovement.count()).toBe(movements);
   });
 

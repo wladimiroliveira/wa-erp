@@ -105,54 +105,8 @@ describe("FinishProductionForm", () => {
   });
 });
 
-describe("FinishProductionForm, intermediates not ready", () => {
+describe("FinishProductionForm, intermediates short in stock", () => {
   const DOUGH = { sku: "018f0000-0000-7000-8000-0000000000d1", description: "Massa base", unit: "KILOGRAM" as const };
-  const FILLING = { sku: "018f0000-0000-7000-8000-0000000000d2", description: "Recheio", unit: "GRAM" as const };
-
-  it("names what has to be produced first", async () => {
-    vi.mocked(finishProduction).mockResolvedValue({
-      ok: false,
-      status: 409,
-      message: "Pending pre-weighings.",
-      details: {
-        message: "Pending pre-weighings.",
-        pendingPreWeighings: [
-          { id: "018f0000-0000-7000-8000-0000000000e1", product: DOUGH },
-          { id: "018f0000-0000-7000-8000-0000000000e2", product: FILLING },
-        ],
-      },
-    });
-    open();
-
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
-    await finish();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Produza antes: Massa base, Recheio.");
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("names each intermediate once, however many pre-weighings of it are pending", async () => {
-    vi.mocked(finishProduction).mockResolvedValue({
-      ok: false,
-      status: 409,
-      message: "Pending pre-weighings.",
-      details: {
-        message: "Pending pre-weighings.",
-        pendingPreWeighings: [
-          { id: "018f0000-0000-7000-8000-0000000000e1", product: DOUGH },
-          { id: "018f0000-0000-7000-8000-0000000000e2", product: FILLING },
-          { id: "018f0000-0000-7000-8000-0000000000e3", product: DOUGH },
-        ],
-      },
-    });
-    open();
-
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
-    await finish();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/^Produza antes: Massa base, Recheio\.$/);
-  });
 
   it("opens the shortage dialog with what is missing", async () => {
     vi.mocked(finishProduction).mockResolvedValue({

@@ -95,10 +95,9 @@ export const productionLeftoversSchema = z.object({
   totalCost: z.string(),
 });
 
-// Why a production cannot finish yet: an intermediate it takes has not been produced, or the stock
-// of one does not cover what it takes, with the most each short item could make of what there is.
+// Why a production cannot finish yet: the stock of an intermediate does not cover what it takes,
+// with the most each short item could make of what there is.
 export const finishConflictSchema = messageSchema.extend({
-  pendingPreWeighings: z.array(z.object({ id: z.uuid(), product: productSummarySchema })).optional(),
   shortages: z
     .array(z.object({ itemId: z.uuid(), product: productSummarySchema, needed: z.string(), available: z.string() }))
     .optional(),

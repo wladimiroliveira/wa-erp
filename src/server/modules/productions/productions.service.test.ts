@@ -18,11 +18,10 @@ const repository = vi.hoisted(() => ({
 }));
 
 vi.mock("./productions.repository", () => repository);
-// No intermediate in these productions: nothing is pending, and no balance is checked.
+// No intermediate in these productions: no balance is checked.
 vi.mock("@/server/modules/stock/stock.repository", () => ({ holdStockBalances: vi.fn(async () => []) }));
 vi.mock("@/server/modules/pre-weighings/pre-weighings.repository", () => ({
   findPreWeighingById: vi.fn(),
-  findChildrenProgress: vi.fn(async () => []),
 }));
 vi.mock("@/server/modules/pre-weighings/pre-weighings.service", () => ({ planPreWeighing: vi.fn() }));
 

@@ -6,7 +6,8 @@ import { previewPreWeighing } from "./pre-weighings.service";
 const repository = vi.hoisted(() => ({
   findProductWithRecipe: vi.fn(),
   findPreWeighingById: vi.fn(),
-  insertPreWeighing: vi.fn(),
+  insertPreWeighingTree: vi.fn(),
+  findComplementParent: vi.fn(),
   listPreWeighings: vi.fn(),
 }));
 const stock = vi.hoisted(() => ({ suggestLots: vi.fn() }));

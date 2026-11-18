@@ -3,7 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPreWeighing, planPreWeighing } from "@/features/pre-weighings/actions";
 import { PreWeighingPage } from "@/features/pre-weighings/PreWeighingPage";
+import { createBodyOf } from "@/features/pre-weighings/plan-tree";
 import type { Product } from "@/lib/api";
+import { navigation } from "@/tests/navigation";
 import { renderWithProviders } from "@/tests/render";
 import { aPreWeighing, aPreWeighingPlan, aProduct } from "@/tests/samples";
 
@@ -31,12 +33,14 @@ const TWO_INGREDIENTS = aPreWeighingPlan({
         { id: "lot-2", expiresAt: null, quantity: "1.5" },
       ],
       shortfall: "0",
+      manufactured: null,
     },
     {
       product: SALT,
       plannedQuantity: "120",
       lots: [{ id: "lot-3", expiresAt: null, quantity: "100" }],
       shortfall: "20",
+      manufactured: null,
     },
   ],
 });
@@ -147,7 +151,9 @@ describe("PreWeighingPage", () => {
   it("says no lot has the ingredient when the stock has none of it", async () => {
     planning(() => ({
       ok: true,
-      data: aPreWeighingPlan({ items: [{ product: SALT, plannedQuantity: "120", lots: [], shortfall: "120" }] }),
+      data: aPreWeighingPlan({
+        items: [{ product: SALT, plannedQuantity: "120", lots: [], shortfall: "120", manufactured: null }],
+      }),
     }));
     open();
 
@@ -198,6 +204,7 @@ describe("PreWeighingPage", () => {
           { productSku: FLOUR.sku, weighedQuantity: "6.05" },
           { productSku: SALT.sku, weighedQuantity: "118.5" },
         ],
+        stages: [],
       }),
     );
   });
@@ -298,14 +305,21 @@ describe("PreWeighingPage, unit of each weighing", () => {
 
   const WITH_SMALL = aPreWeighingPlan({
     items: [
-      { product: FLOUR, plannedQuantity: "6", lots: [{ id: "lot-1", expiresAt: null, quantity: "6" }], shortfall: "0" },
+      {
+        product: FLOUR,
+        plannedQuantity: "6",
+        lots: [{ id: "lot-1", expiresAt: null, quantity: "6" }],
+        shortfall: "0",
+        manufactured: null,
+      },
       {
         product: YEAST,
         plannedQuantity: "0.0123456",
         lots: [{ id: "lot-2", expiresAt: null, quantity: "0.01" }],
         shortfall: "0.0023456",
+        manufactured: null,
       },
-      { product: EGG, plannedQuantity: "4", lots: [], shortfall: "4" },
+      { product: EGG, plannedQuantity: "4", lots: [], shortfall: "4", manufactured: null },
     ],
   });
 
@@ -486,10 +500,15 @@ describe("PreWeighingPage, leftovers of what cannot be kept", () => {
     await calculate();
     await screen.findByRole("region", { name: "Sobras de abertos" });
 
-    vi.mocked(planPreWeighing).mockReturnValue(new Promise(() => undefined));
+    let answer: (result: Awaited<ReturnType<typeof planPreWeighing>>) => void = () => undefined;
+    vi.mocked(planPreWeighing).mockReturnValue(new Promise((resolve) => (answer = resolve)));
     await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
 
     await waitFor(() => expect(section().getByRole("button", { name: "Produzir 10,533 kg" })).toBeDisabled());
+
+    // React keeps every later transition pending while one never settles, which would leak into the tests after this.
+    answer({ ok: true, data: WITH_WASTE });
+    await waitFor(() => expect(section().getByRole("button", { name: "Produzir 10,533 kg" })).toBeEnabled());
   });
 
   it("takes the tolerance in whole percent, a comma left out", async () => {
@@ -554,5 +573,321 @@ describe("PreWeighingPage, leftovers of what cannot be kept", () => {
 
     await screen.findByRole("heading", { name: "Plano para 10 kg de Pão francês" });
     expect(screen.queryByRole("region", { name: "Sobras de abertos" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PreWeighingPage, intermediates made in the same session", () => {
+  const BOMBOM = aProduct({
+    sku: "018f0000-0000-7000-8000-000000000091",
+    description: "Bombom",
+    kind: "MANUFACTURED",
+  });
+  const FILLING = {
+    sku: "018f0000-0000-7000-8000-000000000092",
+    description: "Recheio",
+    unit: "KILOGRAM",
+  } as const;
+  const MILK = { sku: "018f0000-0000-7000-8000-000000000024", description: "Leite condensado", unit: "GRAM" } as const;
+  const CHOCOLATE = { sku: "018f0000-0000-7000-8000-000000000026", description: "Chocolate", unit: "GRAM" } as const;
+  const SUGAR = { sku: "018f0000-0000-7000-8000-000000000027", description: "Açúcar", unit: "GRAM" } as const;
+
+  const fillingStage = (quantity: string, milk: string, chocolate: string) =>
+    aPreWeighingPlan({
+      product: FILLING,
+      quantity,
+      items: [
+        { product: MILK, plannedQuantity: milk, lots: [], shortfall: "0", manufactured: null },
+        { product: CHOCOLATE, plannedQuantity: chocolate, lots: [], shortfall: "0", manufactured: null },
+      ],
+    });
+
+  const withFilling = (toProduce: string, stage = fillingStage(toProduce, "600", "400")) =>
+    aPreWeighingPlan({
+      product: { sku: BOMBOM.sku, description: BOMBOM.description, unit: BOMBOM.unit },
+      quantity: "2",
+      items: [
+        {
+          product: FILLING,
+          plannedQuantity: "1",
+          lots: [],
+          shortfall: "1",
+          manufactured: { needed: "1", inStock: "0.25", toProduce, stage },
+        },
+        { product: SUGAR, plannedQuantity: "200", lots: [], shortfall: "0", manufactured: null },
+      ],
+    });
+
+  const WITH_FILLING = withFilling("1");
+
+  async function calculateBombom() {
+    planning(() => ({ ok: true, data: WITH_FILLING }));
+    recording();
+    open([BOMBOM]);
+    await userEvent.selectOptions(await screen.findByLabelText("Produto"), "Bombom (kg)");
+    await userEvent.type(screen.getByLabelText("Quantidade a produzir"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+    await screen.findByLabelText("A fabricar de Recheio");
+  }
+
+  it("shows needed, in stock and to produce on an intermediate", async () => {
+    await calculateBombom();
+
+    expect(screen.getByRole("columnheader", { name: "Necessário" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "No estoque" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "A fabricar" })).toBeInTheDocument();
+
+    const filling = within(screen.getByLabelText("A fabricar de Recheio").closest("tr")!);
+    expect(filling.getByText("Recheio")).toBeInTheDocument();
+    expect(filling.getByText("1 kg")).toBeInTheDocument();
+    expect(filling.getByText("0,25 kg")).toBeInTheDocument();
+    expect(screen.getByLabelText("A fabricar de Recheio")).toHaveValue("1");
+    expect(screen.queryByLabelText("Pesado de Recheio")).not.toBeInTheDocument();
+  });
+
+  it("re-plans when the quantity to produce changes", async () => {
+    await calculateBombom();
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,5");
+
+    await waitFor(
+      () =>
+        expect(planPreWeighing).toHaveBeenLastCalledWith({ productSku: BOMBOM.sku, quantity: "2" }, 20, {
+          [FILLING.sku]: "0.5",
+        }),
+      { timeout: 2000 },
+    );
+    expect(planPreWeighing).toHaveBeenCalledTimes(2);
+  });
+
+  it("weighs the ingredients of every stage", async () => {
+    await calculateBombom();
+
+    expect(screen.getByRole("heading", { name: "Fabricar 1 kg de Recheio" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Pesado de Leite condensado")).toHaveValue("");
+    expect(screen.getByLabelText("Pesado de Chocolate")).toHaveValue("");
+    expect(screen.getByLabelText("Pesado de Açúcar")).toHaveValue("");
+  });
+
+  it("shows no stage for an intermediate taken from stock", async () => {
+    planning(() => ({ ok: true, data: withFilling("0", null as never) }));
+    open([BOMBOM]);
+    await userEvent.selectOptions(await screen.findByLabelText("Produto"), "Bombom (kg)");
+    await userEvent.type(screen.getByLabelText("Quantidade a produzir"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+
+    expect(await screen.findByLabelText("A fabricar de Recheio")).toHaveValue("0");
+    expect(screen.queryByRole("heading", { name: /^Fabricar/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Pesado de Leite condensado")).not.toBeInTheDocument();
+  });
+
+  it("sends the tree", async () => {
+    await calculateBombom();
+
+    await userEvent.type(screen.getByLabelText("Pesado de Leite condensado"), "600");
+    await userEvent.type(screen.getByLabelText("Pesado de Chocolate"), "400");
+    await userEvent.type(screen.getByLabelText("Pesado de Açúcar"), "200");
+    await record();
+
+    await waitFor(() =>
+      expect(createPreWeighing).toHaveBeenCalledWith(createBodyOf(WITH_FILLING, ["600", "400", "200"])),
+    );
+  });
+
+  it("keeps what was weighed of the lines the new plan still has", async () => {
+    await calculateBombom();
+    planning(() => ({ ok: true, data: withFilling("0.5", fillingStage("0.5", "300", "200")) }));
+
+    await userEvent.type(screen.getByLabelText("Pesado de Leite condensado"), "600");
+    await userEvent.type(screen.getByLabelText("Pesado de Açúcar"), "200");
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,5");
+
+    expect(await screen.findByRole("heading", { name: "Fabricar 0,5 kg de Recheio" }, { timeout: 2000 })).toBeVisible();
+    expect(screen.getByLabelText("Pesado de Leite condensado")).toHaveValue("600");
+    expect(screen.getByLabelText("Pesado de Açúcar")).toHaveValue("200");
+    expect(screen.getByLabelText("A fabricar de Recheio")).toHaveValue("0,5");
+  });
+
+  it("tells the leftovers of a stage, and makes a quantity it suggests", async () => {
+    const waste = (quantity: string) => ({
+      tolerance: 20,
+      requested: { quantity, loss: "0.00", leftovers: [] },
+      alternatives: [{ quantity: "1.2", loss: "0.00", leftovers: [] }],
+      unpackaged: [],
+      uncosted: [],
+    });
+    const stage = { ...fillingStage("1", "600", "400"), waste: waste("1") };
+    planning(() => ({ ok: true, data: { ...withFilling("1", stage), waste: waste("2") } }));
+    open([BOMBOM]);
+    await userEvent.selectOptions(await screen.findByLabelText("Produto"), "Bombom (kg)");
+    await userEvent.type(screen.getByLabelText("Quantidade a produzir"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+
+    const sections = await screen.findAllByRole("region", { name: "Sobras de abertos" });
+    expect(sections).toHaveLength(2);
+    expect(new Set(sections.map((section) => section.getAttribute("aria-labelledby"))).size).toBe(2);
+
+    await userEvent.click(within(sections[1]!).getByRole("button", { name: "Produzir 1,2 kg" }));
+
+    await waitFor(
+      () =>
+        expect(planPreWeighing).toHaveBeenLastCalledWith({ productSku: BOMBOM.sku, quantity: "2" }, 20, {
+          [FILLING.sku]: "1.2",
+        }),
+      { timeout: 2000 },
+    );
+    expect(screen.getByLabelText("A fabricar de Recheio")).toHaveValue("1,2");
+  });
+
+  it("follows the latest quantity to produce when the plans come back out of order", async () => {
+    await calculateBombom();
+    const answers: Array<(result: Awaited<ReturnType<typeof planPreWeighing>>) => void> = [];
+    vi.mocked(planPreWeighing).mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    const field = () => screen.getByLabelText("A fabricar de Recheio");
+
+    await userEvent.clear(field());
+    await userEvent.type(field(), "0,5");
+    await waitFor(() => expect(answers).toHaveLength(1), { timeout: 2000 });
+    await userEvent.clear(field());
+    await userEvent.type(field(), "0,7");
+    await waitFor(() => expect(answers).toHaveLength(2), { timeout: 2000 });
+
+    const latest = withFilling("0.7", fillingStage("0.7", "420", "280"));
+    answers[1]!({ ok: true, data: latest });
+    answers[0]!({ ok: true, data: withFilling("0.5", fillingStage("0.5", "300", "200")) });
+
+    expect(await screen.findByRole("heading", { name: "Fabricar 0,7 kg de Recheio" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Calculando…")).not.toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Fabricar 0,5 kg de Recheio" })).not.toBeInTheDocument();
+
+    recording();
+    await userEvent.type(screen.getByLabelText("Pesado de Leite condensado"), "420");
+    await userEvent.type(screen.getByLabelText("Pesado de Chocolate"), "280");
+    await userEvent.type(screen.getByLabelText("Pesado de Açúcar"), "200");
+    await record();
+
+    await waitFor(() => expect(createPreWeighing).toHaveBeenCalledWith(createBodyOf(latest, ["420", "280", "200"])));
+  });
+
+  it("does not record while a quantity to produce waits to be planned", async () => {
+    await calculateBombom();
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,5");
+
+    expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeDisabled();
+    await waitFor(() => expect(planPreWeighing).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeEnabled());
+  });
+
+  it("keeps the plan and what was weighed when a re-plan fails", async () => {
+    await calculateBombom();
+    await userEvent.type(screen.getByLabelText("Pesado de Leite condensado"), "600");
+    planning(() => ({ ok: false, status: 409, message: "Quantity is out of range for this recipe." }));
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,5");
+
+    expect(await screen.findByRole("alert", {}, { timeout: 2000 })).toHaveTextContent(/^Não foi possível calcular/);
+    expect(screen.getByRole("heading", { name: "Fabricar 1 kg de Recheio" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Pesado de Leite condensado")).toHaveValue("600");
+    expect(screen.getByLabelText("A fabricar de Recheio")).toHaveValue("0,5");
+    expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeDisabled();
+  });
+
+  it("records again once the quantity to produce is planned after a failed re-plan", async () => {
+    await calculateBombom();
+    planning(() => ({ ok: false, status: 409, message: "Quantity is out of range for this recipe." }));
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,5");
+    await screen.findByRole("alert", {}, { timeout: 2000 });
+    planning(() => ({ ok: true, data: withFilling("0.6") }));
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,6");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeEnabled(), {
+      timeout: 2000,
+    });
+  });
+
+  it("does not record while a quantity to produce is not one the unit allows", async () => {
+    await calculateBombom();
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,1234");
+
+    expect(await screen.findByText(/casas decimais|casa decimal/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeDisabled();
+  });
+
+  it("clears the plan when Calcular fails", async () => {
+    await calculateBombom();
+    planning(() => ({ ok: false, status: 409, message: "Product has no recipe." }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Não foi possível calcular/);
+    expect(screen.queryByRole("button", { name: "Registrar pré-pesagem" })).not.toBeInTheDocument();
+  });
+
+  it("leaves the complement once it is recorded, so it cannot be recorded twice", async () => {
+    const PARENT_ID = "018f0000-0000-7000-8000-0000000000a5";
+    const FILLING_PRODUCT = aProduct({ ...FILLING, kind: "MANUFACTURED" });
+    const FILLING_PLAN = fillingStage("0.5", "300", "200");
+    planning(() => ({ ok: true, data: FILLING_PLAN }));
+    recording(() => ({ ok: true, data: aPreWeighing({ product: FILLING, quantity: "0.5" }) }));
+    navigation.reset(`/pre-weighings/new?parentId=${PARENT_ID}&productSku=${FILLING.sku}&quantity=0.5`);
+    renderWithProviders(
+      <PreWeighingPage
+        products={[BOMBOM, FILLING_PRODUCT]}
+        complement={{ parentId: PARENT_ID, parentDescription: "Bombom", productSku: FILLING.sku, quantity: "0.5" }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+    await userEvent.type(await screen.findByLabelText("Pesado de Leite condensado"), "300");
+    await userEvent.type(screen.getByLabelText("Pesado de Chocolate"), "200");
+    await record();
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Pré-pesagem registrada: 0,5 kg de Recheio.");
+    expect(navigation.url).toBe("/pre-weighings/new");
+    expect(screen.queryByRole("button", { name: "Registrar pré-pesagem" })).not.toBeInTheDocument();
+    // What is left on screen is a new pre-weighing: no parent, and a target of the operator's own.
+    expect(screen.queryByText("Complemento da pré-pesagem de Bombom")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Produto")).toBeEnabled();
+    expect(screen.getByLabelText("Produto")).toHaveValue("");
+    expect(createPreWeighing).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a complement", async () => {
+    const PARENT_ID = "018f0000-0000-7000-8000-0000000000a5";
+    const FILLING_PRODUCT = aProduct({ ...FILLING, kind: "MANUFACTURED" });
+    const FILLING_PLAN = fillingStage("0.5", "300", "200");
+    planning(() => ({ ok: true, data: FILLING_PLAN }));
+    recording();
+    renderWithProviders(
+      <PreWeighingPage
+        products={[BOMBOM, FILLING_PRODUCT]}
+        complement={{ parentId: PARENT_ID, parentDescription: "Bombom", productSku: FILLING.sku, quantity: "0.5" }}
+      />,
+    );
+
+    expect(screen.getByText("Complemento da pré-pesagem de Bombom")).toBeInTheDocument();
+    expect(screen.getByLabelText("Produto")).toHaveValue(FILLING.sku);
+    expect(screen.getByLabelText("Produto")).toBeDisabled();
+    expect(screen.getByLabelText("Quantidade a produzir")).toHaveValue("0,5");
+    expect(screen.getByLabelText("Quantidade a produzir")).toHaveAttribute("readonly");
+
+    await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
+    await waitFor(() => expect(planPreWeighing).toHaveBeenCalledWith({ productSku: FILLING.sku, quantity: "0.5" }, 20));
+    await userEvent.type(await screen.findByLabelText("Pesado de Leite condensado"), "300");
+    await userEvent.type(screen.getByLabelText("Pesado de Chocolate"), "200");
+    await record();
+
+    await waitFor(() =>
+      expect(createPreWeighing).toHaveBeenCalledWith(createBodyOf(FILLING_PLAN, ["300", "200"], PARENT_ID)),
+    );
   });
 });

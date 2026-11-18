@@ -13,10 +13,13 @@ import {
   finishProductionBodySchema,
   listProductionsQuerySchema,
   productionIdParamsSchema,
+  productionItemParamsSchema,
+  reduceProductionItemBodySchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
 import * as productions from "@/server/modules/productions/productions.service";
 import type {
+  FinishConflict,
   FinishProductionBody,
   LeftoversPreview,
   PreWeighingPage,
@@ -28,6 +31,8 @@ import type {
 } from "@/lib/api";
 
 export type ProductionResult = { ok: true; data: Production } | Failure;
+/** A 409 on finishing says what blocks it: short stock, and the most each short item could make. */
+export type FinishProductionResult = ProductionResult | (Failure<409> & { details: FinishConflict });
 export type LeftoversPreviewResult = { ok: true; data: LeftoversPreview } | Failure;
 export type ProductionPageResult = { ok: true; data: ProductionPage } | Failure;
 export type PlanResult = { ok: true; data: PreWeighingPlan } | Failure;
@@ -73,7 +78,7 @@ export async function previewLeftovers(id: string): Promise<LeftoversPreviewResu
   return productions.previewLeftovers(params.data.id);
 }
 
-export async function finishProduction(id: string, body: FinishProductionBody): Promise<ProductionResult> {
+export async function finishProduction(id: string, body: FinishProductionBody): Promise<FinishProductionResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
@@ -84,6 +89,31 @@ export async function finishProduction(id: string, body: FinishProductionBody): 
   if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
 
   const result = await productions.finishProduction({ ...parsed.data, id: params.data.id, createdById: user.id });
+
+  if (!result.ok) return result;
+
+  revalidatePath(LIST_PATH);
+  revalidatePath(detailPath(params.data.id));
+
+  return result;
+}
+
+/** Lowers the quantity an item takes, when the stock cannot cover it. */
+export async function reduceProductionItem(id: string, itemId: string, quantity: string): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionItemParamsSchema.safeParse({ id, itemId });
+  const parsed = reduceProductionItemBodySchema.safeParse({ quantity });
+
+  if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
+
+  const result = await productions.reduceProductionItem({
+    productionId: params.data.id,
+    itemId: params.data.itemId,
+    quantity: parsed.data.quantity,
+  });
 
   if (!result.ok) return result;
 

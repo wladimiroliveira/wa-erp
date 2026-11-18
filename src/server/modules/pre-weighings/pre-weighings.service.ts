@@ -1,16 +1,22 @@
-import { MeasurementUnit, Prisma } from "@prisma/client";
+import { MeasurementUnit, Prisma, ProductionStatus, ProductKind } from "@prisma/client";
+import type { z } from "zod";
+import { fitsPlacesOf, TOO_MANY_PLACES } from "@/server/lib/decimal";
 import { localToday, toOptionalDateString } from "@/server/lib/dates";
 import { toPage } from "@/server/lib/pagination";
-import { fail, succeed, type Result } from "@/server/lib/result";
+import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
 import { suggestLots } from "@/server/modules/stock/stock.repository";
-import { planQuantity, suggestQuantities, type Suggestion } from "./pre-weighings.plan";
+import { defaultToProduce, planQuantity, suggestQuantities, type Suggestion } from "./pre-weighings.plan";
 import {
+  deletePreWeighingTree,
+  findComplementParent,
   findPreWeighingById,
   findProductWithRecipe,
-  insertPreWeighing,
+  insertPreWeighingTree,
   listPreWeighings,
+  type PlannedStage,
   type PreWeighingRecord,
 } from "./pre-weighings.repository";
+import type { preWeighingStageBodySchema } from "./pre-weighings.schemas";
 
 type ProductSummary = { sku: string; description: string; unit: MeasurementUnit };
 
@@ -25,6 +31,9 @@ export type PreWeighingPlan = {
     recipeQuantity: Prisma.Decimal;
     isStorableOnceOpened: boolean;
     averageCost: Prisma.Decimal | null;
+    // Set for an ingredient that is itself manufactured: what is in stock, what is to be produced
+    // and the plan of that production (null when nothing is to be produced).
+    manufactured: { inStock: Prisma.Decimal; toProduce: Prisma.Decimal; stage: PreWeighingPlan | null } | null;
   }[];
 };
 
@@ -32,14 +41,114 @@ type PlanFailure = 404 | 409;
 
 const summaryOf = ({ sku, description, unit }: ProductSummary): ProductSummary => ({ sku, description, unit });
 
-// The one place that decides whether a product can be pre-weighed and how much of each ingredient
-// that takes. The preview and the record both come through here, so what the operator was shown is
-// what gets recorded as planned.
-export async function planPreWeighing(
+type ProductWithRecipe = NonNullable<Awaited<ReturnType<typeof findProductWithRecipe>>>;
+
+// Reads each product of a plan once, however many places of the tree it appears at.
+function catalog(): (sku: string) => Promise<ProductWithRecipe | null> {
+  const read = new Map<string, Promise<ProductWithRecipe | null>>();
+
+  return (sku) => {
+    const key = sku.toLowerCase();
+    const found = read.get(key) ?? findProductWithRecipe(key);
+
+    read.set(key, found);
+
+    return found;
+  };
+}
+
+// Whether the plan of a product can be built from its recipe.
+const canBeProduced = (product: ProductWithRecipe) =>
+  product.isActive &&
+  product.recipe !== null &&
+  product.recipe.ingredients.every((ingredient) => ingredient.product.isActive);
+
+// How much to produce of each intermediate the tree of `productSku` reaches, by sku. An intermediate is
+// produced once for the whole tree, so by default it is the shortfall of what every place takes of it
+// against its stock. What a product takes counts only while that product is produced, so each product is
+// decided before the ones it takes; recipes are acyclic, which makes that order exist.
+async function decideToProduce(
+  read: ReturnType<typeof catalog>,
   productSku: string,
-  quantity: string,
+  quantity: Prisma.Decimal,
+  produce?: ReadonlyMap<string, Prisma.Decimal>,
+): Promise<Map<string, Prisma.Decimal>> {
+  const visited = new Set<string>();
+  const takersFirst: ProductWithRecipe[] = [];
+  const stockOf = new Map<string, Prisma.Decimal>();
+
+  async function visit(sku: string): Promise<void> {
+    if (visited.has(sku)) return;
+
+    visited.add(sku);
+    const product = await read(sku);
+
+    if (product === null) return;
+
+    for (const ingredient of product.recipe?.ingredients ?? []) {
+      if (ingredient.product.kind !== ProductKind.MANUFACTURED) continue;
+
+      stockOf.set(ingredient.product.sku, ingredient.product.stock?.quantity ?? new Prisma.Decimal(0));
+      await visit(ingredient.product.sku);
+    }
+
+    takersFirst.unshift(product);
+  }
+
+  await visit(productSku.toLowerCase());
+
+  const needs = new Map<string, Prisma.Decimal>();
+  const decided = new Map<string, Prisma.Decimal>();
+
+  for (const [index, product] of takersFirst.entries()) {
+    let made = quantity;
+
+    if (index > 0) {
+      // An intermediate that cannot be produced is taken from stock unless the operator asks for it,
+      // so the plan of its taker still shows, with a shortfall where its stock falls short.
+      made =
+        produce?.get(product.sku) ??
+        (canBeProduced(product)
+          ? defaultToProduce(
+              needs.get(product.sku) ?? new Prisma.Decimal(0),
+              stockOf.get(product.sku) ?? new Prisma.Decimal(0),
+              product.unit,
+            )
+          : new Prisma.Decimal(0));
+      decided.set(product.sku, made);
+    }
+
+    if (!made.gt(0) || product.recipe === null) continue;
+
+    for (const ingredient of product.recipe.ingredients) {
+      if (ingredient.product.kind !== ProductKind.MANUFACTURED) continue;
+
+      // A quantity out of range fails the plan of this stage when it is built.
+      const needed = planQuantity({
+        recipeQuantity: ingredient.quantity,
+        yieldQuantity: product.recipe.yieldQuantity,
+        quantity: made,
+      });
+
+      if (needed !== null) {
+        needs.set(ingredient.product.sku, (needs.get(ingredient.product.sku) ?? new Prisma.Decimal(0)).plus(needed));
+      }
+    }
+  }
+
+  return decided;
+}
+
+// The plan of one stage. An intermediate to produce gets its stage at its first place in depth-first
+// order; its other places take it from the stock that stage replenishes.
+async function planStage(
+  read: ReturnType<typeof catalog>,
+  productSku: string,
+  quantity: string | Prisma.Decimal,
+  decided: ReadonlyMap<string, Prisma.Decimal> | null,
+  staged: Set<string>,
 ): Promise<Result<PreWeighingPlan, PlanFailure>> {
-  const product = await findProductWithRecipe(productSku);
+  const product = await read(productSku);
 
   if (product === null) return fail(404, "Product not found.");
   if (!product.isActive) return fail(409, "Product is inactive.");
@@ -58,16 +167,56 @@ export async function planPreWeighing(
 
     if (plannedQuantity === null) return fail(409, "Quantity is out of range for this recipe.");
 
+    let manufactured: PreWeighingPlan["items"][number]["manufactured"] = null;
+
+    if (decided !== null && ingredient.product.kind === ProductKind.MANUFACTURED) {
+      const inStock = ingredient.product.stock?.quantity ?? new Prisma.Decimal(0);
+      const toProduce = decided.get(ingredient.product.sku) ?? new Prisma.Decimal(0);
+      let stage: PreWeighingPlan | null = null;
+
+      if (!fitsPlacesOf(toProduce, ingredient.product.unit)) return fail(409, TOO_MANY_PLACES);
+
+      if (toProduce.gt(0) && !staged.has(ingredient.product.sku)) {
+        staged.add(ingredient.product.sku);
+        const planned = await planStage(read, ingredient.product.sku, toProduce, decided, staged);
+
+        if (!planned.ok) return planned;
+
+        stage = planned.data;
+      }
+
+      manufactured = { inStock, toProduce, stage };
+    }
+
     items.push({
       product: summaryOf(ingredient.product),
       plannedQuantity,
       recipeQuantity: ingredient.quantity,
       isStorableOnceOpened: ingredient.product.isStorableOnceOpened,
       averageCost: ingredient.product.stock?.averageCost ?? null,
+      manufactured,
     });
   }
 
   return succeed({ product: summaryOf(product), quantity: new Prisma.Decimal(quantity), yieldQuantity, items });
+}
+
+// The one place that decides whether a product can be pre-weighed and how much of each ingredient
+// that takes. The preview and the record both come through here, so what the operator was shown is
+// what gets recorded as planned.
+// `produce` says how much to produce of an intermediate, by lower-case sku, at any depth of the plan;
+// the shortfall of its stock is produced otherwise, or nothing of one that cannot be produced.
+export async function planPreWeighing(
+  productSku: string,
+  quantity: string | Prisma.Decimal,
+  produce?: ReadonlyMap<string, Prisma.Decimal>,
+  // A free production plans its own stage only; the stages of its intermediates are left out.
+  { stages = true }: { stages?: boolean } = {},
+): Promise<Result<PreWeighingPlan, PlanFailure>> {
+  const read = catalog();
+  const decided = stages ? await decideToProduce(read, productSku, new Prisma.Decimal(quantity), produce) : null;
+
+  return planStage(read, productSku, quantity, decided, new Set());
 }
 
 /** A pre-weighing as the screens and the mobile app read it: every amount as a decimal string. */
@@ -76,10 +225,14 @@ export const presentPreWeighing = (preWeighing: PreWeighingRecord) => ({
   product: preWeighing.product,
   quantity: preWeighing.quantity.toString(),
   createdAt: preWeighing.createdAt.toISOString(),
+  // No production is using it: one can start from it, and it can be deleted.
+  isAvailable: preWeighing.production === null,
+  parent: preWeighing.parent,
+  children: preWeighing.children.map(({ id, product, quantity }) => ({ id, product, quantity: quantity.toString() })),
   items: preWeighing.items.map(({ product, plannedQuantity, weighedQuantity }) => ({
     product,
     plannedQuantity: plannedQuantity.toString(),
-    weighedQuantity: weighedQuantity.toString(),
+    weighedQuantity: weighedQuantity?.toString() ?? null,
   })),
 });
 
@@ -122,16 +275,12 @@ function wasteOf(plan: PreWeighingPlan, firstPackageContents: (Prisma.Decimal | 
   };
 }
 
-// The plan with, for each ingredient, where to weigh it from as the stock stands now.
-export async function previewPreWeighing(productSku: string, quantity: string, tolerance = 20) {
-  const result = await planPreWeighing(productSku, quantity);
-
-  if (!result.ok) return result;
-
-  const today = localToday();
+// The plan with, for each ingredient, where to weigh it from as the stock stands now; the stages of
+// the intermediates the same way.
+async function previewPlan(plan: PreWeighingPlan, tolerance: number, today: string): Promise<PreviewedPlan> {
   const firstPackageContents: (Prisma.Decimal | null)[] = [];
   const items = await Promise.all(
-    result.data.items.map(async ({ product, plannedQuantity }, index) => {
+    plan.items.map(async ({ product, plannedQuantity, manufactured }, index) => {
       const { takes, shortfall } = await suggestLots({ productSku: product.sku, quantity: plannedQuantity, today });
 
       firstPackageContents[index] = takes[0]?.lot.packageContent ?? null;
@@ -145,48 +294,191 @@ export async function previewPreWeighing(productSku: string, quantity: string, t
           quantity: quantity.toString(),
         })),
         shortfall: shortfall.toString(),
+        manufactured:
+          manufactured === null
+            ? null
+            : {
+                needed: plannedQuantity.toString(),
+                inStock: manufactured.inStock.toString(),
+                toProduce: manufactured.toProduce.toString(),
+                stage: manufactured.stage === null ? null : await previewPlan(manufactured.stage, tolerance, today),
+              },
       };
     }),
   );
 
-  return succeed({
-    product: result.data.product,
-    quantity: result.data.quantity.toString(),
+  return {
+    product: plan.product,
+    quantity: plan.quantity.toString(),
     items,
-    waste: wasteOf(result.data, firstPackageContents, tolerance),
-  });
+    waste: wasteOf(plan, firstPackageContents, tolerance),
+  };
 }
 
-export async function recordPreWeighing(input: {
-  productSku: string;
+type PreviewedPlan = {
+  product: ProductSummary;
   quantity: string;
-  createdById: string;
-  items: { productSku: string; weighedQuantity: string }[];
-}): Promise<Result<PresentedPreWeighing, PlanFailure>> {
-  const { productSku, quantity, items } = input;
-  const result = await planPreWeighing(productSku, quantity);
+  items: {
+    product: ProductSummary;
+    plannedQuantity: string;
+    lots: { id: string; expiresAt: string | null; quantity: string }[];
+    shortfall: string;
+    manufactured: {
+      needed: string;
+      inStock: string;
+      toProduce: string;
+      stage: PreviewedPlan | null;
+    } | null;
+  }[];
+  waste: ReturnType<typeof wasteOf>;
+};
+
+export async function previewPreWeighing(
+  productSku: string,
+  quantity: string,
+  tolerance = 20,
+  produce?: ReadonlyMap<string, string>,
+) {
+  const toProduce = produce && new Map([...produce].map(([sku, amount]) => [sku, new Prisma.Decimal(amount)]));
+  const result = await planPreWeighing(productSku, quantity, toProduce);
 
   if (!result.ok) return result;
 
-  const weighedBySku = new Map(items.map((item) => [item.productSku.toLowerCase(), item.weighedQuantity]));
-  const planned = result.data.items;
+  return succeed(await previewPlan(result.data, tolerance, localToday()));
+}
 
-  if (planned.length !== weighedBySku.size || planned.some(({ product }) => !weighedBySku.has(product.sku))) {
-    return fail(409, "The items do not match the ingredients of the recipe.");
+type StageBody = z.output<typeof preWeighingStageBodySchema>;
+
+const STAGE_MISMATCH = "A stage does not match the plan.";
+const ITEMS_MISMATCH = "The items do not match the ingredients of the recipe.";
+
+// What to produce of each intermediate, by lower-case sku, as the stages say. The same intermediate
+// asked for twice in different quantities cannot be planned.
+function producedBy(stages: StageBody[], produced = new Map<string, Prisma.Decimal>()) {
+  for (const stage of stages) {
+    const sku = stage.productSku.toLowerCase();
+    const quantity = new Prisma.Decimal(stage.quantity);
+
+    if (produced.get(sku)?.eq(quantity) === false) return null;
+
+    produced.set(sku, quantity);
+
+    if (producedBy(stage.stages, produced) === null) return null;
   }
 
-  const preWeighing = await insertPreWeighing({
-    productSku,
-    quantity,
-    createdById: input.createdById,
-    items: planned.map(({ product, plannedQuantity }) => ({
+  return produced;
+}
+
+// A plan reads an intermediate the stages do not name as to be taken from stock.
+class NothingElse extends Map<string, Prisma.Decimal> {
+  override get(sku: string) {
+    return super.get(sku) ?? new Prisma.Decimal(0);
+  }
+}
+
+// Checks what was sent against the plan, stage by stage, and gives back what is to be recorded. Every
+// ingredient of the recipe is sent once: a bought one with what was weighed of it, a manufactured one
+// without, since it is taken from stock.
+function matchStage(plan: PreWeighingPlan, sent: StageBody): Result<PlannedStage, 409> {
+  const sentBySku = new Map(sent.items.map((item) => [item.productSku.toLowerCase(), item]));
+  const matches =
+    sent.items.length === plan.items.length &&
+    plan.items.every(({ product, manufactured }) => {
+      const item = sentBySku.get(product.sku);
+
+      return item !== undefined && (manufactured === null) === (item.weighedQuantity !== undefined);
+    });
+
+  if (!matches) return fail(409, ITEMS_MISMATCH);
+
+  const stagesBySku = new Map(sent.stages.map((stage) => [stage.productSku.toLowerCase(), stage]));
+  const staged = plan.items.filter(({ manufactured }) => manufactured?.stage);
+
+  // Every stage names a distinct intermediate of this plan that is to be produced.
+  if (stagesBySku.size !== sent.stages.length || stagesBySku.size !== staged.length) {
+    return fail(409, STAGE_MISMATCH);
+  }
+
+  const stages: PlannedStage[] = [];
+
+  for (const { product, manufactured } of staged) {
+    const stage = stagesBySku.get(product.sku);
+
+    if (stage === undefined || !manufactured?.stage) return fail(409, STAGE_MISMATCH);
+
+    const matched = matchStage(manufactured.stage, stage);
+
+    if (!matched.ok) return matched;
+
+    stages.push(matched.data);
+  }
+
+  return succeed({
+    productSku: plan.product.sku,
+    quantity: sent.quantity,
+    items: plan.items.map(({ product, plannedQuantity }) => ({
       productSku: product.sku,
       plannedQuantity,
-      weighedQuantity: weighedBySku.get(product.sku)!,
+      weighedQuantity: sentBySku.get(product.sku)?.weighedQuantity ?? null,
     })),
+    stages,
   });
+}
+
+// A complement goes under a pre-weighing whose recipe takes its product, while the production that
+// pre-weighing guides is not over.
+async function checkParent(parentId: string, productSku: string): Promise<Failure<404 | 409> | null> {
+  const parent = await findComplementParent(parentId);
+
+  if (parent === null) return fail(404, "Pre-weighing not found.");
+
+  const takesIt = parent.product.recipe?.ingredients.some((ingredient) => ingredient.productSku === productSku);
+
+  if (!takesIt) return fail(409, "The parent's recipe does not take this product.");
+
+  if (parent.production?.production?.status === ProductionStatus.FINISHED) {
+    return fail(409, "The parent's production has already finished.");
+  }
+
+  return null;
+}
+
+export async function recordPreWeighing(
+  input: StageBody & { parentId?: string; createdById: string },
+): Promise<Result<PresentedPreWeighing, PlanFailure>> {
+  const { parentId, createdById, ...tree } = input;
+
+  if (parentId !== undefined) {
+    const refusal = await checkParent(parentId, tree.productSku.toLowerCase());
+
+    if (refusal !== null) return refusal;
+  }
+
+  const produced = producedBy(tree.stages);
+
+  if (produced === null) return fail(409, STAGE_MISMATCH);
+
+  const result = await planPreWeighing(tree.productSku, tree.quantity, new NothingElse(produced));
+
+  if (!result.ok) return result;
+
+  const planned = matchStage(result.data, tree);
+
+  if (!planned.ok) return planned;
+
+  const preWeighing = await insertPreWeighingTree(planned.data, { createdById, parentId: parentId ?? null });
 
   return succeed(presentPreWeighing(preWeighing));
+}
+
+/** Deletes a pre-weighing nobody will produce, with the ones recorded under it. */
+export async function removePreWeighing(id: string): Promise<Result<null, 404 | 409>> {
+  const outcome = await deletePreWeighingTree(id);
+
+  if (outcome === "missing") return fail(404, "Pre-weighing not found.");
+  if (outcome === "guided") return fail(409, "The pre-weighing guides a production.");
+
+  return succeed(null);
 }
 
 export async function getPreWeighing(id: string): Promise<Result<PresentedPreWeighing, 404>> {

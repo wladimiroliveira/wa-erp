@@ -1,7 +1,8 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`routes inventory > matches the recorded access of every route 1`] = `
-"DELETE /v1/roles/{id} -> ACCESS_UPDATE
+"DELETE /v1/pre-weighings/{id} -> PRODUCTION_CREATE
+DELETE /v1/roles/{id} -> ACCESS_UPDATE
 DELETE /v1/sessions/me/table-layouts/{tableKey} -> authenticated
 GET /v1/health -> public
 GET /v1/loss-reasons -> authenticated
@@ -37,6 +38,7 @@ POST /v1/pre-weighings -> PRODUCTION_CREATE
 POST /v1/productions -> PRODUCTION_CREATE
 POST /v1/productions/{id}/cancel -> PRODUCTION_CREATE
 POST /v1/productions/{id}/finish -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items/{itemId}/reduce -> PRODUCTION_CREATE
 POST /v1/products -> CATALOG_CREATE
 POST /v1/roles -> ACCESS_CREATE
 POST /v1/sessions/refresh -> public

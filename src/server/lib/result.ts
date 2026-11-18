@@ -1,7 +1,12 @@
 /** A status the REST adapter answers with and the form adapter turns into an error message. */
 export type FailureStatus = 400 | 401 | 403 | 404 | 409 | 422 | 429;
 
-export type Failure<S extends FailureStatus = FailureStatus> = { ok: false; status: S; message: string };
+export type Failure<S extends FailureStatus = FailureStatus> = {
+  ok: false;
+  status: S;
+  message: string;
+  details?: Record<string, unknown>;
+};
 
 /** What a service answers: the data, or why it refused. A service never knows HTTP, only the reason. */
 export type Result<T, S extends FailureStatus = FailureStatus> = { ok: true; data: T } | Failure<S>;
@@ -12,4 +17,16 @@ export const fail = <S extends FailureStatus>(status: S, message: string): Failu
   ok: false,
   status,
   message,
+});
+
+/** A refusal that carries structured details for the caller to act on. */
+export const failWith = <S extends FailureStatus, D extends Record<string, unknown>>(
+  status: S,
+  message: string,
+  details: D,
+): Failure<S> & { details: D } => ({
+  ok: false,
+  status,
+  message,
+  details,
 });

@@ -56,7 +56,7 @@ describe("pre_weighing_items", () => {
     const item = await testPrisma.preWeighingItem.create({ data: await itemInput() });
 
     expect(item.plannedQuantity.toString()).toBe("30");
-    expect(item.weighedQuantity.toString()).toBe("30.2");
+    expect(item.weighedQuantity?.toString()).toBe("30.2");
   });
 
   it("rejects a planned quantity that is not positive", async () => {

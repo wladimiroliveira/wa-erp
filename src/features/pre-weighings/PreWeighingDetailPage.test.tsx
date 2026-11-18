@@ -4,7 +4,7 @@ import { PreWeighingDetailPage } from "@/features/pre-weighings/PreWeighingDetai
 import type { PreWeighing } from "@/lib/api";
 import { renderWithProviders, type RenderOptions } from "@/tests/render";
 import { columnHeaders } from "@/tests/table-layouts";
-import { aPreWeighing } from "@/tests/samples";
+import { aCurrentUser, aPreWeighing } from "@/tests/samples";
 
 const open = (preWeighing: PreWeighing = aPreWeighing(), options: RenderOptions = {}) =>
   renderWithProviders(<PreWeighingDetailPage preWeighing={preWeighing} />, {
@@ -66,6 +66,50 @@ describe("PreWeighingDetailPage", () => {
     expect(within(yeast!).getByText("12,5 g")).toBeInTheDocument();
   });
 
+  it("says an ingredient not weighed comes from the stock", () => {
+    open(
+      aPreWeighing({
+        items: [
+          {
+            product: { sku: "sku-4", description: "Massa base", unit: "KILOGRAM" },
+            plannedQuantity: "2",
+            weighedQuantity: null,
+          },
+        ],
+      }),
+    );
+
+    const [, base] = screen.getAllByRole("row");
+    expect(within(base!).getByText("do estoque")).toBeInTheDocument();
+  });
+
+  it("links to the pre-weighing this one is made for", () => {
+    open(
+      aPreWeighing({ parent: { id: "pre-weighing-9", product: { sku: "sku-9", description: "Bolo", unit: "UNIT" } } }),
+    );
+
+    expect(screen.getByRole("link", { name: "Para: Bolo" })).toHaveAttribute("href", "/pre-weighings/pre-weighing-9");
+  });
+
+  it("lists the intermediates made in this pre-weighing, each linking to its own", () => {
+    open(
+      aPreWeighing({
+        children: [
+          {
+            id: "pre-weighing-5",
+            product: { sku: "sku-5", description: "Massa base", unit: "KILOGRAM" },
+            quantity: "2.5",
+          },
+        ],
+      }),
+    );
+
+    const list = within(screen.getByRole("region", { name: "Intermediários" }));
+    const link = list.getByRole("link", { name: /Massa base/ });
+    expect(link).toHaveAttribute("href", "/pre-weighings/pre-weighing-5");
+    expect(link).toHaveTextContent("2,5 kg");
+  });
+
   it("leads back to the list", () => {
     open();
 
@@ -88,5 +132,27 @@ describe("PreWeighingDetailPage sizing", () => {
     open();
 
     expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveClass("min-h-8");
+  });
+});
+
+describe("PreWeighingDetailPage, deleting", () => {
+  const CAN_CREATE = aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] });
+
+  it("offers to delete a pre-weighing no production is using", () => {
+    open(aPreWeighing({ isAvailable: true }), { user: CAN_CREATE });
+
+    expect(screen.getByRole("button", { name: "Excluir pré-pesagem" })).toBeInTheDocument();
+  });
+
+  it("does not offer to delete a pre-weighing a production is using", () => {
+    open(aPreWeighing({ isAvailable: false }), { user: CAN_CREATE });
+
+    expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer to delete to someone who cannot record productions", () => {
+    open(aPreWeighing({ isAvailable: true }), { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
+
+    expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
   });
 });

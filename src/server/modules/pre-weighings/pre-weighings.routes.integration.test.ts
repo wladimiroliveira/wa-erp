@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MeasurementUnit, Permission, ProductKind } from "@prisma/client";
+import { createBodyOf, weighingRowsOf } from "@/features/pre-weighings/plan-tree";
 import * as preWeighingById from "@/app/v1/pre-weighings/[id]/route";
 import * as preWeighingPlan from "@/app/v1/pre-weighings/plan/route";
 import * as preWeighings from "@/app/v1/pre-weighings/route";
@@ -54,7 +55,7 @@ async function createDough(overrides: ProductOverrides = {}) {
   return { dough, flour, water };
 }
 
-const getPlan = (headers: Headers, query: Record<string, string>) =>
+const getPlan = (headers: Headers, query: Record<string, string | string[]>) =>
   inject(preWeighingPlan, { method: "GET", url: "/v1/pre-weighings/plan", headers, query });
 
 const postPreWeighing = (headers: Headers, payload: Record<string, unknown>) =>
@@ -62,6 +63,9 @@ const postPreWeighing = (headers: Headers, payload: Record<string, unknown>) =>
 
 const getPreWeighing = (headers: Headers, id: string) =>
   inject(preWeighingById, { method: "GET", url: `/v1/pre-weighings/${id}`, params: { id }, headers });
+
+const deletePreWeighing = (headers: Headers, id: string) =>
+  inject(preWeighingById, { method: "DELETE", url: `/v1/pre-weighings/${id}`, params: { id }, headers });
 
 const listPreWeighings = (headers: Headers, query: Record<string, string> = {}) =>
   inject(preWeighings, { method: "GET", url: "/v1/pre-weighings", headers, query });
@@ -86,12 +90,14 @@ describe("GET /v1/pre-weighings/plan", () => {
           plannedQuantity: "18",
           lots: [],
           shortfall: "18",
+          manufactured: null,
         },
         {
           product: { sku: flour.sku, description: "Wheat flour", unit: "KILOGRAM" },
           plannedQuantity: "30",
           lots: [],
           shortfall: "30",
+          manufactured: null,
         },
       ],
       waste: null,
@@ -261,6 +267,209 @@ describe("GET /v1/pre-weighings/plan", () => {
   });
 });
 
+// Bonbon: 10 units out of 0.2 kg of filling, 10 shells and 0.05 kg of sprinkles. The filling (1 kg)
+// is made of 0.8 kg of condensed milk and 0.2 kg of chocolate; the shells (100 units) of 1 kg of chocolate.
+async function createBonbon() {
+  const [bonbon, filling, shell, sprinkles, milk, chocolate] = await Promise.all([
+    createProduct("Bonbon", { kind: "MANUFACTURED", unit: "UNIT" }),
+    createProduct("Filling", { kind: "MANUFACTURED" }),
+    createProduct("Shell", { kind: "MANUFACTURED", unit: "UNIT" }),
+    createProduct("Sprinkles"),
+    createProduct("Condensed milk"),
+    createProduct("Chocolate"),
+  ]);
+  const recipe = (productSku: string, yieldQuantity: string, ingredients: { productSku: string; quantity: string }[]) =>
+    testPrisma.recipe.create({ data: { productSku, yieldQuantity, ingredients: { create: ingredients } } });
+
+  await recipe(bonbon.sku, "10", [
+    { productSku: filling.sku, quantity: "0.2" },
+    { productSku: shell.sku, quantity: "10" },
+    { productSku: sprinkles.sku, quantity: "0.05" },
+  ]);
+  await recipe(filling.sku, "1", [
+    { productSku: milk.sku, quantity: "0.8" },
+    { productSku: chocolate.sku, quantity: "0.2" },
+  ]);
+  await recipe(shell.sku, "100", [{ productSku: chocolate.sku, quantity: "1" }]);
+  await testPrisma.productStock.create({ data: { productSku: filling.sku, quantity: "0.3", averageCost: "1" } });
+  await testPrisma.stockLot.create({
+    data: { productSku: filling.sku, initialQuantity: "0.3", quantity: "0.3", unitCost: "1" },
+  });
+
+  return { bonbon, filling, shell, sprinkles, milk, chocolate };
+}
+
+type PlanBody = {
+  quantity: string;
+  items: {
+    product: { sku: string };
+    plannedQuantity: string;
+    manufactured: { needed: string; inStock: string; toProduce: string; stage: PlanBody | null } | null;
+  }[];
+};
+
+// A manufactured item and its stage, which a test reads without checking for null at every step.
+const itemOf = (plan: PlanBody, sku: string) => {
+  const item = plan.items.find((candidate) => candidate.product.sku === sku);
+
+  if (item === undefined) throw new Error(`No item for ${sku}.`);
+
+  return item as typeof item & { manufactured: NonNullable<typeof item.manufactured> & { stage: PlanBody } };
+};
+
+describe("GET /v1/pre-weighings/plan with intermediates", () => {
+  it("plans each intermediate's shortfall by default", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling, shell, sprinkles, milk, chocolate } = await createBonbon();
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    expect(response.statusCode).toBe(200);
+    const plan = response.json();
+    const fillingItem = itemOf(plan, filling.sku);
+
+    expect(fillingItem.manufactured).toMatchObject({ needed: "1", inStock: "0.3", toProduce: "0.7" });
+    expect(fillingItem.manufactured.stage.quantity).toBe("0.7");
+    expect(itemOf(fillingItem.manufactured.stage, milk.sku).plannedQuantity).toBe("0.56");
+    expect(itemOf(fillingItem.manufactured.stage, chocolate.sku).plannedQuantity).toBe("0.14");
+    expect(itemOf(plan, shell.sku).manufactured).toMatchObject({ toProduce: "50" });
+    expect(itemOf(plan, sprinkles.sku).manufactured).toBeNull();
+  });
+
+  it("takes ready material when told to produce nothing", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling } = await createBonbon();
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${filling.sku}:0` });
+
+    expect(itemOf(response.json(), filling.sku).manufactured).toMatchObject({ toProduce: "0", stage: null });
+  });
+
+  it("produces more than needed when told to", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling } = await createBonbon();
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${filling.sku}:2` });
+
+    expect(itemOf(response.json(), filling.sku).manufactured.stage.quantity).toBe("2");
+  });
+
+  it("plans an intermediate of an intermediate", async () => {
+    const { headers } = await canRead();
+    const { bonbon, shell, chocolate } = await createBonbon();
+    const tempered = await createProduct("Tempered chocolate", { kind: "MANUFACTURED" });
+    const cocoa = await createProduct("Cocoa");
+
+    await testPrisma.recipe.create({
+      data: {
+        productSku: tempered.sku,
+        yieldQuantity: "1",
+        ingredients: { create: [{ productSku: cocoa.sku, quantity: "2" }] },
+      },
+    });
+    await testPrisma.recipe.update({
+      where: { productSku: shell.sku },
+      data: {
+        ingredients: {
+          deleteMany: { productSku: chocolate.sku },
+          create: [{ productSku: tempered.sku, quantity: "1" }],
+        },
+      },
+    });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    const shellStage = itemOf(response.json(), shell.sku).manufactured.stage;
+    const temperedItem = itemOf(shellStage, tempered.sku);
+
+    expect(temperedItem.manufactured).toMatchObject({ needed: "0.5", toProduce: "0.5" });
+    expect(itemOf(temperedItem.manufactured.stage, cocoa.sku).plannedQuantity).toBe("1");
+  });
+
+  it("applies one produce entry wherever the intermediate appears", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling, shell } = await createBonbon();
+
+    await testPrisma.recipe.update({
+      where: { productSku: shell.sku },
+      data: { ingredients: { create: [{ productSku: filling.sku, quantity: "10" }] } },
+    });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${filling.sku}:3` });
+
+    const plan = response.json();
+    const inShell = itemOf(itemOf(plan, shell.sku).manufactured.stage, filling.sku);
+
+    expect(itemOf(plan, filling.sku).manufactured.toProduce).toBe("3");
+    expect(inShell.manufactured.toProduce).toBe("3");
+  });
+
+  it("takes from stock, by default, an intermediate that has no recipe", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling } = await createBonbon();
+
+    await testPrisma.recipe.delete({ where: { productSku: filling.sku } });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    expect(response.statusCode).toBe(200);
+    expect(itemOf(response.json(), filling.sku).manufactured).toMatchObject({
+      needed: "1",
+      inStock: "0.3",
+      toProduce: "0",
+      stage: null,
+    });
+  });
+
+  it("takes from stock, by default, an intermediate whose recipe takes an inactive product", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling, milk, shell } = await createBonbon();
+
+    await testPrisma.product.update({ where: { sku: milk.sku }, data: { isActive: false } });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    expect(response.statusCode).toBe(200);
+    expect(itemOf(response.json(), filling.sku).manufactured).toMatchObject({ toProduce: "0", stage: null });
+    expect(itemOf(response.json(), shell.sku).manufactured).toMatchObject({ toProduce: "50" });
+  });
+
+  it("refuses to produce an intermediate that has no recipe when told to", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling } = await createBonbon();
+
+    await testPrisma.recipe.delete({ where: { productSku: filling.sku } });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${filling.sku}:1` });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("Product has no recipe.");
+  });
+
+  it("refuses a quantity to produce with more places than the unit allows", async () => {
+    const { headers } = await canRead();
+    const { bonbon, shell } = await createBonbon();
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${shell.sku}:2.5` });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The quantity has more decimal places than the unit allows.");
+  });
+
+  it("refuses a product listed twice in produce", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling } = await createBonbon();
+
+    const response = await getPlan(headers, {
+      productSku: bonbon.sku,
+      quantity: "50",
+      produce: [`${filling.sku}:1`, `${filling.sku}:2`],
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+});
+
 describe("POST /v1/pre-weighings", () => {
   it("records what was weighed next to what the recipe planned", async () => {
     const { headers, userId } = await canCreate();
@@ -386,10 +595,8 @@ describe("POST /v1/pre-weighings", () => {
   it.each([
     ["a zero quantity", { quantity: "0" }],
     ["a missing quantity", { quantity: undefined }],
-    ["no item", { items: [] }],
     ["a zero weighed quantity", { weighedQuantity: "0" }],
     ["a weighed quantity with more than six decimal places", { weighedQuantity: "1.0000001" }],
-    ["a missing weighed quantity", { weighedQuantity: undefined }],
     ["the same item twice", { repeat: true }],
   ])("answers 400 for %s", async (_label, change: Record<string, unknown>) => {
     const { headers } = await canCreate();
@@ -410,6 +617,26 @@ describe("POST /v1/pre-weighings", () => {
     expect(await testPrisma.preWeighing.count()).toBe(0);
   });
 
+  it.each([
+    ["no item", { items: [] }],
+    ["a missing weighed quantity", { items: "unweighed" }],
+  ])("answers 409 for %s on a bought line, and writes nothing", async (_label, change) => {
+    const { headers } = await canCreate();
+    const { dough, flour, water } = await createDough();
+
+    const response = await postPreWeighing(headers, {
+      productSku: dough.sku,
+      quantity: "50",
+      items:
+        change.items === "unweighed"
+          ? [{ productSku: flour.sku }, { productSku: water.sku, weighedQuantity: "18" }]
+          : change.items,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
   it("answers 403 without PRODUCTION_CREATE", async () => {
     const { headers } = await canRead();
 
@@ -418,6 +645,387 @@ describe("POST /v1/pre-weighings", () => {
 
   it("answers 401 without a token", async () => {
     expect((await postPreWeighing(undefined, {})).statusCode).toBe(401);
+  });
+});
+
+const NOT_MATCHING = "A stage does not match the plan.";
+
+// The tree the plan of 50 bonbons asks for: 0.7 of filling out of what the stock lacks, and 50 shells.
+// The manufactured lines go unweighed, as the screen sends them.
+async function bonbonTree() {
+  const products = await createBonbon();
+  const { bonbon, filling, shell, sprinkles, milk, chocolate } = products;
+  const body = {
+    productSku: bonbon.sku,
+    quantity: "50",
+    items: [
+      { productSku: filling.sku },
+      { productSku: shell.sku },
+      { productSku: sprinkles.sku, weighedQuantity: "0.25" },
+    ] as { productSku: string; weighedQuantity?: string }[],
+    stages: [
+      {
+        productSku: filling.sku,
+        quantity: "0.7",
+        items: [
+          { productSku: milk.sku, weighedQuantity: "0.56" },
+          { productSku: chocolate.sku, weighedQuantity: "0.14" },
+        ],
+      },
+      { productSku: shell.sku, quantity: "50", items: [{ productSku: chocolate.sku, weighedQuantity: "0.5" }] },
+    ],
+  };
+
+  return { ...products, body };
+}
+
+describe("POST /v1/pre-weighings with intermediates", () => {
+  it("records the bonbon and its intermediates in one call", async () => {
+    const { headers } = await authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
+    const { body, filling, shell } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, body);
+
+    expect(response.statusCode).toBe(201);
+    const root = response.json();
+
+    expect(root.parent).toBeNull();
+    expect(root.children).toEqual(
+      expect.arrayContaining([
+        { id: expect.any(String), product: expect.objectContaining({ sku: filling.sku }), quantity: "0.7" },
+        { id: expect.any(String), product: expect.objectContaining({ sku: shell.sku }), quantity: "50" },
+      ]),
+    );
+    expect(root.children).toHaveLength(2);
+    expect(root.items.find((item: { product: { sku: string } }) => item.product.sku === filling.sku)).toMatchObject({
+      plannedQuantity: "1",
+      weighedQuantity: null,
+    });
+    expect(await testPrisma.preWeighing.count()).toBe(3);
+
+    for (const child of root.children) {
+      const stored = (await getPreWeighing(headers, child.id)).json();
+
+      expect(stored.parent).toEqual({ id: root.id, product: expect.objectContaining({ description: "Bonbon" }) });
+    }
+  });
+
+  it("refuses a weighing on a manufactured line", async () => {
+    const { headers } = await canCreate();
+    const { body, filling } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, {
+      ...body,
+      items: body.items.map((item) => (item.productSku === filling.sku ? { ...item, weighedQuantity: "1" } : item)),
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The items do not match the ingredients of the recipe.");
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
+  it("refuses a stage whose items disagree with the plan", async () => {
+    const { headers } = await canCreate();
+    const { body, filling, milk } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, {
+      ...body,
+      stages: [
+        { productSku: filling.sku, quantity: "0.7", items: [{ productSku: milk.sku, weighedQuantity: "0.5" }] },
+        body.stages[1],
+      ],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
+  it("refuses the same intermediate in two quantities", async () => {
+    const { headers } = await canCreate();
+    const { body } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, {
+      ...body,
+      stages: [...body.stages, { ...body.stages[1], quantity: "40" }],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe(NOT_MATCHING);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
+  it("refuses a stage for a product the recipe buys", async () => {
+    const { headers } = await canCreate();
+    const { body, sprinkles } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, {
+      ...body,
+      stages: [...body.stages, { productSku: sprinkles.sku, quantity: "1", items: [] }],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe(NOT_MATCHING);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
+  it("refuses a manufactured line left out", async () => {
+    const { headers } = await canCreate();
+    const { body, filling } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, {
+      ...body,
+      items: body.items.filter((item) => item.productSku !== filling.sku),
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The items do not match the ingredients of the recipe.");
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
+  it("refuses a bought ingredient left unweighed", async () => {
+    const { headers } = await canCreate();
+    const { body, sprinkles } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, {
+      ...body,
+      items: body.items.map((item) => (item.productSku === sprinkles.sku ? { productSku: sprinkles.sku } : item)),
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The items do not match the ingredients of the recipe.");
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+
+  it("takes a manufactured ingredient with no stage from stock", async () => {
+    const { headers } = await canCreate();
+    const { body, filling } = await bonbonTree();
+
+    const response = await postPreWeighing(headers, { ...body, stages: [body.stages[1]] });
+
+    // The filling is short in stock: with no stage the plan takes none to produce, which is allowed.
+    expect(response.statusCode).toBe(201);
+    expect(response.json().children).toHaveLength(1);
+    expect(response.json().children[0].product.sku).not.toBe(filling.sku);
+  });
+});
+
+// What the screen sends for a plan: every line weighed at what was planned.
+async function recordAsTheScreenDoes(headers: Headers, query: Record<string, string | string[]>) {
+  const plan = (await getPlan(headers, query)).json();
+  const weighed = weighingRowsOf(plan).map(({ plannedQuantity }) => plannedQuantity);
+
+  return { plan, response: await postPreWeighing(headers, createBodyOf(plan, weighed)) };
+}
+
+describe("POST /v1/pre-weighings of the body the screen builds", () => {
+  const canDoBoth = () => authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
+
+  it("records the bonbon with the filling and shells it makes", async () => {
+    const { headers } = await canDoBoth();
+    const { bonbon } = await createBonbon();
+
+    const { response } = await recordAsTheScreenDoes(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().children).toHaveLength(2);
+    expect(await testPrisma.preWeighing.count()).toBe(3);
+  });
+
+  it("records the bonbon out of ready material", async () => {
+    const { headers } = await canDoBoth();
+    const { bonbon, filling, shell } = await createBonbon();
+
+    const { response } = await recordAsTheScreenDoes(headers, {
+      productSku: bonbon.sku,
+      quantity: "50",
+      produce: [`${filling.sku}:0`, `${shell.sku}:0`],
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().children).toEqual([]);
+    expect(await testPrisma.preWeighing.count()).toBe(1);
+  });
+});
+
+describe("the same intermediate in two places of the tree", () => {
+  const canDoBoth = () => authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
+
+  // The shells take filling too: 0.4 per 100, so 0.2 for the 50 shells, next to the 1 the bonbons take.
+  async function sharedFilling() {
+    const products = await createBonbon();
+
+    await testPrisma.recipe.update({
+      where: { productSku: products.shell.sku },
+      data: { ingredients: { create: [{ productSku: products.filling.sku, quantity: "0.4" }] } },
+    });
+
+    return products;
+  }
+
+  it("makes it once, at its first place, for what every place needs beyond the stock", async () => {
+    const { headers } = await canDoBoth();
+    const { bonbon, filling, shell } = await sharedFilling();
+
+    const { plan, response } = await recordAsTheScreenDoes(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    const atRoot = itemOf(plan, filling.sku);
+    const inShell = itemOf(itemOf(plan, shell.sku).manufactured.stage, filling.sku);
+
+    expect(atRoot.manufactured).toMatchObject({ needed: "1", inStock: "0.3", toProduce: "0.9" });
+    expect(atRoot.manufactured.stage.quantity).toBe("0.9");
+    expect(inShell.manufactured).toMatchObject({ needed: "0.2", toProduce: "0.9", stage: null });
+    expect(response.statusCode).toBe(201);
+    expect(
+      response
+        .json()
+        .children.map(({ quantity }: { quantity: string }) => quantity)
+        .sort(),
+    ).toEqual(["0.9", "50"]);
+    expect(await testPrisma.preWeighing.count()).toBe(3);
+  });
+
+  it("makes what it is told to once", async () => {
+    const { headers } = await canDoBoth();
+    const { bonbon, filling, shell } = await sharedFilling();
+
+    const { plan, response } = await recordAsTheScreenDoes(headers, {
+      productSku: bonbon.sku,
+      quantity: "50",
+      produce: `${filling.sku}:2`,
+    });
+
+    expect(itemOf(plan, filling.sku).manufactured.stage.quantity).toBe("2");
+    expect(itemOf(itemOf(plan, shell.sku).manufactured.stage, filling.sku).manufactured).toMatchObject({
+      toProduce: "2",
+      stage: null,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(await testPrisma.preWeighing.count()).toBe(3);
+  });
+
+  it("refuses the stage sent at the second place", async () => {
+    const { headers } = await canDoBoth();
+    const { bonbon, filling, shell, sprinkles, milk, chocolate } = await sharedFilling();
+    const fillingStage = {
+      productSku: filling.sku,
+      quantity: "0.9",
+      items: [
+        { productSku: milk.sku, weighedQuantity: "0.72" },
+        { productSku: chocolate.sku, weighedQuantity: "0.18" },
+      ],
+    };
+
+    const response = await postPreWeighing(headers, {
+      productSku: bonbon.sku,
+      quantity: "50",
+      items: [
+        { productSku: filling.sku },
+        { productSku: shell.sku },
+        { productSku: sprinkles.sku, weighedQuantity: "0.25" },
+      ],
+      stages: [
+        {
+          productSku: shell.sku,
+          quantity: "50",
+          items: [{ productSku: chocolate.sku, weighedQuantity: "0.5" }, { productSku: filling.sku }],
+          stages: [fillingStage],
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe(NOT_MATCHING);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+});
+
+describe("POST /v1/pre-weighings of a stage at more places than its unit", () => {
+  it.each([
+    ["fractional shells", (body: Body) => ({ ...body.stages[1]!, quantity: "50.5" }), 1],
+    ["filling to the tenth of a gram", (body: Body) => ({ ...body.stages[0]!, quantity: "0.7001" }), 0],
+  ])("refuses %s", async (_label, stageOf, index) => {
+    const { headers } = await canCreate();
+    const { body } = await bonbonTree();
+    const stages = [...body.stages];
+    stages[index] = stageOf(body);
+
+    const response = await postPreWeighing(headers, { ...body, stages });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The quantity has more decimal places than the unit allows.");
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+  });
+});
+
+type Body = Awaited<ReturnType<typeof bonbonTree>>["body"];
+
+describe("POST /v1/pre-weighings as a complement", () => {
+  const complementOf = (parentId: string, body: Awaited<ReturnType<typeof bonbonTree>>) => ({
+    parentId,
+    productSku: body.filling.sku,
+    quantity: "0.2",
+    items: [
+      { productSku: body.milk.sku, weighedQuantity: "0.16" },
+      { productSku: body.chocolate.sku, weighedQuantity: "0.04" },
+    ],
+  });
+
+  async function recordRoot() {
+    const session = await authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
+    const tree = await bonbonTree();
+    const root = (await postPreWeighing(session.headers, tree.body)).json();
+
+    return { ...session, tree, root };
+  }
+
+  it("records a complement under an existing pre-weighing", async () => {
+    const { headers, tree, root } = await recordRoot();
+
+    const response = await postPreWeighing(headers, complementOf(root.id, tree));
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().parent.id).toBe(root.id);
+    expect((await getPreWeighing(headers, root.id)).json().children).toHaveLength(3);
+  });
+
+  it("refuses a complement whose parent does not take that product", async () => {
+    const { headers, tree, root } = await recordRoot();
+    const other = await createProduct("Other");
+    const response = await postPreWeighing(headers, {
+      parentId: root.id,
+      productSku: tree.milk.sku,
+      quantity: "1",
+      items: [{ productSku: other.sku, weighedQuantity: "1" }],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The parent's recipe does not take this product.");
+  });
+
+  it("refuses a complement whose parent's production has finished", async () => {
+    const { headers, userId, tree, root } = await recordRoot();
+    await testPrisma.production.create({
+      data: {
+        status: "FINISHED",
+        finishedAt: new Date(),
+        createdById: userId,
+        items: { create: [{ productSku: tree.bonbon.sku, preWeighingId: root.id, expectedQuantity: "50" }] },
+      },
+    });
+
+    const response = await postPreWeighing(headers, complementOf(root.id, tree));
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The parent's production has already finished.");
+  });
+
+  it("refuses a complement under a missing pre-weighing", async () => {
+    const { headers, tree } = await recordRoot();
+
+    const response = await postPreWeighing(headers, complementOf(MISSING_ID, tree));
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().message).toBe("Pre-weighing not found.");
   });
 });
 
@@ -550,3 +1158,115 @@ describe("GET /v1/pre-weighings", () => {
 });
 
 type Skus = { flour: string; water: string; salt: string };
+
+describe("DELETE /v1/pre-weighings/:id", () => {
+  // A dough weighed for itself, and a complement of water recorded under it.
+  async function doughTree(userId: string) {
+    const { dough, flour, water } = await createDough();
+    const root = await testPrisma.preWeighing.create({
+      data: {
+        productSku: dough.sku,
+        quantity: "50",
+        createdById: userId,
+        items: { create: [{ productSku: flour.sku, plannedQuantity: "30", weighedQuantity: "30" }] },
+      },
+    });
+    const child = await testPrisma.preWeighing.create({
+      data: {
+        productSku: dough.sku,
+        quantity: "25",
+        createdById: userId,
+        parentId: root.id,
+        items: { create: [{ productSku: water.sku, plannedQuantity: "9", weighedQuantity: "9" }] },
+      },
+    });
+
+    return { dough, root, child };
+  }
+
+  // A production in progress whose one item the pre-weighing guides.
+  const guide = (userId: string, productSku: string, preWeighingId: string) =>
+    testPrisma.production.create({
+      data: { createdById: userId, items: { create: [{ productSku, preWeighingId, expectedQuantity: "1" }] } },
+    });
+
+  const canDelete = () => authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
+
+  it("deletes an available pre-weighing with the ones recorded under it", async () => {
+    const { headers, userId } = await canDelete();
+    const { root } = await doughTree(userId);
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(204);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+    expect(await testPrisma.preWeighingItem.count()).toBe(0);
+  });
+
+  it("deletes a complement and leaves the pre-weighing it complements", async () => {
+    const { headers, userId } = await canDelete();
+    const { root, child } = await doughTree(userId);
+
+    const response = await deletePreWeighing(headers, child.id);
+
+    expect(response.statusCode).toBe(204);
+    expect((await getPreWeighing(headers, root.id)).json()).toMatchObject({ id: root.id, children: [] });
+  });
+
+  it("refuses to delete a pre-weighing that guides a production, and deletes nothing", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root } = await doughTree(userId);
+    await guide(userId, dough.sku, root.id);
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "The pre-weighing guides a production." });
+    expect(await testPrisma.preWeighing.count()).toBe(2);
+  });
+
+  it("refuses to delete a pre-weighing when one recorded under it guides a production", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root, child } = await doughTree(userId);
+    await guide(userId, dough.sku, child.id);
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(await testPrisma.preWeighing.count()).toBe(2);
+  });
+
+  it("deletes a pre-weighing whose production was canceled", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, child } = await doughTree(userId);
+    await guide(userId, dough.sku, child.id);
+    await testPrisma.productionItem.updateMany({ data: { preWeighingId: null } });
+
+    expect((await deletePreWeighing(headers, child.id)).statusCode).toBe(204);
+  });
+
+  it("says whether a pre-weighing is available to be produced", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root, child } = await doughTree(userId);
+    await guide(userId, dough.sku, child.id);
+
+    expect((await getPreWeighing(headers, root.id)).json()).toMatchObject({ isAvailable: true });
+    expect((await getPreWeighing(headers, child.id)).json()).toMatchObject({ isAvailable: false });
+  });
+
+  it("answers 404 for a pre-weighing that does not exist", async () => {
+    const { headers } = await canDelete();
+
+    expect((await deletePreWeighing(headers, MISSING_ID)).statusCode).toBe(404);
+  });
+
+  it("answers 403 without PRODUCTION_CREATE", async () => {
+    const { headers } = await canRead();
+
+    expect((await deletePreWeighing(headers, MISSING_ID)).statusCode).toBe(403);
+  });
+
+  it("answers 401 without a token", async () => {
+    expect((await deletePreWeighing(undefined, MISSING_ID)).statusCode).toBe(401);
+  });
+});

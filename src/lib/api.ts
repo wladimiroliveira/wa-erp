@@ -17,8 +17,10 @@ import type {
   preWeighingPageSchema,
   preWeighingPlanSchema,
   preWeighingSchema,
+  preWeighingStageBodySchema,
 } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import type {
+  finishConflictSchema,
   finishProductionBodySchema,
   productionPageSchema,
   productionLeftoversSchema,
@@ -106,6 +108,8 @@ export type PreWeighingPlan = z.output<typeof preWeighingPlanSchema>;
 export type PreWeighingWaste = NonNullable<PreWeighingPlan["waste"]>;
 export type WasteSuggestion = PreWeighingWaste["requested"];
 export type CreatePreWeighingBody = z.input<typeof createPreWeighingBodySchema>;
+/** One stage of a pre-weighing body: the product, its items and, under it, the stages of the intermediates. */
+export type PreWeighingStageBody = z.input<typeof preWeighingStageBodySchema>;
 export type PreWeighing = z.output<typeof preWeighingSchema>;
 export type PreWeighingPage = z.output<typeof preWeighingPageSchema>;
 
@@ -114,6 +118,7 @@ export type ProductionItem = Production["items"][number];
 export type ProductionPage = z.output<typeof productionPageSchema>;
 export type StartProductionBody = z.input<typeof startProductionBodySchema>;
 export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
+export type FinishConflict = z.output<typeof finishConflictSchema>;
 export type LeftoversPreview = z.output<typeof productionLeftoversSchema>;
 
 export type Recipe = z.output<typeof recipeSchema>;

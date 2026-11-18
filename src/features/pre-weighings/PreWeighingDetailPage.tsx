@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "@/features/auth/use-session";
+import { DeletePreWeighingDialog } from "@/features/pre-weighings/DeletePreWeighingDialog";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import { weighedOf } from "@/features/pre-weighings/weighing-units";
 import { quantityOf } from "@/features/stock/stock-format";
@@ -16,6 +18,10 @@ const shownOf = ({ product, plannedQuantity }: Item, quantity: string) =>
   weighedOf(quantity, product.unit, readableQuantity(plannedQuantity, product.unit).unit);
 
 export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighing }) {
+  const { can } = useSession();
+  // One a production is using goes when that production is canceled, or stays as its record.
+  const canDelete = preWeighing.isAvailable && can("PRODUCTION_CREATE");
+
   return (
     <div className="flex flex-col gap-4">
       <Link href="/pre-weighings" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
@@ -23,6 +29,15 @@ export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighin
       </Link>
 
       <PageTitle>Pré-pesagem de {preWeighing.product.description}</PageTitle>
+
+      {preWeighing.parent === null ? null : (
+        <Link
+          href={`/pre-weighings/${preWeighing.parent.id}`}
+          className="flex min-h-8 items-center self-start text-sm underline underline-offset-4"
+        >
+          Para: {preWeighing.parent.product.description}
+        </Link>
+      )}
 
       <dl role="group" aria-label="Resumo da pré-pesagem" className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-md border p-4">
@@ -35,6 +50,23 @@ export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighin
         </div>
       </dl>
 
+      {preWeighing.children.length === 0 ? null : (
+        <section aria-labelledby="pre-weighing-children" className="flex flex-col gap-2">
+          <h2 id="pre-weighing-children" className="text-lg font-semibold">
+            Intermediários
+          </h2>
+          <ul className="flex flex-col gap-1">
+            {preWeighing.children.map((child) => (
+              <li key={child.id}>
+                <Link href={`/pre-weighings/${child.id}`} className="underline underline-offset-4">
+                  {child.product.description} — {quantityOf(child.quantity, child.product.unit)}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <ArrangeableTable
         tableKey="pre-weighing-items"
         rowNoun={{ one: "ingrediente", other: "ingredientes" }}
@@ -43,9 +75,17 @@ export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighin
         columns={[
           { key: "ingredient", header: "Ingrediente", cell: (item) => item.product.description },
           { key: "planned", header: "Planejado", cell: (item) => shownOf(item, item.plannedQuantity) },
-          { key: "weighed", header: "Pesado", cell: (item) => shownOf(item, item.weighedQuantity) },
+          {
+            key: "weighed",
+            header: "Pesado",
+            cell: (item) => (item.weighedQuantity === null ? "do estoque" : shownOf(item, item.weighedQuantity)),
+          },
         ]}
       />
+
+      {canDelete ? (
+        <DeletePreWeighingDialog preWeighingId={preWeighing.id} withStages={preWeighing.children.length > 0} />
+      ) : null}
     </div>
   );
 }

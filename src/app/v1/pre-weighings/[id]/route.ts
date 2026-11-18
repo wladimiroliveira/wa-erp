@@ -1,8 +1,9 @@
 import { Permission } from "@prisma/client";
+import { z } from "zod";
 import { apiHandler } from "@/server/http/handler";
 import { messageSchema } from "@/server/modules/auth/auth.schemas";
 import { preWeighingIdParamsSchema, preWeighingSchema } from "@/server/modules/pre-weighings/pre-weighings.schemas";
-import { getPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
+import { getPreWeighing, removePreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
 
 export const GET = apiHandler(
   {
@@ -18,5 +19,22 @@ export const GET = apiHandler(
     if (!result.ok) return reply.code(result.status).send({ message: result.message });
 
     return reply.send(result.data);
+  },
+);
+
+export const DELETE = apiHandler(
+  {
+    auth: Permission.PRODUCTION_CREATE,
+    tags: ["pre-weighings"],
+    summary: "Exclui uma pré-pesagem que nenhuma produção usa, com as registradas sob ela",
+    params: preWeighingIdParamsSchema,
+    response: { 204: z.void(), 404: messageSchema, 409: messageSchema },
+  },
+  async (request, reply) => {
+    const result = await removePreWeighing(request.params.id);
+
+    if (!result.ok) return reply.code(result.status).send({ message: result.message });
+
+    return reply.code(204).send();
   },
 );

@@ -2,12 +2,16 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { finishProduction, previewLeftovers } from "@/features/productions/actions";
+import { finishProduction, previewLeftovers, reduceProductionItem } from "@/features/productions/actions";
 import { FinishProductionForm } from "@/features/productions/FinishProductionForm";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser, aProduction } from "@/tests/samples";
 
-vi.mock("@/features/productions/actions", () => ({ finishProduction: vi.fn(), previewLeftovers: vi.fn() }));
+vi.mock("@/features/productions/actions", () => ({
+  finishProduction: vi.fn(),
+  previewLeftovers: vi.fn(),
+  reduceProductionItem: vi.fn(),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const PRODUCTION = aProduction();
@@ -98,6 +102,57 @@ describe("FinishProductionForm", () => {
       ),
     );
     expect(toast.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("FinishProductionForm, intermediates short in stock", () => {
+  const DOUGH = { sku: "018f0000-0000-7000-8000-0000000000d1", description: "Massa base", unit: "KILOGRAM" as const };
+
+  it("opens the shortage dialog with what is missing", async () => {
+    vi.mocked(finishProduction).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "Not enough stock.",
+      details: {
+        message: "Not enough stock.",
+        shortages: [{ itemId: ITEM.id, product: DOUGH, needed: "12", available: "4.5" }],
+        items: [{ itemId: ITEM.id, maxQuantity: "40" }],
+      },
+    });
+    open();
+
+    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await finish();
+
+    const dialog = await screen.findByRole("dialog", { name: "Falta material intermediário" });
+    expect(dialog).toHaveTextContent("Massa base: precisa 12 kg, tem 4,5 kg");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("closes the shortage dialog once an item is reduced", async () => {
+    vi.mocked(finishProduction).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "Not enough stock.",
+      details: {
+        message: "Not enough stock.",
+        shortages: [{ itemId: ITEM.id, product: DOUGH, needed: "12", available: "4.5" }],
+        items: [{ itemId: ITEM.id, maxQuantity: "4" }],
+      },
+    });
+    vi.mocked(reduceProductionItem).mockResolvedValue({
+      ok: true,
+      data: aProduction({ items: [{ ...ITEM, expectedQuantity: "4" }] }),
+    });
+    open();
+
+    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await finish();
+    await screen.findByRole("dialog", { name: "Falta material intermediário" });
+    await userEvent.click(screen.getByRole("button", { name: "Reduzir" }));
+
+    await waitFor(() => expect(reduceProductionItem).toHaveBeenCalledWith(PRODUCTION.id, ITEM.id, "4"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
 

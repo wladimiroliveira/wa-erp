@@ -23,14 +23,18 @@ assumes the recheio is already in stock, and only reports it as a shortfall.
 - **Ready, produce, or partly ready is one number.** For each manufactured ingredient the operator
   sets *to produce*: 0 is "ready material", the whole need is "produce", anything between is
   "partly ready". It defaults to the shortfall (`max(0, needed − in stock)`) and may exceed the
-  need; the excess stays in stock.
+  need; the excess stays in stock. It defaults to 0 for an intermediate that cannot be produced
+  (no recipe, or a recipe that takes an inactive product), so its taker can still be planned.
 - **Any depth.** An intermediate may itself take an intermediate; the plan is built recursively
   from the recipes, which are already acyclic.
 - **The intermediate line of a pre-weighing is not weighed.** It records what is planned; the
   intermediate does not exist yet when the session happens. It leaves stock when the final product
   finishes, by the usual first-to-expire order.
-- **A product with children finishes after them.** An item guided by a pre-weighing with children
-  can only finish once every child's production has finished.
+- **The stock decides, not the order.** An item guided by a pre-weighing with children finishes
+  whenever the stock covers its intermediates, whether or not the children were produced: a child
+  that will never be produced (canceled, bought instead, abandoned) must not hold its parent.
+- **A pre-weighing nobody uses can be deleted.** One that no production is using goes with the
+  ones recorded under it; one a production is using (in progress or finished) cannot.
 - **Shortage is checked before the final product finishes.** If the stock of an intermediate is
   below what the item needs (the intermediate yielded less, or something else consumed it), the
   finish is refused with the shortage and the operator chooses:
@@ -83,7 +87,8 @@ recipe (409 otherwise).
   `MANUFACTURED`: `needed` (the planned quantity), `inStock` (the stock balance), `toProduce`
   (from `produce`, or the shortfall by default) and `stage` (the plan of that product for
   `toProduce`, or null when it is 0). The `produce` map is keyed by SKU and applies at any depth.
-  A manufactured ingredient without a recipe fails the whole plan with 409, as the root does today.
+  Asking to produce an intermediate without a recipe fails the whole plan with 409, as the root
+  does today; so does a `toProduce` with more places than its unit allows.
 - **Preview** — `previewPreWeighing` runs lot suggestion and waste on every stage, unchanged per
   stage.
 - **Record** — `recordPreWeighing` takes the tree and re-plans it through the same function, so
@@ -94,8 +99,11 @@ recipe (409 otherwise).
 - **Complement** — the same record call with `parentId` creates a single child of an existing
   pre-weighing (the "new weighing" of a shortage). Its own manufactured ingredients may again have
   stages.
-- **Presentation** — a pre-weighing presents `parent: { id, product } | null`, `children: [{ id, product, quantity }]`
-  and items with `weighedQuantity` nullable.
+- **Presentation** — a pre-weighing presents `isAvailable` (no production is using it),
+  `parent: { id, product } | null`, `children: [{ id, product, quantity }]` and items with
+  `weighedQuantity` nullable.
+- **Delete** — `removePreWeighing(id)` deletes the pre-weighing and every one under it, holding
+  their rows first; 409 when any of them guides a production, 404 when it does not exist.
 - The proportional quantity (`recipeQuantity × quantity ÷ yield`, stored precision) stays in
   `planQuantity`; scaling by a ratio for a reduction reuses it.
 
@@ -105,10 +113,7 @@ recipe (409 otherwise).
   it could never finish. Siblings may share a production, and share opened packagings as today.
 - **Guided input quantity** — an input comes from `weighedQuantity`, or from `plannedQuantity` on
   a line that was not weighed.
-- **Finish order** — before anything moves, every item guided by a pre-weighing with children
-  requires each child to be guided by a `FINISHED` production; otherwise 409 naming the pending
-  child pre-weighings. A child never started, or whose production was canceled, is pending.
-- **Shortage check** — next, for every input of a manufactured product, the stock balance (read
+- **Shortage check** — before anything moves, for every input of a manufactured product, the stock balance (read
   inside the finish transaction, with balances held) must cover the input quantity, adding up the
   inputs of the same product across the production's items. Otherwise 409 with
   `shortages: [{ product, needed, available }]` and nothing moves.
@@ -127,9 +132,10 @@ recipe (409 otherwise).
 | --- | --- |
 | `GET /v1/pre-weighings/plan` | Accepts `produce=<sku>:<quantity>`, repeated once per intermediate; items gain `needed`, `inStock`, `toProduce`, `stage` (recursive plan, nullable). |
 | `POST /v1/pre-weighings` | Body: `{ productSku, quantity, parentId?, items, stages[] }`, each stage `{ productSku, quantity, items, stages[] }`; `weighedQuantity` absent on manufactured lines. |
-| `GET /v1/pre-weighings`, `GET /v1/pre-weighings/{id}` | Present `parent` (`{ id, product }` or null), `children`, nullable `weighedQuantity`. |
+| `GET /v1/pre-weighings`, `GET /v1/pre-weighings/{id}` | Present `isAvailable`, `parent` (`{ id, product }` or null), `children`, nullable `weighedQuantity`. |
+| `DELETE /v1/pre-weighings/{id}` | New. Deletes it with the ones under it; 204, 404, or 409 when a production uses any of them. `auth` `PRODUCTION_CREATE`. |
 | `POST /v1/productions/{id}/items/{itemId}/reduce` | New. Body `{ quantity }`; returns the production. `auth` like finish. |
-| `POST /v1/productions/{id}/finish` | 409 bodies for a pending child (`pendingPreWeighings`) and for a shortage (`shortages`, `items[{ itemId, maxQuantity }]`). |
+| `POST /v1/productions/{id}/finish` | 409 body for a shortage (`shortages`, `items[{ itemId, maxQuantity }]`). |
 
 `openapi.json` is regenerated with `npm run openapi:dump`.
 
@@ -141,10 +147,10 @@ recipe (409 otherwise).
   Submitting sends the tree. When opened with `?parentId=&productSku=&quantity=` it records a
   complement and says which pre-weighing it complements.
 - **`PreWeighingDetailPage`** — links to the parent and lists the children; a line that was not
-  weighed shows "do estoque".
+  weighed shows "do estoque". An available pre-weighing offers "Excluir pré-pesagem" to whoever
+  can record productions, with a confirmation that says the intermediates go too.
 - **`StartProductionPage`** — an available child pre-weighing shows "→ para <produto do pai>".
-- **`FinishProductionForm`** — on the pending 409, a message naming what has to be produced
-  first. On the shortage 409, a dialog listing each short intermediate (needed, available) with two
+- **`FinishProductionForm`** — on the shortage 409, a dialog listing each short intermediate (needed, available) with two
   actions: **Nova pesagem** (navigates to the pre-weighing screen prefilled with the product, the
   missing quantity and, as `parentId`, the pre-weighing that guides the short item) and **Reduzir** (quantity field starting at
   `maxQuantity`, calls the reduce action, then the form reloads the production).
@@ -164,19 +170,20 @@ recipe (409 otherwise).
   - recording the tree in one transaction; a stage that does not match the plan is refused and
     nothing is written;
   - a complement by `parentId`, and one whose parent does not take that product refused;
-  - finishing the bombom with a child not finished → 409 pending;
+  - finishing the bombom with a child not finished, the stock covering it → finished;
+  - deleting a tree; refused when any of it guides a production;
   - finishing with less recheio in stock than needed → 409 shortage with `maxQuantity`, nothing
     moved;
   - reduce: inputs scaled, out-of-range quantities refused, not in progress refused;
   - full run: recheio and casquinha finish, the bombom finishes, its unit cost includes the cost
     of the recheio and casquinha lots, and the intermediate lots are consumed.
 - **RTL** — to-produce field and nested stage; manufactured line without weighing field; the
-  shortage dialog with both actions; the pending message.
+  shortage dialog with both actions; the delete confirmation.
 
 ## Out of scope
 
 - Reserving intermediate stock for a product.
 - A single production finished stage by stage (each stage is its own item, finished in its own
   production or together with its siblings).
-- Changing a pre-weighing after it is recorded.
+- Changing a pre-weighing after it is recorded (it can only be deleted).
 - Showing the tree in the productions list beyond the "→ para" hint.

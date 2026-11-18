@@ -793,6 +793,33 @@ describe("PreWeighingPage, intermediates made in the same session", () => {
     expect(screen.getByRole("heading", { name: "Fabricar 1 kg de Recheio" })).toBeInTheDocument();
     expect(screen.getByLabelText("Pesado de Leite condensado")).toHaveValue("600");
     expect(screen.getByLabelText("A fabricar de Recheio")).toHaveValue("0,5");
+    expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeDisabled();
+  });
+
+  it("records again once the quantity to produce is planned after a failed re-plan", async () => {
+    await calculateBombom();
+    planning(() => ({ ok: false, status: 409, message: "Quantity is out of range for this recipe." }));
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,5");
+    await screen.findByRole("alert", {}, { timeout: 2000 });
+    planning(() => ({ ok: true, data: withFilling("0.6") }));
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,6");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeEnabled(), {
+      timeout: 2000,
+    });
+  });
+
+  it("does not record while a quantity to produce is not one the unit allows", async () => {
+    await calculateBombom();
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "0,1234");
+
+    expect(await screen.findByText(/casas decimais|casa decimal/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar pré-pesagem" })).toBeDisabled();
   });
 
   it("clears the plan when Calcular fails", async () => {

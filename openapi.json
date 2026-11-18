@@ -1413,6 +1413,9 @@
                             "format": "date-time",
                             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                           },
+                          "isAvailable": {
+                            "type": "boolean"
+                          },
                           "parent": {
                             "nullable": true,
                             "type": "object",
@@ -1565,6 +1568,7 @@
                           "product",
                           "quantity",
                           "createdAt",
+                          "isAvailable",
                           "parent",
                           "children",
                           "items"
@@ -1708,6 +1712,9 @@
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     },
+                    "isAvailable": {
+                      "type": "boolean"
+                    },
                     "parent": {
                       "nullable": true,
                       "type": "object",
@@ -1860,6 +1867,7 @@
                     "product",
                     "quantity",
                     "createdAt",
+                    "isAvailable",
                     "parent",
                     "children",
                     "items"
@@ -1911,6 +1919,72 @@
       }
     },
     "/v1/pre-weighings/{id}": {
+      "delete": {
+        "tags": [
+          "pre-weighings"
+        ],
+        "summary": "Exclui uma pré-pesagem que nenhuma produção usa, com as registradas sob ela",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "pre-weighings"
@@ -1983,6 +2057,9 @@
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     },
+                    "isAvailable": {
+                      "type": "boolean"
+                    },
                     "parent": {
                       "nullable": true,
                       "type": "object",
@@ -2135,6 +2212,7 @@
                     "product",
                     "quantity",
                     "createdAt",
+                    "isAvailable",
                     "parent",
                     "children",
                     "items"
@@ -3672,53 +3750,6 @@
                   "properties": {
                     "message": {
                       "type": "string"
-                    },
-                    "pendingPreWeighings": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                          },
-                          "product": {
-                            "type": "object",
-                            "properties": {
-                              "sku": {
-                                "type": "string",
-                                "format": "uuid",
-                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                              },
-                              "description": {
-                                "type": "string"
-                              },
-                              "unit": {
-                                "type": "string",
-                                "enum": [
-                                  "UNIT",
-                                  "KILOGRAM",
-                                  "GRAM",
-                                  "LITER",
-                                  "MILLILITER"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "sku",
-                              "description",
-                              "unit"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "product"
-                        ],
-                        "additionalProperties": false
-                      }
                     },
                     "shortages": {
                       "type": "array",

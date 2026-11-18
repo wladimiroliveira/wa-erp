@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "@/features/auth/use-session";
+import { DeletePreWeighingDialog } from "@/features/pre-weighings/DeletePreWeighingDialog";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import { weighedOf } from "@/features/pre-weighings/weighing-units";
 import { quantityOf } from "@/features/stock/stock-format";
@@ -16,6 +18,10 @@ const shownOf = ({ product, plannedQuantity }: Item, quantity: string) =>
   weighedOf(quantity, product.unit, readableQuantity(plannedQuantity, product.unit).unit);
 
 export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighing }) {
+  const { can } = useSession();
+  // One a production is using goes when that production is canceled, or stays as its record.
+  const canDelete = preWeighing.isAvailable && can("PRODUCTION_CREATE");
+
   return (
     <div className="flex flex-col gap-4">
       <Link href="/pre-weighings" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
@@ -76,6 +82,10 @@ export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighin
           },
         ]}
       />
+
+      {canDelete ? (
+        <DeletePreWeighingDialog preWeighingId={preWeighing.id} withStages={preWeighing.children.length > 0} />
+      ) : null}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { PreWeighingDetailPage } from "@/features/pre-weighings/PreWeighingDetai
 import type { PreWeighing } from "@/lib/api";
 import { renderWithProviders, type RenderOptions } from "@/tests/render";
 import { columnHeaders } from "@/tests/table-layouts";
-import { aPreWeighing } from "@/tests/samples";
+import { aCurrentUser, aPreWeighing } from "@/tests/samples";
 
 const open = (preWeighing: PreWeighing = aPreWeighing(), options: RenderOptions = {}) =>
   renderWithProviders(<PreWeighingDetailPage preWeighing={preWeighing} />, {
@@ -132,5 +132,27 @@ describe("PreWeighingDetailPage sizing", () => {
     open();
 
     expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveClass("min-h-8");
+  });
+});
+
+describe("PreWeighingDetailPage, deleting", () => {
+  const CAN_CREATE = aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] });
+
+  it("offers to delete a pre-weighing no production is using", () => {
+    open(aPreWeighing({ isAvailable: true }), { user: CAN_CREATE });
+
+    expect(screen.getByRole("button", { name: "Excluir pré-pesagem" })).toBeInTheDocument();
+  });
+
+  it("does not offer to delete a pre-weighing a production is using", () => {
+    open(aPreWeighing({ isAvailable: false }), { user: CAN_CREATE });
+
+    expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer to delete to someone who cannot record productions", () => {
+    open(aPreWeighing({ isAvailable: true }), { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
+
+    expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
   });
 });

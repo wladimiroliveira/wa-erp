@@ -148,6 +148,8 @@ export const preWeighingSchema = z.object({
   product: productSummarySchema,
   quantity: z.string(),
   createdAt: z.iso.datetime(),
+  // No production is using it: one can start from it, and it can be deleted.
+  isAvailable: z.boolean(),
   // The pre-weighing whose product takes this one's, and the ones of the intermediates this one takes.
   parent: z.object({ id: z.uuid(), product: productSummarySchema }).nullable(),
   children: z.array(z.object({ id: z.uuid(), product: productSummarySchema, quantity: z.string() })),

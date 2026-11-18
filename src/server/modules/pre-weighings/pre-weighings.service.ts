@@ -7,6 +7,7 @@ import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
 import { suggestLots } from "@/server/modules/stock/stock.repository";
 import { defaultToProduce, planQuantity, suggestQuantities, type Suggestion } from "./pre-weighings.plan";
 import {
+  deletePreWeighingTree,
   findComplementParent,
   findPreWeighingById,
   findProductWithRecipe,
@@ -56,6 +57,12 @@ function catalog(): (sku: string) => Promise<ProductWithRecipe | null> {
   };
 }
 
+// Whether the plan of a product can be built from its recipe.
+const canBeProduced = (product: ProductWithRecipe) =>
+  product.isActive &&
+  product.recipe !== null &&
+  product.recipe.ingredients.every((ingredient) => ingredient.product.isActive);
+
 // How much to produce of each intermediate the tree of `productSku` reaches, by sku. An intermediate is
 // produced once for the whole tree, so by default it is the shortfall of what every place takes of it
 // against its stock. What a product takes counts only while that product is produced, so each product is
@@ -97,13 +104,17 @@ async function decideToProduce(
     let made = quantity;
 
     if (index > 0) {
+      // An intermediate that cannot be produced is taken from stock unless the operator asks for it,
+      // so the plan of its taker still shows, with a shortfall where its stock falls short.
       made =
         produce?.get(product.sku) ??
-        defaultToProduce(
-          needs.get(product.sku) ?? new Prisma.Decimal(0),
-          stockOf.get(product.sku) ?? new Prisma.Decimal(0),
-          product.unit,
-        );
+        (canBeProduced(product)
+          ? defaultToProduce(
+              needs.get(product.sku) ?? new Prisma.Decimal(0),
+              stockOf.get(product.sku) ?? new Prisma.Decimal(0),
+              product.unit,
+            )
+          : new Prisma.Decimal(0));
       decided.set(product.sku, made);
     }
 
@@ -163,6 +174,8 @@ async function planStage(
       const toProduce = decided.get(ingredient.product.sku) ?? new Prisma.Decimal(0);
       let stage: PreWeighingPlan | null = null;
 
+      if (!fitsPlacesOf(toProduce, ingredient.product.unit)) return fail(409, TOO_MANY_PLACES);
+
       if (toProduce.gt(0) && !staged.has(ingredient.product.sku)) {
         staged.add(ingredient.product.sku);
         const planned = await planStage(read, ingredient.product.sku, toProduce, decided, staged);
@@ -192,7 +205,7 @@ async function planStage(
 // that takes. The preview and the record both come through here, so what the operator was shown is
 // what gets recorded as planned.
 // `produce` says how much to produce of an intermediate, by lower-case sku, at any depth of the plan;
-// the shortfall of its stock is produced otherwise.
+// the shortfall of its stock is produced otherwise, or nothing of one that cannot be produced.
 export async function planPreWeighing(
   productSku: string,
   quantity: string | Prisma.Decimal,
@@ -212,6 +225,8 @@ export const presentPreWeighing = (preWeighing: PreWeighingRecord) => ({
   product: preWeighing.product,
   quantity: preWeighing.quantity.toString(),
   createdAt: preWeighing.createdAt.toISOString(),
+  // No production is using it: one can start from it, and it can be deleted.
+  isAvailable: preWeighing.production === null,
   parent: preWeighing.parent,
   children: preWeighing.children.map(({ id, product, quantity }) => ({ id, product, quantity: quantity.toString() })),
   items: preWeighing.items.map(({ product, plannedQuantity, weighedQuantity }) => ({
@@ -390,7 +405,6 @@ function matchStage(plan: PreWeighingPlan, sent: StageBody): Result<PlannedStage
     const stage = stagesBySku.get(product.sku);
 
     if (stage === undefined || !manufactured?.stage) return fail(409, STAGE_MISMATCH);
-    if (!fitsPlacesOf(manufactured.stage.quantity, product.unit)) return fail(409, TOO_MANY_PLACES);
 
     const matched = matchStage(manufactured.stage, stage);
 
@@ -455,6 +469,16 @@ export async function recordPreWeighing(
   const preWeighing = await insertPreWeighingTree(planned.data, { createdById, parentId: parentId ?? null });
 
   return succeed(presentPreWeighing(preWeighing));
+}
+
+/** Deletes a pre-weighing nobody will produce, with the ones recorded under it. */
+export async function removePreWeighing(id: string): Promise<Result<null, 404 | 409>> {
+  const outcome = await deletePreWeighingTree(id);
+
+  if (outcome === "missing") return fail(404, "Pre-weighing not found.");
+  if (outcome === "guided") return fail(409, "The pre-weighing guides a production.");
+
+  return succeed(null);
 }
 
 export async function getPreWeighing(id: string): Promise<Result<PresentedPreWeighing, 404>> {

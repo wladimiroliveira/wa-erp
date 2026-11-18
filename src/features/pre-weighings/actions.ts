@@ -7,12 +7,14 @@ import { fail, type Failure } from "@/server/lib/result";
 import {
   createPreWeighingBodySchema,
   listPreWeighingsQuerySchema,
+  preWeighingIdParamsSchema,
   preWeighingPlanQuerySchema,
 } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import {
   listPreWeighingsPage,
   previewPreWeighing,
   recordPreWeighing,
+  removePreWeighing,
 } from "@/server/modules/pre-weighings/pre-weighings.service";
 import type { CreatePreWeighingBody, PreWeighing, PreWeighingPage, PreWeighingPlan } from "@/lib/api";
 
@@ -25,6 +27,7 @@ export interface PreWeighingTarget {
 export type PlanResult = { ok: true; data: PreWeighingPlan } | Failure;
 export type PreWeighingResult = { ok: true; data: PreWeighing } | Failure;
 export type PreWeighingPageResult = { ok: true; data: PreWeighingPage } | Failure;
+export type DeletePreWeighingResult = { ok: true; data: null } | Failure;
 
 const LIST_PATH = "/pre-weighings";
 const INVALID_INPUT = "Invalid input.";
@@ -65,6 +68,25 @@ export async function createPreWeighing(body: CreatePreWeighingBody): Promise<Pr
   if (!result.ok) return result;
 
   revalidatePath(LIST_PATH);
+
+  return result;
+}
+
+/** Deletes a pre-weighing no production is using, with the ones recorded under it. */
+export async function deletePreWeighing(id: string): Promise<DeletePreWeighingResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = preWeighingIdParamsSchema.safeParse({ id });
+
+  if (!params.success) return fail(400, INVALID_INPUT);
+
+  const result = await removePreWeighing(params.data.id);
+
+  if (!result.ok) return result;
+
+  revalidatePath(LIST_PATH, "layout");
 
   return result;
 }

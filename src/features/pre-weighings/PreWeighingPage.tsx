@@ -89,10 +89,12 @@ interface WeighingFormProps {
   /** The pre-weighing this one complements, if any. */
   parentId?: string;
   produce: StageProduce;
+  /** A quantity to make on screen is not the one the plan was made for, so the plan cannot be recorded. */
+  outdated: boolean;
   onRecorded: (preWeighing: PreWeighing) => void;
 }
 
-function WeighingForm({ target, plan, parentId, produce, onRecorded }: WeighingFormProps) {
+function WeighingForm({ target, plan, parentId, produce, outdated, onRecorded }: WeighingFormProps) {
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
@@ -200,7 +202,7 @@ function WeighingForm({ target, plan, parentId, produce, onRecorded }: WeighingF
         </p>
       ) : null}
 
-      <Button type="submit" disabled={saving || produce.disabled} className="self-start">
+      <Button type="submit" disabled={saving || produce.disabled || outdated} className="self-start">
         Registrar pré-pesagem
       </Button>
     </form>
@@ -261,6 +263,8 @@ export function PreWeighingPage({
   // How much to make of each intermediate, as typed, by SKU: only those the operator touched; the rest is the server's default.
   const [produceTyped, setProduceTyped] = useState<Record<string, string>>({});
   const [produceErrors, setProduceErrors] = useState<Record<string, string>>({});
+  // A re-plan for the quantities to make failed: the plan on screen is still the one before them.
+  const [replanFailed, setReplanFailed] = useState(false);
   // The plan to ask once the operator pauses in a quantity to make; a newer one, or a fresh plan, calls it off.
   const [replan, setReplan] = useState<{
     target: PreWeighingTarget;
@@ -302,15 +306,18 @@ export function PreWeighingPage({
         if (!result.ok) {
           // A re-plan that fails leaves the plan on screen, and what was weighed in it, as it was.
           if (fresh) setPlanned(null);
+          setReplanFailed(!fresh);
           setPlanFailure(messageForFailure(result, PLAN_MESSAGES));
           return;
         }
 
+        setReplanFailed(false);
         if (fresh) setRound((current) => current + 1);
         setPlanned({ target, tolerance, plan: result.data });
       } catch (error) {
         if (ask !== latestAsk.current) return;
         if (fresh) setPlanned(null);
+        setReplanFailed(!fresh);
         setPlanFailure(messageForFailure(error));
       }
     });
@@ -468,6 +475,7 @@ export function PreWeighingPage({
           plan={planned.plan}
           parentId={complement?.parentId}
           produce={produce}
+          outdated={replanFailed || Object.keys(produceErrors).length > 0}
           onRecorded={(preWeighing) => {
             // Nothing asked before the record may bring its plan back.
             latestAsk.current += 1;

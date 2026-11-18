@@ -215,6 +215,7 @@ export function aPreWeighing(over: Partial<PreWeighing> = {}): PreWeighing {
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
     quantity: "10",
     createdAt: "2026-10-13T12:00:00.000Z",
+    isAvailable: true,
     parent: null,
     children: [],
     items: [

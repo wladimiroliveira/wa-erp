@@ -64,6 +64,9 @@ const postPreWeighing = (headers: Headers, payload: Record<string, unknown>) =>
 const getPreWeighing = (headers: Headers, id: string) =>
   inject(preWeighingById, { method: "GET", url: `/v1/pre-weighings/${id}`, params: { id }, headers });
 
+const deletePreWeighing = (headers: Headers, id: string) =>
+  inject(preWeighingById, { method: "DELETE", url: `/v1/pre-weighings/${id}`, params: { id }, headers });
+
 const listPreWeighings = (headers: Headers, query: Record<string, string> = {}) =>
   inject(preWeighings, { method: "GET", url: "/v1/pre-weighings", headers, query });
 
@@ -401,7 +404,7 @@ describe("GET /v1/pre-weighings/plan with intermediates", () => {
     expect(inShell.manufactured.toProduce).toBe("3");
   });
 
-  it("refuses a plan whose intermediate has no recipe", async () => {
+  it("takes from stock, by default, an intermediate that has no recipe", async () => {
     const { headers } = await canRead();
     const { bonbon, filling } = await createBonbon();
 
@@ -409,8 +412,48 @@ describe("GET /v1/pre-weighings/plan with intermediates", () => {
 
     const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50" });
 
+    expect(response.statusCode).toBe(200);
+    expect(itemOf(response.json(), filling.sku).manufactured).toMatchObject({
+      needed: "1",
+      inStock: "0.3",
+      toProduce: "0",
+      stage: null,
+    });
+  });
+
+  it("takes from stock, by default, an intermediate whose recipe takes an inactive product", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling, milk, shell } = await createBonbon();
+
+    await testPrisma.product.update({ where: { sku: milk.sku }, data: { isActive: false } });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50" });
+
+    expect(response.statusCode).toBe(200);
+    expect(itemOf(response.json(), filling.sku).manufactured).toMatchObject({ toProduce: "0", stage: null });
+    expect(itemOf(response.json(), shell.sku).manufactured).toMatchObject({ toProduce: "50" });
+  });
+
+  it("refuses to produce an intermediate that has no recipe when told to", async () => {
+    const { headers } = await canRead();
+    const { bonbon, filling } = await createBonbon();
+
+    await testPrisma.recipe.delete({ where: { productSku: filling.sku } });
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${filling.sku}:1` });
+
     expect(response.statusCode).toBe(409);
     expect(response.json().message).toBe("Product has no recipe.");
+  });
+
+  it("refuses a quantity to produce with more places than the unit allows", async () => {
+    const { headers } = await canRead();
+    const { bonbon, shell } = await createBonbon();
+
+    const response = await getPlan(headers, { productSku: bonbon.sku, quantity: "50", produce: `${shell.sku}:2.5` });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The quantity has more decimal places than the unit allows.");
   });
 
   it("refuses a product listed twice in produce", async () => {
@@ -1115,3 +1158,115 @@ describe("GET /v1/pre-weighings", () => {
 });
 
 type Skus = { flour: string; water: string; salt: string };
+
+describe("DELETE /v1/pre-weighings/:id", () => {
+  // A dough weighed for itself, and a complement of water recorded under it.
+  async function doughTree(userId: string) {
+    const { dough, flour, water } = await createDough();
+    const root = await testPrisma.preWeighing.create({
+      data: {
+        productSku: dough.sku,
+        quantity: "50",
+        createdById: userId,
+        items: { create: [{ productSku: flour.sku, plannedQuantity: "30", weighedQuantity: "30" }] },
+      },
+    });
+    const child = await testPrisma.preWeighing.create({
+      data: {
+        productSku: dough.sku,
+        quantity: "25",
+        createdById: userId,
+        parentId: root.id,
+        items: { create: [{ productSku: water.sku, plannedQuantity: "9", weighedQuantity: "9" }] },
+      },
+    });
+
+    return { dough, root, child };
+  }
+
+  // A production in progress whose one item the pre-weighing guides.
+  const guide = (userId: string, productSku: string, preWeighingId: string) =>
+    testPrisma.production.create({
+      data: { createdById: userId, items: { create: [{ productSku, preWeighingId, expectedQuantity: "1" }] } },
+    });
+
+  const canDelete = () => authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
+
+  it("deletes an available pre-weighing with the ones recorded under it", async () => {
+    const { headers, userId } = await canDelete();
+    const { root } = await doughTree(userId);
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(204);
+    expect(await testPrisma.preWeighing.count()).toBe(0);
+    expect(await testPrisma.preWeighingItem.count()).toBe(0);
+  });
+
+  it("deletes a complement and leaves the pre-weighing it complements", async () => {
+    const { headers, userId } = await canDelete();
+    const { root, child } = await doughTree(userId);
+
+    const response = await deletePreWeighing(headers, child.id);
+
+    expect(response.statusCode).toBe(204);
+    expect((await getPreWeighing(headers, root.id)).json()).toMatchObject({ id: root.id, children: [] });
+  });
+
+  it("refuses to delete a pre-weighing that guides a production, and deletes nothing", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root } = await doughTree(userId);
+    await guide(userId, dough.sku, root.id);
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "The pre-weighing guides a production." });
+    expect(await testPrisma.preWeighing.count()).toBe(2);
+  });
+
+  it("refuses to delete a pre-weighing when one recorded under it guides a production", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root, child } = await doughTree(userId);
+    await guide(userId, dough.sku, child.id);
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(await testPrisma.preWeighing.count()).toBe(2);
+  });
+
+  it("deletes a pre-weighing whose production was canceled", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, child } = await doughTree(userId);
+    await guide(userId, dough.sku, child.id);
+    await testPrisma.productionItem.updateMany({ data: { preWeighingId: null } });
+
+    expect((await deletePreWeighing(headers, child.id)).statusCode).toBe(204);
+  });
+
+  it("says whether a pre-weighing is available to be produced", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root, child } = await doughTree(userId);
+    await guide(userId, dough.sku, child.id);
+
+    expect((await getPreWeighing(headers, root.id)).json()).toMatchObject({ isAvailable: true });
+    expect((await getPreWeighing(headers, child.id)).json()).toMatchObject({ isAvailable: false });
+  });
+
+  it("answers 404 for a pre-weighing that does not exist", async () => {
+    const { headers } = await canDelete();
+
+    expect((await deletePreWeighing(headers, MISSING_ID)).statusCode).toBe(404);
+  });
+
+  it("answers 403 without PRODUCTION_CREATE", async () => {
+    const { headers } = await canRead();
+
+    expect((await deletePreWeighing(headers, MISSING_ID)).statusCode).toBe(403);
+  });
+
+  it("answers 401 without a token", async () => {
+    expect((await deletePreWeighing(undefined, MISSING_ID)).statusCode).toBe(401);
+  });
+});

@@ -9,6 +9,7 @@ const preWeighingSelect = {
   quantity: true,
   createdAt: true,
   product: { select: productSelect },
+  production: { select: { id: true } },
   parent: { select: { id: true, product: { select: productSelect } } },
   children: {
     select: { id: true, quantity: true, product: { select: productSelect } },
@@ -108,28 +109,33 @@ export async function findAncestorIds(id: string): Promise<string[]> {
   return rows.map((row) => row.id);
 }
 
-// The pre-weighings right under these ones, each with the status of the production whose item it
-// guides: null when none does, which is also what a canceled production leaves behind.
-export async function findChildrenProgress(preWeighingIds: string[], client: Prisma.TransactionClient = prisma) {
-  if (preWeighingIds.length === 0) return [];
+// Deletes a pre-weighing and every one recorded under it, unless one of them guides a production.
+// The rows are held first, so no production can start from one of them while they are checked.
+export function deletePreWeighingTree(id: string): Promise<"deleted" | "missing" | "guided"> {
+  return prisma.$transaction(async (tx) => {
+    const tree = await tx.$queryRaw<{ id: string; depth: number }[]>`
+      WITH RECURSIVE tree AS (
+        SELECT p.id, 0 AS depth FROM pre_weighings p WHERE p.id = ${id}::uuid
+        UNION ALL
+        SELECT p.id, t.depth + 1 FROM pre_weighings p JOIN tree t ON p.parent_id = t.id
+      )
+      SELECT id::text AS id, depth FROM tree ORDER BY depth DESC`;
 
-  const children = await client.preWeighing.findMany({
-    where: { parentId: { in: preWeighingIds } },
-    select: {
-      id: true,
-      parentId: true,
-      product: { select: productSelect },
-      production: { select: { production: { select: { status: true } } } },
-    },
-    orderBy: [{ product: { description: "asc" } }, { id: "asc" }],
+    if (tree.length === 0) return "missing";
+
+    const ids = tree.map((row) => row.id);
+
+    await tx.$queryRaw`SELECT id FROM pre_weighings WHERE id = ANY(${ids}::uuid[]) FOR UPDATE`;
+
+    if ((await tx.productionItem.count({ where: { preWeighingId: { in: ids } } })) > 0) return "guided";
+
+    await tx.preWeighingItem.deleteMany({ where: { preWeighingId: { in: ids } } });
+
+    // The deepest first: a pre-weighing cannot go while one under it is still there.
+    for (const row of tree) await tx.preWeighing.delete({ where: { id: row.id } });
+
+    return "deleted";
   });
-
-  return children.map(({ id, parentId, product, production }) => ({
-    id,
-    parentId: parentId!,
-    product,
-    status: production?.production.status ?? null,
-  }));
 }
 
 export function findPreWeighingById(id: string) {

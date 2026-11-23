@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { useSession } from "@/features/auth/use-session";
 import { CancelProductionDialog } from "@/features/productions/CancelProductionDialog";
@@ -153,24 +154,25 @@ export function ProductionDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/productions" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
-        Voltar para as produções
-      </Link>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Link href="/productions" className="flex min-h-8 items-center text-sm underline underline-offset-4">
+          Voltar para as produções
+        </Link>
+
+        {/* Supporting facts, out of the way of the items: what the operator works on. */}
+        <div role="group" aria-label="Resumo da produção" className="flex flex-wrap items-center justify-end gap-2">
+          <ProductionStatusBadge status={production.status} />
+          <Badge variant="outline">Iniciada em {formatDateTime(production.createdAt)}</Badge>
+          {production.finishedAt !== null ? (
+            <Badge variant="outline">Finalizada em {formatDateTime(production.finishedAt)}</Badge>
+          ) : null}
+          {production.canceledAt !== null ? (
+            <Badge variant="outline">Cancelada em {formatDateTime(production.canceledAt)}</Badge>
+          ) : null}
+        </div>
+      </div>
 
       <PageTitle>Produção de {formatDateTime(production.createdAt)}</PageTitle>
-
-      <dl role="group" aria-label="Resumo da produção" className="grid gap-3 sm:grid-cols-3">
-        <Fact label="Status">
-          <ProductionStatusBadge status={production.status} />
-        </Fact>
-        <Fact label="Iniciada em">{formatDateTime(production.createdAt)}</Fact>
-        {production.finishedAt !== null ? (
-          <Fact label="Finalizada em">{formatDateTime(production.finishedAt)}</Fact>
-        ) : null}
-        {production.canceledAt !== null ? (
-          <Fact label="Cancelada em">{formatDateTime(production.canceledAt)}</Fact>
-        ) : null}
-      </dl>
 
       {itemsAsTree(production.items).map(({ item, depth }) => (
         <Item

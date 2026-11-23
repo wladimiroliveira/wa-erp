@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProductionDetailPage } from "@/features/productions/ProductionDetailPage";
 import { moneyOf } from "@/features/stock/stock-format";
+import { formatDateTime } from "@/lib/dates";
 import type { Permission, Production } from "@/lib/api";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser, aLossReason, aProduction, aProductionItem } from "@/tests/samples";
@@ -31,6 +32,28 @@ const STAGED = aProduction({
     aProductionItem({ id: "bombom", product: product("Bombom"), dependsOn: ["filling", "shell"] }),
     aProductionItem({ id: "filling", product: product("Recheio") }),
   ],
+});
+
+describe("ProductionDetailPage, summary", () => {
+  it("shows the status and when it started as badges, not as cards", () => {
+    const production = aProduction({ status: "IN_PROGRESS" });
+    open(production);
+
+    const summary = within(screen.getByRole("group", { name: "Resumo da produção" }));
+    expect(summary.getByText("Em andamento")).toBeInTheDocument();
+    expect(summary.getByText(`Iniciada em ${formatDateTime(production.createdAt)}`)).toBeInTheDocument();
+    expect(summary.queryByText("Status")).not.toBeInTheDocument();
+  });
+
+  it("adds when it finished or was canceled", () => {
+    open(aProduction({ status: "FINISHED", finishedAt: "2026-10-14T15:00:00.000Z" }));
+
+    expect(
+      within(screen.getByRole("group", { name: "Resumo da produção" })).getByText(
+        `Finalizada em ${formatDateTime("2026-10-14T15:00:00.000Z")}`,
+      ),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("ProductionDetailPage, item states", () => {
@@ -199,7 +222,7 @@ describe("ProductionDetailPage", () => {
       }),
     );
 
-    expect(screen.getByText("Finalizada em")).toBeInTheDocument();
+    expect(screen.getByText(/^Finalizada em/)).toBeInTheDocument();
     expect(screen.getByText("9,5 kg")).toBeInTheDocument();
     expect(screen.getByText(moneyOf("2.5"))).toBeInTheDocument();
     expect(screen.getByText(moneyOf("1.2"))).toBeInTheDocument();
@@ -311,7 +334,7 @@ describe("ProductionDetailPage", () => {
   it("offers no finishing once the production is closed", () => {
     open(aProduction({ status: "CANCELED", canceledAt: "2026-10-14T15:00:00.000Z" }));
 
-    expect(screen.getByText("Cancelada em")).toBeInTheDocument();
+    expect(screen.getByText(/^Cancelada em/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Finalizar selecionados" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
   });

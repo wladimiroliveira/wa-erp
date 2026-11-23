@@ -25,10 +25,6 @@ export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighin
 
   return (
     <div className="flex flex-col gap-4">
-      <Link href="/pre-weighings" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
-        Voltar para as pré-pesagens
-      </Link>
-
       <PageTitle>Pré-pesagem de {preWeighing.product.description}</PageTitle>
 
       <div className="self-start">

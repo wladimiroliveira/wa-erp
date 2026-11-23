@@ -110,10 +110,10 @@ describe("PreWeighingDetailPage", () => {
     expect(link).toHaveTextContent("2,5 kg");
   });
 
-  it("leads back to the list", () => {
+  it("leaves the way back to the breadcrumbs", () => {
     open();
 
-    expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveAttribute("href", "/pre-weighings");
+    expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
   });
 });
 
@@ -124,14 +124,6 @@ describe("PreWeighingDetailPage columns", () => {
     });
 
     await waitFor(() => expect(columnHeaders()[0]).toBe("Planejado"));
-  });
-});
-
-describe("PreWeighingDetailPage sizing", () => {
-  it("keeps the way back as tall as a control", () => {
-    open();
-
-    expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveClass("min-h-8");
   });
 });
 

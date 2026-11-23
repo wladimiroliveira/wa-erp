@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -155,10 +154,6 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/productions" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
-        Voltar para as produções
-      </Link>
-
       <PageTitle>Nova produção</PageTitle>
 
       <fieldset className="flex flex-col gap-2">

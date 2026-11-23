@@ -24,7 +24,7 @@ import { formatDateTime } from "@/lib/dates";
 import { formatMoney } from "@/lib/decimal";
 import { divideHalfUp, fromScaled, scale, toScaled } from "@/shared/fixed-point";
 import { normalizeDecimal, readableQuantity } from "@/shared/units";
-import { PageTitle } from "@/components/layout/PageTitle";
+import { PageAside, PageTitle } from "@/components/layout/PageTitle";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -154,13 +154,9 @@ export function ProductionDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link href="/productions" className="flex min-h-8 items-center text-sm underline underline-offset-4">
-          Voltar para as produções
-        </Link>
-
+      <PageAside>
         {/* Supporting facts, out of the way of the items: what the operator works on. */}
-        <div role="group" aria-label="Resumo da produção" className="flex flex-wrap items-center justify-end gap-2">
+        <div role="group" aria-label="Resumo da produção" className="flex items-center gap-2">
           <ProductionStatusBadge status={production.status} />
           <Badge variant="outline">Iniciada em {formatDateTime(production.createdAt)}</Badge>
           {production.finishedAt !== null ? (
@@ -170,9 +166,9 @@ export function ProductionDetailPage({
             <Badge variant="outline">Cancelada em {formatDateTime(production.canceledAt)}</Badge>
           ) : null}
         </div>
-      </div>
+      </PageAside>
 
-      <PageTitle>Produção de {formatDateTime(production.createdAt)}</PageTitle>
+      <PageTitle crumb={`Produção de ${formatDateTime(production.createdAt)}`}>Produção</PageTitle>
 
       {itemsAsTree(production.items).map(({ item, depth }) => (
         <Item

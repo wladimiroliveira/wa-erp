@@ -68,6 +68,12 @@ beforeEach(() => {
 });
 
 describe("StartProductionPage", () => {
+  it("leaves the way back to the breadcrumbs", () => {
+    open();
+
+    expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
+  });
+
   it("shows neither form before the operator chooses", () => {
     open();
 

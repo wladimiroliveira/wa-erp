@@ -35,6 +35,18 @@ const STAGED = aProduction({
 });
 
 describe("ProductionDetailPage, summary", () => {
+  it("titles the screen generically, leaving its date and time to the breadcrumbs", () => {
+    open();
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Produção$/);
+  });
+
+  it("leaves the way back to the breadcrumbs", () => {
+    open();
+
+    expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
+  });
+
   it("shows the status and when it started as badges, not as cards", () => {
     const production = aProduction({ status: "IN_PROGRESS" });
     open(production);

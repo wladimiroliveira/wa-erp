@@ -22,7 +22,13 @@ const CANCEL_MESSAGES = {
   409: "A produção já foi finalizada ou cancelada. A página foi atualizada.",
 };
 
-export function CancelProductionDialog({ productionId }: { productionId: string }) {
+interface CancelProductionDialogProps {
+  productionId: string;
+  // Items finished stay: their stock and lots are not undone by canceling.
+  hasFinishedItems: boolean;
+}
+
+export function CancelProductionDialog({ productionId, hasFinishedItems }: CancelProductionDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -73,7 +79,9 @@ export function CancelProductionDialog({ productionId }: { productionId: string 
           <AlertDialogHeader>
             <AlertDialogTitle>Cancelar esta produção?</AlertDialogTitle>
             <AlertDialogDescription>
-              As pré-pesagens usadas voltam a ficar disponíveis. O estoque não é alterado.
+              {hasFinishedItems
+                ? "Os itens já finalizados continuam no estoque. As pré-pesagens dos demais voltam a ficar pendentes."
+                : "As pré-pesagens usadas voltam a ficar disponíveis. O estoque não é alterado."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 

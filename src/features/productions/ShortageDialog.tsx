@@ -129,7 +129,7 @@ export function ShortageDialog({ production, conflict, onClose, onReduced }: Sho
               </span>
               {parentId !== null ? (
                 <Link
-                  href={`/pre-weighings/new?${new URLSearchParams({ parentId, productSku: product.sku, quantity: missing })}`}
+                  href={`/pre-weighings/new?${new URLSearchParams({ productionId: production.id, parentId, productSku: product.sku, quantity: missing })}`}
                   className={buttonVariants({ variant: "outline", size: "sm" })}
                 >
                   Nova pesagem

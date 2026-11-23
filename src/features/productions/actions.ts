@@ -4,29 +4,31 @@ import { revalidatePath } from "next/cache";
 import { Permission } from "@prisma/client";
 import { can, requireUser } from "@/server/auth/current-user";
 import { fail, type Failure } from "@/server/lib/result";
+import { preWeighingPlanQuerySchema } from "@/server/modules/pre-weighings/pre-weighings.schemas";
+import { previewPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
 import {
-  listPreWeighingsQuerySchema,
-  preWeighingPlanQuerySchema,
-} from "@/server/modules/pre-weighings/pre-weighings.schemas";
-import { listPreWeighingsPage, previewPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
-import {
+  damageProductionItemBodySchema,
   finishProductionBodySchema,
   listProductionsQuerySchema,
   productionIdParamsSchema,
   productionItemParamsSchema,
+  productionLeftoversQuerySchema,
+  productionWeighingBodySchema,
   reduceProductionItemBodySchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
 import * as productions from "@/server/modules/productions/productions.service";
 import type {
+  DamageProductionItemBody,
   FinishConflict,
   FinishProductionBody,
   LeftoversPreview,
-  PreWeighingPage,
   PreWeighingPlan,
   Production,
   ProductionPage,
   ProductionStatus,
+  ProductionSubstitution,
+  ProductionWeighingBody,
   StartProductionBody,
 } from "@/lib/api";
 
@@ -36,7 +38,7 @@ export type FinishProductionResult = ProductionResult | (Failure<409> & { detail
 export type LeftoversPreviewResult = { ok: true; data: LeftoversPreview } | Failure;
 export type ProductionPageResult = { ok: true; data: ProductionPage } | Failure;
 export type PlanResult = { ok: true; data: PreWeighingPlan } | Failure;
-export type PreWeighingPageResult = { ok: true; data: PreWeighingPage } | Failure;
+export type SubstitutionPreviewResult = { ok: true; data: ProductionSubstitution } | Failure;
 
 const LIST_PATH = "/productions";
 // Starting and canceling change which pre-weighings are still available.
@@ -45,6 +47,13 @@ const INVALID_INPUT = "Invalid input.";
 const DENIED = "Permission denied.";
 
 const detailPath = (id: string) => `${LIST_PATH}/${id}`;
+
+// What a production changes shows in the lists, in its own page and in the pre-weighings it uses.
+function revalidateProduction(id: string): void {
+  revalidatePath(LIST_PATH);
+  revalidatePath(detailPath(id));
+  revalidatePath(PRE_WEIGHINGS_PATH);
+}
 
 export async function startProduction(body: StartProductionBody): Promise<ProductionResult> {
   const user = await requireUser();
@@ -65,20 +74,24 @@ export async function startProduction(body: StartProductionBody): Promise<Produc
   return result;
 }
 
-/** What finishing the production would discard of the opened packagings, as the stock stands now. */
-export async function previewLeftovers(id: string): Promise<LeftoversPreviewResult> {
+/**
+ * What finishing these items of the production would discard of the opened packagings, as the
+ * stock stands now. With no items, every pending one.
+ */
+export async function previewLeftovers(id: string, itemIds?: string[]): Promise<LeftoversPreviewResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
 
   const params = productionIdParamsSchema.safeParse({ id });
+  const query = productionLeftoversQuerySchema.safeParse({ items: itemIds });
 
-  if (!params.success) return fail(400, INVALID_INPUT);
+  if (!params.success || !query.success) return fail(400, INVALID_INPUT);
 
-  return productions.previewLeftovers(params.data.id);
+  return productions.previewLeftovers(params.data.id, query.data.items);
 }
 
-export async function finishProduction(id: string, body: FinishProductionBody): Promise<FinishProductionResult> {
+export async function finishProductionItems(id: string, body: FinishProductionBody): Promise<FinishProductionResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
@@ -92,8 +105,7 @@ export async function finishProduction(id: string, body: FinishProductionBody): 
 
   if (!result.ok) return result;
 
-  revalidatePath(LIST_PATH);
-  revalidatePath(detailPath(params.data.id));
+  revalidateProduction(params.data.id);
 
   return result;
 }
@@ -172,15 +184,93 @@ export async function planProductionItem(target: { productSku: string; quantity:
   return previewPreWeighing(parsed.data.productSku, parsed.data.quantity);
 }
 
-/** The page of pre-weighings no production uses yet, after `cursor`. */
-export async function loadMoreAvailablePreWeighings(cursor: string): Promise<PreWeighingPageResult> {
+/** An item went wrong before it finished: what it took leaves the stock as losses under the reason. */
+export async function damageProductionItem(
+  id: string,
+  itemId: string,
+  body: DamageProductionItemBody,
+): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionItemParamsSchema.safeParse({ id, itemId });
+  const parsed = damageProductionItemBodySchema.safeParse(body);
+
+  if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
+
+  const result = await productions.damageProductionItem({
+    productionId: params.data.id,
+    itemId: params.data.itemId,
+    ...parsed.data,
+    createdById: user.id,
+  });
+
+  if (!result.ok) return result;
+
+  revalidateProduction(params.data.id);
+
+  return result;
+}
+
+/** The stock of an intermediate against what the pending items take of it, before it is used instead of made. */
+export async function previewSubstitution(id: string, itemId: string): Promise<SubstitutionPreviewResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
 
-  const parsed = listPreWeighingsQuerySchema.safeParse({ cursor, available: "true" });
+  const params = productionItemParamsSchema.safeParse({ id, itemId });
 
-  if (!parsed.success) return fail(400, INVALID_INPUT);
+  if (!params.success) return fail(400, INVALID_INPUT);
 
-  return { ok: true, data: await listPreWeighingsPage(parsed.data) };
+  return productions.previewSubstitution({ productionId: params.data.id, itemId: params.data.itemId });
+}
+
+/** Resolves an intermediate with stock of the same product instead of making it. */
+export async function substituteProductionItem(id: string, itemId: string): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionItemParamsSchema.safeParse({ id, itemId });
+
+  if (!params.success) return fail(400, INVALID_INPUT);
+
+  const result = await productions.substituteProductionItem({
+    productionId: params.data.id,
+    itemId: params.data.itemId,
+  });
+
+  if (!result.ok) return result;
+
+  revalidateProduction(params.data.id);
+
+  return result;
+}
+
+/** A pre-weighing recorded inside the production: a new weighing for a damaged item, or the complement of a short one. */
+export async function recordProductionWeighing(id: string, body: ProductionWeighingBody): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionIdParamsSchema.safeParse({ id });
+  const parsed = productionWeighingBodySchema.safeParse(body);
+
+  if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
+
+  const { itemId, parentId, ...tree } = parsed.data;
+  const result = await productions.recordProductionWeighing({
+    productionId: params.data.id,
+    createdById: user.id,
+    itemId,
+    parentId,
+    tree,
+  });
+
+  if (!result.ok) return result;
+
+  revalidateProduction(params.data.id);
+
+  return result;
 }

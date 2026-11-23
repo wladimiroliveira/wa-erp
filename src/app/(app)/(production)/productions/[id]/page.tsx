@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ProductionDetailPage } from "@/features/productions/ProductionDetailPage";
+import { listLossReasons } from "@/server/modules/losses/losses.service";
 import { productionIdParamsSchema } from "@/server/modules/productions/productions.schemas";
 import { getProduction } from "@/server/modules/productions/productions.service";
 
@@ -13,5 +14,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
   if (!result.ok) notFound();
 
-  return <ProductionDetailPage production={result.data} />;
+  const lossReasons = (await listLossReasons()).filter(({ isActive }) => isActive);
+
+  return <ProductionDetailPage production={result.data} lossReasons={lossReasons} />;
 }

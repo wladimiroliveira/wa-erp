@@ -68,12 +68,13 @@ export const preWeighingStageBodySchema = z
       .array(z.object({ productSku: z.uuid(), weighedQuantity: positiveDecimalSchema.optional() }))
       .refine(listsEachProductOnce, { message: "An item is listed more than once." }),
     get stages(): z.ZodDefault<z.ZodArray<z.ZodType<StageOutput, StageInput>>> {
-      return stagesSchema();
+      return preWeighingStagesSchema();
     },
   })
   .meta({ id: "PreWeighingStageBody" });
 
-function stagesSchema() {
+// A body that extends the stage body lists its stages anew with this, for the reason below.
+export function preWeighingStagesSchema() {
   return z.array(preWeighingStageBodySchema).default([]);
 }
 
@@ -82,18 +83,20 @@ function stagesSchema() {
 // for the recursion.
 export const createPreWeighingBodySchema = preWeighingStageBodySchema.extend({
   parentId: z.uuid().optional(),
-  stages: stagesSchema(),
+  stages: preWeighingStagesSchema(),
 });
 
 export const preWeighingIdParamsSchema = z.object({ id: z.uuid() });
 
-// A pre-weighing is available while no production is using it.
-export const listPreWeighingsQuerySchema = pageQuerySchema.extend({
-  available: z
-    .enum(["true", "false"])
-    .transform((value) => value === "true")
-    .optional(),
-});
+export const preWeighingStatusSchema = z.enum(["PENDING", "IN_PRODUCTION", "PRODUCED", "DAMAGED"]);
+
+// `status` keeps the pre-weighings of one status; `staleOnly` keeps the pending ones older than 48 hours.
+// A filter that is not known is refused, so a client of the removed `available` filter hears of it.
+export const listPreWeighingsQuerySchema = pageQuerySchema
+  .extend({ status: preWeighingStatusSchema.optional(), staleOnly: z.literal("true").optional() })
+  .strict();
+
+export const staleCountSchema = z.object({ count: z.number().int() });
 
 // A quantity to produce and what it leaves of the opened packagings, the money lost in reais, to the cent.
 const wasteSuggestionSchema = z.object({
@@ -148,8 +151,8 @@ export const preWeighingSchema = z.object({
   product: productSummarySchema,
   quantity: z.string(),
   createdAt: z.iso.datetime(),
-  // No production is using it: one can start from it, and it can be deleted.
-  isAvailable: z.boolean(),
+  // Only a pending one can start a production and be deleted.
+  status: preWeighingStatusSchema,
   // The pre-weighing whose product takes this one's, and the ones of the intermediates this one takes.
   parent: z.object({ id: z.uuid(), product: productSummarySchema }).nullable(),
   children: z.array(z.object({ id: z.uuid(), product: productSummarySchema, quantity: z.string() })),
@@ -160,3 +163,12 @@ export const preWeighingSchema = z.object({
 });
 
 export const preWeighingPageSchema = pageSchema(preWeighingSchema);
+
+// A pending pre-weighing a production can start from and, under it, the pending ones it takes.
+export const startCandidateSchema = preWeighingSchema
+  .extend({
+    get stages() {
+      return z.array(startCandidateSchema);
+    },
+  })
+  .meta({ id: "StartCandidate" });

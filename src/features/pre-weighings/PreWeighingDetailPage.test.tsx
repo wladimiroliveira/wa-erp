@@ -139,20 +139,33 @@ describe("PreWeighingDetailPage, deleting", () => {
   const CAN_CREATE = aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] });
 
   it("offers to delete a pre-weighing no production is using", () => {
-    open(aPreWeighing({ isAvailable: true }), { user: CAN_CREATE });
+    open(aPreWeighing({ status: "PENDING" }), { user: CAN_CREATE });
 
     expect(screen.getByRole("button", { name: "Excluir pré-pesagem" })).toBeInTheDocument();
   });
 
   it("does not offer to delete a pre-weighing a production is using", () => {
-    open(aPreWeighing({ isAvailable: false }), { user: CAN_CREATE });
+    open(aPreWeighing({ status: "IN_PRODUCTION" }), { user: CAN_CREATE });
 
     expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
   });
 
   it("does not offer to delete to someone who cannot record productions", () => {
-    open(aPreWeighing({ isAvailable: true }), { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
+    open(aPreWeighing({ status: "PENDING" }), { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
 
     expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PreWeighingDetailPage, status", () => {
+  it.each([
+    ["PENDING", "Pendente"],
+    ["IN_PRODUCTION", "Em produção"],
+    ["PRODUCED", "Produzida"],
+    ["DAMAGED", "Avariada"],
+  ] as const)("shows %s as %s under the title", (status, label) => {
+    open(aPreWeighing({ status }));
+
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 });

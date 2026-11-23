@@ -47,7 +47,7 @@ describe("ShortageDialog", () => {
 
     expect(screen.getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
       "href",
-      `/pre-weighings/new?parentId=w1&productSku=${DOUGH.sku}&quantity=7.5`,
+      `/pre-weighings/new?productionId=p1&parentId=w1&productSku=${DOUGH.sku}&quantity=7.5`,
     );
   });
 
@@ -112,7 +112,7 @@ describe("ShortageDialog", () => {
     // The first short item has no pre-weighing; the next one guides the new weighing.
     expect(within(dialog).getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
       "href",
-      `/pre-weighings/new?parentId=w2&productSku=${DOUGH.sku}&quantity=1.5`,
+      `/pre-weighings/new?productionId=p1&parentId=w2&productSku=${DOUGH.sku}&quantity=1.5`,
     );
     expect(within(dialog).getAllByRole("button", { name: "Reduzir" })).toHaveLength(2);
     expect(
@@ -130,7 +130,7 @@ describe("ShortageDialog", () => {
     expect(screen.getByText("Massa base: precisa 12 kg, tem -4,5 kg")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
       "href",
-      `/pre-weighings/new?parentId=w1&productSku=${DOUGH.sku}&quantity=16.5`,
+      `/pre-weighings/new?productionId=p1&parentId=w1&productSku=${DOUGH.sku}&quantity=16.5`,
     );
   });
 
@@ -146,7 +146,7 @@ describe("ShortageDialog", () => {
 
     expect(screen.getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
       "href",
-      `/pre-weighings/new?parentId=w1&productSku=${DOUGH.sku}&quantity=${quantity}`,
+      `/pre-weighings/new?productionId=p1&parentId=w1&productSku=${DOUGH.sku}&quantity=${quantity}`,
     );
   });
 

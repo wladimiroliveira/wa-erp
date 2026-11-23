@@ -67,7 +67,7 @@ describe("DeletePreWeighingDialog", () => {
     vi.mocked(deletePreWeighing).mockResolvedValue({
       ok: false,
       status: 409,
-      message: "The pre-weighing guides a production.",
+      message: "The pre-weighing is not pending.",
     });
     await openDialog();
 

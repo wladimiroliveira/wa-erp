@@ -2,6 +2,7 @@ import type {
   MeasurementUnit as PrismaMeasurementUnit,
   Permission as PrismaPermission,
   ProductKind as PrismaProductKind,
+  ProductionItemStatus as PrismaProductionItemStatus,
   ProductionStatus as PrismaProductionStatus,
   StockMovementType as PrismaStockMovementType,
 } from "@prisma/client";
@@ -69,3 +70,12 @@ export const PRODUCTION_STATUSES = [
 
 export const productionStatusSchema = z.enum(PRODUCTION_STATUSES);
 export type ProductionStatus = (typeof PRODUCTION_STATUSES)[number];
+
+export const PRODUCTION_ITEM_STATUSES = [
+  "PENDING",
+  "FINISHED",
+  "SUBSTITUTED",
+] as const satisfies readonly PrismaProductionItemStatus[];
+
+export const productionItemStatusSchema = z.enum(PRODUCTION_ITEM_STATUSES);
+export type ProductionItemStatus = (typeof PRODUCTION_ITEM_STATUSES)[number];

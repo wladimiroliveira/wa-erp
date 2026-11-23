@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { preWeighingPlanQuerySchema } from "./pre-weighings.schemas";
-import { previewPreWeighing } from "./pre-weighings.service";
+import { preparePreWeighing, previewPreWeighing } from "./pre-weighings.service";
 
 const repository = vi.hoisted(() => ({
   findProductWithRecipe: vi.fn(),
@@ -129,6 +129,43 @@ describe("previewPreWeighing, waste", () => {
 
     expect(found!.uncosted.map(({ sku }) => sku)).toEqual(["sku-milk"]);
     expect(found!.requested.leftovers).toEqual([expect.objectContaining({ leftover: "160", loss: null })]);
+  });
+});
+
+describe("preparePreWeighing", () => {
+  const pudding = (items: { productSku: string; weighedQuantity?: string }[]) => ({
+    productSku: "sku-pudding",
+    quantity: "10",
+    items,
+    stages: [],
+  });
+
+  it("gives back the tree checked against the plan, and records nothing", async () => {
+    repository.findProductWithRecipe.mockResolvedValue(PUDDING([ingredient("sku-sugar", "Açúcar", "300")]));
+
+    const result = await preparePreWeighing(pudding([{ productSku: "sku-sugar", weighedQuantity: "2990" }]));
+
+    if (!result.ok) throw new Error(result.message);
+    expect(result.data).toMatchObject({
+      productSku: "sku-pudding",
+      quantity: "10",
+      items: [{ productSku: "sku-sugar", weighedQuantity: "2990" }],
+      stages: [],
+    });
+    expect(result.data.items[0]!.plannedQuantity.toString()).toBe("3000");
+    expect(repository.insertPreWeighingTree).not.toHaveBeenCalled();
+  });
+
+  it("refuses items that do not match the recipe", async () => {
+    repository.findProductWithRecipe.mockResolvedValue(PUDDING([ingredient("sku-sugar", "Açúcar", "300")]));
+
+    const result = await preparePreWeighing(pudding([{ productSku: "sku-salt", weighedQuantity: "1" }]));
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      message: "The items do not match the ingredients of the recipe.",
+    });
   });
 });
 

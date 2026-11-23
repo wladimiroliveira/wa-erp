@@ -13,6 +13,7 @@ import type {
   Recipe,
   RecipeSummary,
   Role,
+  StartCandidate,
   PackagingCost,
   ProductStock,
   StockItem,
@@ -215,7 +216,7 @@ export function aPreWeighing(over: Partial<PreWeighing> = {}): PreWeighing {
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
     quantity: "10",
     createdAt: "2026-10-13T12:00:00.000Z",
-    isAvailable: true,
+    status: "PENDING",
     parent: null,
     children: [],
     items: [
@@ -229,14 +230,24 @@ export function aPreWeighing(over: Partial<PreWeighing> = {}): PreWeighing {
   };
 }
 
+export function aStartCandidate(over: Partial<StartCandidate> = {}): StartCandidate {
+  return { ...aPreWeighing(), stages: [], ...over };
+}
+
 export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionItem {
   return {
     id: "018f0000-0000-7000-8000-0000000000b1",
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
+    status: "PENDING",
+    finishedAt: null,
+    hasLeftoversInCost: null,
     preWeighingId: null,
     expectedQuantity: "10",
     producedQuantity: null,
     unitCost: null,
+    dependsOn: [],
+    awaitsWeighing: false,
+    damages: [],
     inputs: [
       {
         product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM" },
@@ -256,7 +267,6 @@ export function aProduction(over: Partial<Production> = {}): Production {
     createdAt: "2026-10-14T12:00:00.000Z",
     finishedAt: null,
     canceledAt: null,
-    hasLeftoversInCost: null,
     items: [aProductionItem()],
     ...over,
   };

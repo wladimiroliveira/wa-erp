@@ -27,10 +27,10 @@ export function updateLossReason(
   return prisma.lossReason.update({ where: { id }, data: input, ...REASON_FIELDS });
 }
 
-type ReasonFailure = "reason-missing" | "reason-inactive";
+export type ReasonFailure = "reason-missing" | "reason-inactive";
 
 // Thrown inside the transaction of a loss so that what it had already taken from the lot is undone.
-class RefusedReason extends Error {
+export class RefusedReason extends Error {
   constructor(readonly failure: ReasonFailure) {
     super(failure);
   }
@@ -38,7 +38,7 @@ class RefusedReason extends Error {
 
 // The reason is read once the stock is held and kept as it is until the loss is recorded: read any
 // earlier, it could be put out of use while the loss waits its turn at the stock.
-async function holdReasonInUse(client: Prisma.TransactionClient, reasonId: string) {
+export async function holdReasonInUse(client: Prisma.TransactionClient, reasonId: string) {
   const [reason] = await client.$queryRaw<{ isActive: boolean }[]>`
     SELECT is_active AS "isActive" FROM loss_reasons WHERE id = ${reasonId}::uuid FOR SHARE
   `;

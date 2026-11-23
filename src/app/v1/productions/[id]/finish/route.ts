@@ -14,7 +14,7 @@ export const POST = apiHandler(
     auth: Permission.PRODUCTION_CREATE,
     tags: ["productions"],
     summary:
-      "Finaliza uma produção: baixa os insumos, descarta as sobras de embalagens abertas e dá entrada no que foi produzido",
+      "Finaliza itens da produção: baixa os insumos, descarta as sobras de embalagens abertas e dá entrada no que foi produzido; a produção finaliza com o último item pendente",
     params: productionIdParamsSchema,
     body: finishProductionBodySchema,
     response: { 200: productionSchema, 404: messageSchema, 409: finishConflictSchema },

@@ -1,4 +1,4 @@
-import { MeasurementUnit, Prisma, ProductionStatus, ProductKind } from "@prisma/client";
+import { MeasurementUnit, Prisma, ProductKind } from "@prisma/client";
 import type { z } from "zod";
 import { fitsPlacesOf, TOO_MANY_PLACES } from "@/server/lib/decimal";
 import { localToday, toOptionalDateString } from "@/server/lib/dates";
@@ -6,11 +6,15 @@ import { toPage } from "@/server/lib/pagination";
 import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
 import { suggestLots } from "@/server/modules/stock/stock.repository";
 import { defaultToProduce, planQuantity, suggestQuantities, type Suggestion } from "./pre-weighings.plan";
+import { preWeighingStatusOf, type PreWeighingStatus } from "./pre-weighing-status";
 import {
+  countStalePreWeighings,
   deletePreWeighingTree,
   findComplementParent,
   findPreWeighingById,
   findProductWithRecipe,
+  listPendingChildren,
+  listPendingStartRoots,
   insertPreWeighingTree,
   listPreWeighings,
   type PlannedStage,
@@ -225,8 +229,11 @@ export const presentPreWeighing = (preWeighing: PreWeighingRecord) => ({
   product: preWeighing.product,
   quantity: preWeighing.quantity.toString(),
   createdAt: preWeighing.createdAt.toISOString(),
-  // No production is using it: one can start from it, and it can be deleted.
-  isAvailable: preWeighing.production === null,
+  // Only a pending one can start a production and be deleted.
+  status: preWeighingStatusOf({
+    damaged: preWeighing.damage !== null,
+    itemStatus: preWeighing.production?.status ?? null,
+  }),
   parent: preWeighing.parent,
   children: preWeighing.children.map(({ id, product, quantity }) => ({ id, product, quantity: quantity.toString() })),
   items: preWeighing.items.map(({ product, plannedQuantity, weighedQuantity }) => ({
@@ -347,7 +354,7 @@ export async function previewPreWeighing(
   return succeed(await previewPlan(result.data, tolerance, localToday()));
 }
 
-type StageBody = z.output<typeof preWeighingStageBodySchema>;
+export type StageBody = z.output<typeof preWeighingStageBodySchema>;
 
 const STAGE_MISMATCH = "A stage does not match the plan.";
 const ITEMS_MISMATCH = "The items do not match the ingredients of the recipe.";
@@ -425,8 +432,18 @@ function matchStage(plan: PreWeighingPlan, sent: StageBody): Result<PlannedStage
   });
 }
 
-// A complement goes under a pre-weighing whose recipe takes its product, while the production that
-// pre-weighing guides is not over.
+/** Refused wherever a complement is recorded under a pre-weighing whose recipe does not take its product. */
+export const PARENT_DOES_NOT_TAKE = "The parent's recipe does not take this product.";
+
+// Why a complement cannot go under a parent that is no longer pending. One in production takes its
+// complement through the production, which joins it there and holds the production while it does.
+const PARENT_NOT_PENDING: Record<Exclude<PreWeighingStatus, "PENDING">, string> = {
+  IN_PRODUCTION: "The parent is in production; record the complement through the production.",
+  PRODUCED: "The parent has already been produced.",
+  DAMAGED: "The parent was damaged.",
+};
+
+// A complement goes under a pending pre-weighing whose recipe takes its product.
 async function checkParent(parentId: string, productSku: string): Promise<Failure<404 | 409> | null> {
   const parent = await findComplementParent(parentId);
 
@@ -434,13 +451,32 @@ async function checkParent(parentId: string, productSku: string): Promise<Failur
 
   const takesIt = parent.product.recipe?.ingredients.some((ingredient) => ingredient.productSku === productSku);
 
-  if (!takesIt) return fail(409, "The parent's recipe does not take this product.");
+  if (!takesIt) return fail(409, PARENT_DOES_NOT_TAKE);
 
-  if (parent.production?.production?.status === ProductionStatus.FINISHED) {
-    return fail(409, "The parent's production has already finished.");
-  }
+  const status = preWeighingStatusOf({
+    damaged: parent.damage !== null,
+    itemStatus: parent.production?.status ?? null,
+  });
+
+  if (status !== "PENDING") return fail(409, PARENT_NOT_PENDING[status]);
 
   return null;
+}
+
+/**
+ * Plans a tree as it was sent, each intermediate produced as its stage says, and checks what was sent
+ * against that plan. Nothing is written: the tree comes back ready to be recorded.
+ */
+export async function preparePreWeighing(tree: StageBody): Promise<Result<PlannedStage, PlanFailure>> {
+  const produced = producedBy(tree.stages);
+
+  if (produced === null) return fail(409, STAGE_MISMATCH);
+
+  const result = await planPreWeighing(tree.productSku, tree.quantity, new NothingElse(produced));
+
+  if (!result.ok) return result;
+
+  return matchStage(result.data, tree);
 }
 
 export async function recordPreWeighing(
@@ -454,15 +490,7 @@ export async function recordPreWeighing(
     if (refusal !== null) return refusal;
   }
 
-  const produced = producedBy(tree.stages);
-
-  if (produced === null) return fail(409, STAGE_MISMATCH);
-
-  const result = await planPreWeighing(tree.productSku, tree.quantity, new NothingElse(produced));
-
-  if (!result.ok) return result;
-
-  const planned = matchStage(result.data, tree);
+  const planned = await preparePreWeighing(tree);
 
   if (!planned.ok) return planned;
 
@@ -471,12 +499,12 @@ export async function recordPreWeighing(
   return succeed(presentPreWeighing(preWeighing));
 }
 
-/** Deletes a pre-weighing nobody will produce, with the ones recorded under it. */
+/** Deletes a pending pre-weighing, with the ones recorded under it. */
 export async function removePreWeighing(id: string): Promise<Result<null, 404 | 409>> {
   const outcome = await deletePreWeighingTree(id);
 
   if (outcome === "missing") return fail(404, "Pre-weighing not found.");
-  if (outcome === "guided") return fail(409, "The pre-weighing guides a production.");
+  if (outcome === "not-pending") return fail(409, "The pre-weighing is not pending.");
 
   return succeed(null);
 }
@@ -489,8 +517,47 @@ export async function getPreWeighing(id: string): Promise<Result<PresentedPreWei
   return succeed(presentPreWeighing(preWeighing));
 }
 
-export async function listPreWeighingsPage(query: { available?: boolean; limit: number; cursor?: string }) {
-  const { items, nextCursor } = toPage(await listPreWeighings(query), query);
+export const countStale = () => countStalePreWeighings();
+
+export async function listPreWeighingsPage(query: {
+  status?: PreWeighingStatus;
+  staleOnly?: "true";
+  limit: number;
+  cursor?: string;
+}) {
+  const { items, nextCursor } = toPage(
+    await listPreWeighings({ ...query, staleOnly: query.staleOnly === "true" }),
+    query,
+  );
 
   return { items: items.map(presentPreWeighing), nextCursor };
+}
+
+export type StartCandidate = PresentedPreWeighing & { stages: StartCandidate[] };
+
+// Every pending pre-weighing a guided production can start from, with the pending ones under it nested:
+// a child that is not pending cuts its branch.
+export async function listStartCandidates(): Promise<StartCandidate[]> {
+  const roots = await listPendingStartRoots();
+  const candidates = new Map<string, StartCandidate>();
+  let level = roots.map((root) => {
+    const candidate: StartCandidate = { ...presentPreWeighing(root), stages: [] };
+    candidates.set(root.id, candidate);
+
+    return candidate;
+  });
+
+  while (level.length > 0) {
+    const children = await listPendingChildren(level.map(({ id }) => id));
+
+    level = children.map((child) => {
+      const candidate: StartCandidate = { ...presentPreWeighing(child), stages: [] };
+      candidates.set(child.id, candidate);
+      candidates.get(child.parent!.id)!.stages.push(candidate);
+
+      return candidate;
+    });
+  }
+
+  return roots.map(({ id }) => candidates.get(id)!);
 }

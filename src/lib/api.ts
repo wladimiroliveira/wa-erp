@@ -18,13 +18,17 @@ import type {
   preWeighingPlanSchema,
   preWeighingSchema,
   preWeighingStageBodySchema,
+  startCandidateSchema,
 } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import type {
+  damageProductionItemBodySchema,
   finishConflictSchema,
   finishProductionBodySchema,
   productionPageSchema,
   productionLeftoversSchema,
   productionSchema,
+  productionSubstitutionSchema,
+  productionWeighingBodySchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
 import type {
@@ -111,13 +115,18 @@ export type CreatePreWeighingBody = z.input<typeof createPreWeighingBodySchema>;
 /** One stage of a pre-weighing body: the product, its items and, under it, the stages of the intermediates. */
 export type PreWeighingStageBody = z.input<typeof preWeighingStageBodySchema>;
 export type PreWeighing = z.output<typeof preWeighingSchema>;
+export type PreWeighingStatus = PreWeighing["status"];
+export type StartCandidate = z.output<typeof startCandidateSchema>;
 export type PreWeighingPage = z.output<typeof preWeighingPageSchema>;
 
 export type Production = z.output<typeof productionSchema>;
+export type ProductionSubstitution = z.output<typeof productionSubstitutionSchema>;
 export type ProductionItem = Production["items"][number];
 export type ProductionPage = z.output<typeof productionPageSchema>;
 export type StartProductionBody = z.input<typeof startProductionBodySchema>;
 export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
+export type DamageProductionItemBody = z.input<typeof damageProductionItemBodySchema>;
+export type ProductionWeighingBody = z.input<typeof productionWeighingBodySchema>;
 export type FinishConflict = z.output<typeof finishConflictSchema>;
 export type LeftoversPreview = z.output<typeof productionLeftoversSchema>;
 

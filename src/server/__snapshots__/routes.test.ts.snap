@@ -9,9 +9,12 @@ GET /v1/loss-reasons -> authenticated
 GET /v1/openapi.json -> public
 GET /v1/pre-weighings -> PRODUCTION_READ
 GET /v1/pre-weighings/plan -> PRODUCTION_READ
+GET /v1/pre-weighings/stale-count -> PRODUCTION_READ
+GET /v1/pre-weighings/start-candidates -> PRODUCTION_READ
 GET /v1/pre-weighings/{id} -> PRODUCTION_READ
 GET /v1/productions -> PRODUCTION_READ
 GET /v1/productions/{id} -> PRODUCTION_READ
+GET /v1/productions/{id}/items/{itemId}/substitute -> PRODUCTION_READ
 GET /v1/productions/{id}/leftovers -> PRODUCTION_READ
 GET /v1/products -> CATALOG_READ
 GET /v1/products/{sku}/recipe -> CATALOG_READ
@@ -38,7 +41,10 @@ POST /v1/pre-weighings -> PRODUCTION_CREATE
 POST /v1/productions -> PRODUCTION_CREATE
 POST /v1/productions/{id}/cancel -> PRODUCTION_CREATE
 POST /v1/productions/{id}/finish -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items/{itemId}/damage -> PRODUCTION_CREATE
 POST /v1/productions/{id}/items/{itemId}/reduce -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items/{itemId}/substitute -> PRODUCTION_CREATE
+POST /v1/productions/{id}/weighings -> PRODUCTION_CREATE
 POST /v1/products -> CATALOG_CREATE
 POST /v1/roles -> ACCESS_CREATE
 POST /v1/sessions/refresh -> public

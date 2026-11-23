@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { createPreWeighing, planPreWeighing, type PreWeighingTarget } from "@/features/pre-weighings/actions";
+import { recordProductionWeighing } from "@/features/productions/actions";
 import { quantityOf } from "@/features/stock/stock-format";
 import { WEIGHING_PLACES } from "@/features/pre-weighings/weighing-units";
 import { WasteSection } from "@/features/pre-weighings/WasteSection";
@@ -83,18 +84,25 @@ const SAVE_MESSAGES = {
   409: "A receita ou o produto mudou desde que o plano foi calculado. Calcule de novo.",
 };
 
+const PRODUCTION_MESSAGES = {
+  404: "A produção mudou enquanto isso. Volte para a produção e tente de novo.",
+  409: "A produção mudou enquanto isso. Volte para a produção e tente de novo.",
+};
+
 interface WeighingFormProps {
   target: PreWeighingTarget;
   plan: PreWeighingPlan;
   /** The pre-weighing this one complements, if any. */
   parentId?: string;
+  /** Set when the weighing is recorded inside a production, for the item a damage left waiting or under the parent. */
+  production?: { productionId: string; itemId?: string };
   produce: StageProduce;
   /** A quantity to make on screen is not the one the plan was made for, so the plan cannot be recorded. */
   outdated: boolean;
   onRecorded: (preWeighing: PreWeighing) => void;
 }
 
-function WeighingForm({ target, plan, parentId, produce, outdated, onRecorded }: WeighingFormProps) {
+function WeighingForm({ target, plan, parentId, production, produce, outdated, onRecorded }: WeighingFormProps) {
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
@@ -160,6 +168,23 @@ function WeighingForm({ target, plan, parentId, produce, outdated, onRecorded }:
   function save(body: CreatePreWeighingBody): void {
     startSaving(async () => {
       try {
+        if (production !== undefined) {
+          const { parentId: under, ...tree } = body;
+          const recordedInProduction = await recordProductionWeighing(
+            production.productionId,
+            production.itemId !== undefined ? { ...tree, itemId: production.itemId } : { ...tree, parentId: under },
+          );
+
+          if (!recordedInProduction.ok) {
+            setFailure(messageForFailure(recordedInProduction, PRODUCTION_MESSAGES));
+            return;
+          }
+
+          toast.success("Pré-pesagem registrada.");
+          router.push(`/productions/${production.productionId}`);
+          return;
+        }
+
         const result = await createPreWeighing(body);
 
         if (!result.ok) {
@@ -213,9 +238,12 @@ type Planned = { target: PreWeighingTarget; tolerance: number; plan: PreWeighing
 
 /** A pre-weighing recorded under one that exists: what a shortage at the finish of a production asks for. */
 export interface PreWeighingComplement {
-  parentId: string;
-  /** The product of the pre-weighing complemented. */
-  parentDescription: string;
+  /** Set when recorded inside a production, with either `itemId` (a new weighing) or `parentId` (a complement). */
+  productionId?: string;
+  itemId?: string;
+  parentId?: string;
+  /** The product of the pre-weighing complemented, when there is one. */
+  parentDescription?: string;
   productSku: string;
   /** In the unit of the product, as the API writes it. */
   quantity: string;
@@ -223,6 +251,8 @@ export interface PreWeighingComplement {
 
 const sameComplement = (one: PreWeighingComplement, other: PreWeighingComplement | null): boolean =>
   other !== null &&
+  one.productionId === other.productionId &&
+  one.itemId === other.itemId &&
   one.parentId === other.parentId &&
   one.productSku === other.productSku &&
   one.quantity === other.quantity;
@@ -364,9 +394,11 @@ export function PreWeighingPage({
         Voltar para as pré-pesagens
       </Link>
 
-      <PageTitle>Nova pré-pesagem</PageTitle>
+      <PageTitle>{complement?.productionId ? "Nova pesagem para a produção" : "Nova pré-pesagem"}</PageTitle>
 
-      {complement ? <p className="font-medium">Complemento da pré-pesagem de {complement.parentDescription}</p> : null}
+      {complement?.parentDescription !== undefined ? (
+        <p className="font-medium">Complemento da pré-pesagem de {complement.parentDescription}</p>
+      ) : null}
 
       {offered.length === 0 ? <p>Nenhum produto fabricado ativo cadastrado.</p> : null}
 
@@ -474,6 +506,11 @@ export function PreWeighingPage({
           target={planned.target}
           plan={planned.plan}
           parentId={complement?.parentId}
+          production={
+            complement?.productionId !== undefined
+              ? { productionId: complement.productionId, itemId: complement.itemId }
+              : undefined
+          }
           produce={produce}
           outdated={replanFailed || Object.keys(produceErrors).length > 0}
           onRecorded={(preWeighing) => {

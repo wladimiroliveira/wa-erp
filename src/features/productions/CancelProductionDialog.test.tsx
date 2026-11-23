@@ -12,8 +12,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const ID = aProduction().id;
 
-async function openDialog() {
-  renderWithProviders(<CancelProductionDialog productionId={ID} />);
+async function openDialog(hasFinishedItems = false) {
+  renderWithProviders(<CancelProductionDialog productionId={ID} hasFinishedItems={hasFinishedItems} />);
   await userEvent.click(screen.getByRole("button", { name: "Cancelar produção" }));
 
   return screen.findByRole("alertdialog");
@@ -31,6 +31,14 @@ describe("CancelProductionDialog", () => {
 
     expect(dialog).toHaveTextContent("As pré-pesagens usadas voltam a ficar disponíveis. O estoque não é alterado.");
     expect(cancelProduction).not.toHaveBeenCalled();
+  });
+
+  it("says finished items stay in the stock when some were finished", async () => {
+    const dialog = await openDialog(true);
+
+    expect(dialog).toHaveTextContent(
+      "Os itens já finalizados continuam no estoque. As pré-pesagens dos demais voltam a ficar pendentes.",
+    );
   });
 
   it("cancels after confirmation", async () => {

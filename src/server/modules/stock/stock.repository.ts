@@ -73,6 +73,13 @@ export async function holdStockBalances(client: Prisma.TransactionClient, produc
   `;
 }
 
+// What is in stock of a product right now, read without holding it: for what is only shown.
+export async function readStockBalance(productSku: string) {
+  const row = await prisma.productStock.findUnique({ where: { productSku }, select: { quantity: true } });
+
+  return row?.quantity ?? new Prisma.Decimal(0);
+}
+
 // Reads the balance of a product and holds it until the transaction ends, so whatever is decided
 // from it is still true when it is written.
 export async function lockStockBalance(client: Prisma.TransactionClient, productSku: string) {

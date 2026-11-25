@@ -75,7 +75,7 @@ export function SubstituteItemDialog({ productionId, item }: { productionId: str
 
   return (
     <>
-      <Button type="button" variant="outline" onClick={() => void openDialog()}>
+      <Button type="button" variant="outline" size="sm" onClick={() => void openDialog()}>
         Usar do estoque
       </Button>
 

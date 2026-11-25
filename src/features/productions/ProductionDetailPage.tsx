@@ -1,137 +1,70 @@
 "use client";
 
+import { useId, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { useSession } from "@/features/auth/use-session";
 import { CancelProductionDialog } from "@/features/productions/CancelProductionDialog";
 import { DamageItemDialog } from "@/features/productions/DamageItemDialog";
 import { SubstituteItemDialog } from "@/features/productions/SubstituteItemDialog";
-import {
-  canDamage,
-  canSubstitute,
-  finishableItems,
-  itemsAsTree,
-  itemStateLabel,
-} from "@/features/productions/item-state";
-import { FinishProductionForm } from "@/features/productions/FinishProductionForm";
+import { canDamage, canSubstitute } from "@/features/productions/item-state";
+import { FinishItemForm } from "@/features/productions/FinishItemForm";
+import { ItemDetailsSheet } from "@/features/productions/ItemDetailsSheet";
 import { ProductionStatusBadge } from "@/features/productions/ProductionStatusBadge";
-import { weighedOf } from "@/features/pre-weighings/weighing-units";
-import { moneyOf, NOTHING, quantityOf } from "@/features/stock/stock-format";
-import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
+import { timelineOf, type TimelineEvent, type WaitingItem } from "@/features/productions/timeline";
+import { quantityOf } from "@/features/stock/stock-format";
 import type { LossReason, Production, ProductionItem } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
-import { formatMoney } from "@/lib/decimal";
-import { divideHalfUp, fromScaled, scale, toScaled } from "@/shared/fixed-point";
-import { normalizeDecimal, readableQuantity } from "@/shared/units";
 import { PageAside, PageTitle } from "@/components/layout/PageTitle";
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border p-4">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="text-xl font-semibold">{children}</dd>
-    </div>
-  );
-}
+/** How many of the latest events show before the operator asks for all of them. */
+const COLLAPSED_EVENTS = 3;
 
-interface ItemProps {
-  productionId: string;
-  productionStatus: Production["status"];
-  item: ProductionItem;
-  items: ProductionItem[];
-  depth: number;
-  lossReasons: LossReason[];
-  canRecord: boolean;
-}
-
-function Item({ productionId, productionStatus, item, items, depth, lossReasons, canRecord }: ItemProps) {
-  const headingId = `production-item-${item.id}`;
-  const { unit } = item.product;
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const headingId = useId();
 
   return (
-    // An item sits under the items that take it, indented one step per level.
-    <section
-      aria-labelledby={headingId}
-      className="flex flex-col gap-3"
-      style={{ marginInlineStart: `${depth * 1.5}rem` }}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 id={headingId} className="text-lg font-semibold">
-          {item.product.description}
-        </h2>
-        <span className="rounded-md border px-2 py-0.5 text-sm">{itemStateLabel(item, items, productionStatus)}</span>
-      </div>
-
-      {canRecord ? (
-        <div className="flex flex-wrap gap-2">
-          {canDamage(item, items) ? (
-            <DamageItemDialog productionId={productionId} item={item} lossReasons={lossReasons} />
-          ) : null}
-          {canSubstitute(item, items) ? <SubstituteItemDialog productionId={productionId} item={item} /> : null}
-          {item.awaitsWeighing ? (
-            <Link href={newWeighingHref(productionId, item)} className={buttonVariants({ variant: "outline" })}>
-              Nova pesagem
-            </Link>
-          ) : null}
-        </div>
-      ) : null}
-
-      <dl className="grid gap-3 sm:grid-cols-4">
-        <Fact label="Origem">
-          {item.preWeighingId !== null ? (
-            <Link href={`/pre-weighings/${item.preWeighingId}`} className="underline underline-offset-4">
-              Pré-pesagem
-            </Link>
-          ) : (
-            "Receita"
-          )}
-        </Fact>
-        <Fact label="Previsto">{quantityOf(item.expectedQuantity, unit)}</Fact>
-        <Fact label="Produzido">{quantityOf(item.producedQuantity, unit)}</Fact>
-        <Fact label="Custo unitário">{moneyOf(item.unitCost)}</Fact>
-        {item.hasLeftoversInCost === null || !discardedAnyOf(item) ? null : (
-          <Fact label="Sobras no custo">{item.hasLeftoversInCost ? "Sim" : "Não"}</Fact>
-        )}
-      </dl>
-
-      <ArrangeableTable
-        tableKey="production-item-inputs"
-        rowNoun={{ one: "insumo", other: "insumos" }}
-        rows={item.inputs}
-        rowKey={(input) => input.product.sku}
-        columns={[
-          { key: "input", header: "Insumo", cell: (input) => input.product.description },
-          { key: "quantity", header: "Quantidade", cell: (input) => quantityOf(input.quantity, input.product.unit) },
-          // Known only once the production finishes: it is what the lots the input left cost.
-          { key: "unitCost", header: "Custo unitário", cell: (input) => moneyOf(input.unitCost) },
-          // Only where something was discarded: elsewhere it would be a column of dashes.
-          ...(item.inputs.some(({ leftovers }) => leftovers.length > 0)
-            ? [{ key: "leftover", header: "Sobra descartada", cell: discardedOf }]
-            : []),
-        ]}
-      />
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <h2 id={headingId} className="text-sm font-medium tracking-wide text-muted-foreground uppercase">
+        {title}
+      </h2>
+      {children}
     </section>
   );
 }
 
-type Input = Production["items"][number]["inputs"][number];
+function Done({ events, expanded }: { events: TimelineEvent[]; expanded: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  // Read on every render: a refresh that closes the production expands the list it finds collapsed.
+  const shown = expanded || showAll ? events : events.slice(-COLLAPSED_EVENTS);
 
-const discardedAnyOf = ({ inputs }: ProductionItem) => inputs.some(({ leftovers }) => leftovers.length > 0);
-
-// What finishing discarded of the input's opened packagings, "95 g · R$ 1,90", priced at each lot's cost.
-function discardedOf({ product, leftovers }: Input): string {
-  if (leftovers.length === 0) return NOTHING;
-
-  const quantity = leftovers.reduce((sum, leftover) => sum + toScaled(leftover.quantity, 6), 0n);
-  const cost = leftovers.reduce(
-    (sum, leftover) => sum + toScaled(leftover.quantity, 6) * toScaled(leftover.unitCost, 6),
-    0n,
+  return (
+    <Section title="Feito">
+      <ol className="flex flex-col gap-1 text-sm text-muted-foreground">
+        {shown.map((event, index) => (
+          <li key={`${event.at}-${event.text}-${index}`} className="flex min-h-8 items-center gap-3">
+            {event.at !== null ? (
+              <time dateTime={event.at} className="w-32 shrink-0 tabular-nums">
+                {formatDateTime(event.at)}
+              </time>
+            ) : (
+              <span className="w-32 shrink-0" />
+            )}
+            {/* Only the line that closes an item's story keeps its receipt: its facts, inputs and costs stay
+                reachable from there once it has left Agora. */}
+            {event.ends && event.item !== null ? <ItemDetailsSheet item={event.item} /> : null}
+            <span>{event.text}</span>
+          </li>
+        ))}
+      </ol>
+      {shown.length < events.length ? (
+        <Button type="button" variant="link" size="sm" className="self-start px-0" onClick={() => setShowAll(true)}>
+          {`Ver tudo (${events.length})`}
+        </Button>
+      ) : null}
+    </Section>
   );
-  const amount = normalizeDecimal(fromScaled(quantity, 6));
-  const shown = weighedOf(amount, product.unit, readableQuantity(amount, product.unit).unit);
-
-  return `${shown} · ${formatMoney(fromScaled(divideHalfUp(cost, scale(10)), 2))}`;
 }
 
 const newWeighingHref = (productionId: string, item: ProductionItem) =>
@@ -142,6 +75,103 @@ const newWeighingHref = (productionId: string, item: ProductionItem) =>
     quantity: item.expectedQuantity,
   })}`;
 
+interface StageCardProps {
+  production: Production;
+  item: ProductionItem;
+  lossReasons: LossReason[];
+  canRecord: boolean;
+}
+
+function StageCard({ production, item, lossReasons, canRecord }: StageCardProps) {
+  const headingId = useId();
+  const showDamage = canRecord && canDamage(item, production.items);
+  const showSubstitute = canRecord && canSubstitute(item, production.items);
+
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="flex flex-col gap-4 rounded-lg border border-primary/40 bg-primary/5 p-4"
+    >
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <ItemDetailsSheet item={item} />
+          <h3 id={headingId} className="text-xl font-semibold">
+            {item.product.description}
+          </h3>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          <span>{`Previsto ${quantityOf(item.expectedQuantity, item.product.unit)}`}</span>
+          {/* An item awaiting a weighing has lost its origin to the damage: it has none until weighed again. */}
+          {item.awaitsWeighing ? null : (
+            <>
+              {" · "}
+              {item.preWeighingId !== null ? (
+                <Link href={`/pre-weighings/${item.preWeighingId}`} className="underline underline-offset-4">
+                  da pré-pesagem
+                </Link>
+              ) : (
+                <span>da receita</span>
+              )}
+            </>
+          )}
+        </p>
+      </div>
+
+      {item.awaitsWeighing ? (
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-sm font-medium text-destructive">
+            {canRecord ? "Avariado — faça uma nova pesagem" : "Avariado — aguardando nova pesagem"}
+          </p>
+          {canRecord ? (
+            <Link href={newWeighingHref(production.id, item)} className={buttonVariants()}>
+              Nova pesagem
+            </Link>
+          ) : null}
+        </div>
+      ) : canRecord ? (
+        <FinishItemForm key={`${production.id}-${item.id}`} production={production} item={item} />
+      ) : null}
+
+      {showDamage || showSubstitute ? (
+        <div className="flex flex-wrap gap-2 border-t pt-3">
+          {showDamage ? <DamageItemDialog productionId={production.id} item={item} lossReasons={lossReasons} /> : null}
+          {showSubstitute ? <SubstituteItemDialog productionId={production.id} item={item} /> : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function Next({
+  production,
+  waiting,
+  canRecord,
+}: {
+  production: Production;
+  waiting: WaitingItem[];
+  canRecord: boolean;
+}) {
+  return (
+    <Section title="Depois">
+      <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+        {waiting.map(({ item, waitsFor, notProduced }) => {
+          const name = item.product.description;
+
+          return (
+            <li key={item.id} className="flex min-h-8 items-center gap-3">
+              <ItemDetailsSheet item={item} />
+              <span>{notProduced ? `${name} · Não produzido` : `${name} · aguardando ${waitsFor.join(", ")}`}</span>
+              {canRecord && canSubstitute(item, production.items) ? (
+                <SubstituteItemDialog productionId={production.id} item={item} />
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </Section>
+  );
+}
+
 export function ProductionDetailPage({
   production,
   lossReasons,
@@ -151,9 +181,10 @@ export function ProductionDetailPage({
 }) {
   const { can } = useSession();
   const canRecord = production.status === "IN_PROGRESS" && can("PRODUCTION_CREATE");
+  const { done, now, next } = timelineOf(production);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <PageAside>
         {/* Supporting facts, out of the way of the items: what the operator works on. */}
         <div role="group" aria-label="Resumo da produção" className="flex items-center gap-2">
@@ -170,28 +201,31 @@ export function ProductionDetailPage({
 
       <PageTitle crumb={`Produção de ${formatDateTime(production.createdAt)}`}>Produção</PageTitle>
 
-      {itemsAsTree(production.items).map(({ item, depth }) => (
-        <Item
-          key={item.id}
-          productionId={production.id}
-          productionStatus={production.status}
-          item={item}
-          items={production.items}
-          depth={depth}
-          lossReasons={lossReasons}
-          canRecord={canRecord}
-        />
-      ))}
+      {/* A closed production is a record: all of it shows. */}
+      <Done events={done} expanded={production.status !== "IN_PROGRESS"} />
+
+      {production.status === "IN_PROGRESS" && now.length > 0 ? (
+        <Section title="Agora">
+          {/* Keyed by production and item: a refresh keeps what was typed in a card still here. */}
+          {now.map((item) => (
+            <StageCard
+              key={`${production.id}-${item.id}`}
+              production={production}
+              item={item}
+              lossReasons={lossReasons}
+              canRecord={canRecord}
+            />
+          ))}
+        </Section>
+      ) : null}
+
+      {next.length > 0 ? <Next production={production} waiting={next} canRecord={canRecord} /> : null}
 
       {canRecord ? (
-        <>
-          {/* Nothing ready to finish: the item states already say why, an empty form would only answer 400. */}
-          {finishableItems(production.items).length > 0 ? <FinishProductionForm production={production} /> : null}
-          <CancelProductionDialog
-            productionId={production.id}
-            hasFinishedItems={production.items.some(({ status }) => status === "FINISHED")}
-          />
-        </>
+        <CancelProductionDialog
+          productionId={production.id}
+          hasFinishedItems={production.items.some(({ status }) => status === "FINISHED")}
+        />
       ) : null}
     </div>
   );

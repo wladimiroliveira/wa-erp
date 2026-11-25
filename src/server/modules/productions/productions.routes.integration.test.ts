@@ -250,6 +250,8 @@ describe("POST /v1/productions", () => {
           status: "PENDING",
           finishedAt: null,
           hasLeftoversInCost: null,
+          substitutedAt: null,
+          weighedAt: null,
           product: { sku: dough.sku, description: "Bread dough", unit: "KILOGRAM" },
           preWeighingId: null,
           expectedQuantity: "50",
@@ -293,6 +295,8 @@ describe("POST /v1/productions", () => {
       expect.objectContaining({
         product: { sku: dough.sku, description: "Bread dough", unit: "KILOGRAM" },
         preWeighingId: preWeighing.id,
+        weighedAt: preWeighing.createdAt.toISOString(),
+        substitutedAt: null,
         expectedQuantity: "50",
         inputs: [
           { product: expect.objectContaining({ sku: water.sku }), quantity: "17.9", unitCost: null, leftovers: [] },
@@ -1760,6 +1764,12 @@ describe("finishing a product with intermediates", () => {
         damages: [{ preWeighingId: tree.fillingStage.id }],
       });
       expect(items[1].inputs.map(({ quantity }: { quantity: string }) => quantity)).toEqual(["0.1", "0.4"]);
+      expect(items[1].weighedAt).toBe(weighed.createdAt.toISOString());
+      expect(items[1].weighedAt).not.toBe(
+        (
+          await testPrisma.preWeighing.findUniqueOrThrow({ where: { id: tree.fillingStage.id } })
+        ).createdAt.toISOString(),
+      );
       expect((await getPreWeighing(headers, tree.fillingStage.id)).json()).toMatchObject({ status: "DAMAGED" });
       expect((await getPreWeighing(headers, weighed.id)).json()).toMatchObject({ status: "IN_PRODUCTION" });
 
@@ -2099,6 +2109,9 @@ describe("finishing a product with intermediates", () => {
         status: "SUBSTITUTED",
         preWeighingId: null,
       });
+      const substitutedAt = items.find((item: { id: string }) => item.id === fillingItem.id).substitutedAt;
+      expect(typeof substitutedAt).toBe("string");
+      expect(Date.now() - new Date(substitutedAt).getTime()).toBeLessThan(60_000);
       expect(response.json().status).toBe("IN_PROGRESS");
       expect(await testPrisma.stockMovement.count()).toBe(movements);
       const released = await getPreWeighing(headers, tree.fillingStage.id);

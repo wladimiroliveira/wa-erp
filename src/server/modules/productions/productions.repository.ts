@@ -24,7 +24,10 @@ const productionSelect = {
       status: true,
       finishedAt: true,
       hasLeftoversInCost: true,
+      substitutedAt: true,
       preWeighingId: true,
+      // When the weighing that guides the item was recorded.
+      preWeighing: { select: { createdAt: true } },
       expectedQuantity: true,
       producedQuantity: true,
       unitCost: true,
@@ -173,7 +176,7 @@ export async function closeIfResolved(tx: Prisma.TransactionClient, productionId
 export function markItemSubstituted(tx: Prisma.TransactionClient, itemId: string) {
   return tx.productionItem.update({
     where: { id: itemId },
-    data: { status: ProductionItemStatus.SUBSTITUTED, preWeighingId: null },
+    data: { status: ProductionItemStatus.SUBSTITUTED, preWeighingId: null, substitutedAt: new Date() },
   });
 }
 

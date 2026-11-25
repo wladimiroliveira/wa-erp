@@ -241,6 +241,8 @@ export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionI
     status: "PENDING",
     finishedAt: null,
     hasLeftoversInCost: null,
+    substitutedAt: null,
+    weighedAt: null,
     preWeighingId: null,
     expectedQuantity: "10",
     producedQuantity: null,

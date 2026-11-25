@@ -1,10 +1,12 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { finishProductionItems } from "@/features/productions/actions";
 import { ProductionDetailPage } from "@/features/productions/ProductionDetailPage";
 import { moneyOf } from "@/features/stock/stock-format";
 import { formatDateTime } from "@/lib/dates";
 import type { Permission, Production } from "@/lib/api";
+import { leftoversSettled } from "@/tests/leftovers";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser, aLossReason, aProduction, aProductionItem } from "@/tests/samples";
 
@@ -35,19 +37,23 @@ const STAGED = aProduction({
 });
 
 describe("ProductionDetailPage, summary", () => {
-  it("titles the screen generically, leaving its date and time to the breadcrumbs", () => {
+  it("titles the screen generically, leaving its date and time to the breadcrumbs", async () => {
     open();
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Produção$/);
+
+    await leftoversSettled();
   });
 
-  it("leaves the way back to the breadcrumbs", () => {
+  it("leaves the way back to the breadcrumbs", async () => {
     open();
 
     expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
+
+    await leftoversSettled();
   });
 
-  it("shows the status and when it started as badges, not as cards", () => {
+  it("shows the status and when it started as badges, not as cards", async () => {
     const production = aProduction({ status: "IN_PROGRESS" });
     open(production);
 
@@ -55,6 +61,8 @@ describe("ProductionDetailPage, summary", () => {
     expect(summary.getByText("Em andamento")).toBeInTheDocument();
     expect(summary.getByText(`Iniciada em ${formatDateTime(production.createdAt)}`)).toBeInTheDocument();
     expect(summary.queryByText("Status")).not.toBeInTheDocument();
+
+    await leftoversSettled();
   });
 
   it("adds when it finished or was canceled", () => {
@@ -68,97 +76,151 @@ describe("ProductionDetailPage, summary", () => {
   });
 });
 
-describe("ProductionDetailPage, item states", () => {
-  it("shows each item with its state, the item taking others first", () => {
-    open(STAGED);
+const region = (name: string) => within(screen.getByRole("region", { name }));
 
-    const names = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(names.slice(0, 3)).toEqual(["Bombom", "Recheio", "Casquinha"]);
-    expect(
-      within(screen.getByRole("region", { name: "Bombom" })).getByText("Aguardando Casquinha, Recheio"),
-    ).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Casquinha" })).getByText("A produzir")).toBeInTheDocument();
-  });
-
-  it("says the pending items of a canceled production were not produced", () => {
-    open({ ...STAGED, status: "CANCELED", canceledAt: "2026-10-14T15:00:00.000Z" });
-
-    for (const name of ["Bombom", "Recheio", "Casquinha"]) {
-      expect(within(screen.getByRole("region", { name })).getByText("Não produzido")).toBeInTheDocument();
-    }
-  });
-
-  it("offers recheio and casquinha to finish, not bombom", () => {
-    open(STAGED);
-
-    const form = within(screen.getByRole("form", { name: "Finalizar produção" }));
-    expect(form.getByRole("checkbox", { name: "Recheio" })).not.toBeChecked();
-    expect(form.getByRole("checkbox", { name: "Casquinha" })).toBeInTheDocument();
-    expect(form.queryByRole("checkbox", { name: "Bombom" })).not.toBeInTheDocument();
-  });
-
-  it("renders no finish form when every pending item waits or awaits a weighing", () => {
-    open(
-      aProduction({
-        items: [
-          aProductionItem({ id: "shell", product: product("Casquinha"), awaitsWeighing: true }),
-          aProductionItem({ id: "bombom", product: product("Bombom"), dependsOn: ["shell"] }),
-        ],
-      }),
-    );
-
-    expect(screen.queryByRole("form", { name: "Finalizar produção" })).not.toBeInTheDocument();
-    expect(screen.getByText("Avariado — aguardando nova pesagem")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cancelar produção" })).toBeInTheDocument();
-  });
-
-  it("tells the cancel dialog whether items were already finished", async () => {
-    const user = userEvent.setup();
-    open(aProduction({ items: [aProductionItem({ status: "FINISHED" }), aProductionItem({ id: "other" })] }));
-
-    await user.click(screen.getByRole("button", { name: "Cancelar produção" }));
-
-    expect(await screen.findByRole("alertdialog")).toHaveTextContent("Os itens já finalizados continuam no estoque.");
-  });
+const BOMBOM = aProduction({
+  items: [
+    aProductionItem({
+      id: "shell",
+      product: { sku: "shell", description: "Casquinha", unit: "UNIT" },
+      status: "FINISHED",
+      finishedAt: "2026-10-14T13:42:00.000Z",
+      producedQuantity: "48",
+    }),
+    aProductionItem({ id: "bombom", product: product("Bombom"), dependsOn: ["filling", "shell"] }),
+    aProductionItem({
+      id: "filling",
+      product: product("Recheio"),
+      expectedQuantity: "0.7",
+      preWeighingId: "pw-1",
+    }),
+  ],
 });
 
-describe("ProductionDetailPage, item actions", () => {
-  const region = (name: string) => within(screen.getByRole("region", { name }));
+describe("ProductionDetailPage, timeline", () => {
+  it("lays the production out as done, now and next", async () => {
+    open(BOMBOM);
 
-  it("offers the damage on items ready to be made, not on those waiting for another", () => {
-    open(STAGED);
+    expect(screen.getAllByRole("heading", { level: 2 }).map(({ textContent }) => textContent)).toEqual([
+      "Feito",
+      "Agora",
+      "Depois",
+    ]);
 
-    expect(region("Recheio").getByRole("button", { name: "Registrar avaria" })).toBeInTheDocument();
-    expect(region("Casquinha").getByRole("button", { name: "Registrar avaria" })).toBeInTheDocument();
-    expect(region("Bombom").queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
+    await leftoversSettled();
   });
 
-  it("offers the stock only on pending items another item takes", () => {
-    open(STAGED);
+  it("lists what was done with its time, and the receipt of the finished casquinha", async () => {
+    open(BOMBOM);
 
-    expect(region("Recheio").getByRole("button", { name: "Usar do estoque" })).toBeInTheDocument();
-    expect(region("Casquinha").getByRole("button", { name: "Usar do estoque" })).toBeInTheDocument();
-    expect(region("Bombom").queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
+    const done = region("Feito");
+    expect(done.getByText("Produção iniciada")).toBeInTheDocument();
+    expect(done.getByText(formatDateTime(BOMBOM.createdAt))).toBeInTheDocument();
+    expect(done.getByText("Casquinha finalizado · 48 un")).toBeInTheDocument();
+    expect(done.getByText(formatDateTime("2026-10-14T13:42:00.000Z"))).toBeInTheDocument();
+    expect(done.getByRole("button", { name: "Detalhes de Casquinha" })).toBeInTheDocument();
+
+    await leftoversSettled();
   });
 
-  it("offers neither on finished or substituted items", () => {
+  it("puts the recheio in a card of its own, with what it should yield and where it came from", async () => {
+    open(BOMBOM);
+
+    const now = region("Agora");
+    expect(now.getAllByRole("region")).toHaveLength(1);
+    const card = region("Recheio");
+    expect(card.getByRole("heading", { level: 3, name: "Recheio" })).toBeInTheDocument();
+    expect(card.getByRole("button", { name: "Detalhes de Recheio" })).toBeInTheDocument();
+    expect(card.getByText("Previsto 0,7 kg")).toBeInTheDocument();
+    expect(card.getByRole("link", { name: "da pré-pesagem" })).toHaveAttribute("href", "/pre-weighings/pw-1");
+    expect(card.getByRole("button", { name: "Finalizar Recheio" })).toBeInTheDocument();
+    expect(card.getByRole("button", { name: "Registrar avaria" })).toBeInTheDocument();
+
+    await leftoversSettled();
+  });
+
+  it("says a free item comes from the recipe", async () => {
+    open();
+
+    expect(region("Pão francês").getByText("da receita")).toBeInTheDocument();
+
+    await leftoversSettled();
+  });
+
+  it("shows the bombom waiting for the recheio, muted, below", async () => {
+    open(BOMBOM);
+
+    const next = region("Depois");
+    expect(next.getByText("Bombom · aguardando Recheio")).toBeInTheDocument();
+    expect(next.getByRole("button", { name: "Detalhes de Bombom" })).toBeInTheDocument();
+    expect(next.queryByRole("button", { name: "Finalizar Bombom" })).not.toBeInTheDocument();
+    expect(next.queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
+
+    await leftoversSettled();
+  });
+
+  it("offers the stock on a waiting line where another item takes it", async () => {
     open(
       aProduction({
         items: [
-          aProductionItem({ id: "a", product: product("Recheio"), status: "FINISHED" }),
-          aProductionItem({ id: "b", product: product("Casquinha"), status: "SUBSTITUTED" }),
-          aProductionItem({ id: "c", product: product("Bombom"), dependsOn: ["a", "b"] }),
+          aProductionItem({ id: "base", product: product("Base") }),
+          aProductionItem({ id: "mid", product: product("Meio"), dependsOn: ["base"] }),
+          aProductionItem({ id: "top", product: product("Topo"), dependsOn: ["mid"] }),
         ],
       }),
     );
 
-    expect(screen.queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
-    expect(region("Recheio").queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
-    expect(region("Casquinha").queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
-    expect(region("Bombom").getByRole("button", { name: "Registrar avaria" })).toBeInTheDocument();
+    const next = region("Depois");
+    const middle = within(next.getByText("Meio · aguardando Base").closest("li")!);
+    expect(middle.getByRole("button", { name: "Usar do estoque" })).toBeInTheDocument();
+    const top = within(next.getByText("Topo · aguardando Meio").closest("li")!);
+    expect(top.queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
+
+    await leftoversSettled();
   });
 
-  it("links a damaged guided item to a new weighing, with no damage button", () => {
+  it("gives each ready stage its own card, and finishing one sends only that item", async () => {
+    vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: STAGED });
+    open(STAGED);
+
+    expect(region("Recheio").getByRole("form", { name: "Finalizar Recheio" })).toBeInTheDocument();
+    expect(region("Casquinha").getByRole("form", { name: "Finalizar Casquinha" })).toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Finalizar Bombom" })).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Produzido de Recheio"), "0,7");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finalizar Recheio" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Finalizar Recheio" }));
+
+    await waitFor(() =>
+      expect(finishProductionItems).toHaveBeenCalledWith(STAGED.id, {
+        items: [{ id: "filling", producedQuantity: "0.7", expiresAt: null }],
+        hasLeftoversInCost: true,
+      }),
+    );
+  });
+
+  it("keeps what was typed in a ready card when a refresh finishes another, and drops the card that left", async () => {
+    const { rerender } = open(STAGED);
+
+    await userEvent.type(screen.getByLabelText("Produzido de Recheio"), "0,7");
+    const refreshed = {
+      ...STAGED,
+      items: STAGED.items.map((item) =>
+        item.id === "shell"
+          ? { ...item, status: "FINISHED" as const, finishedAt: "2026-10-14T13:42:00.000Z", producedQuantity: "48" }
+          : { ...item },
+      ),
+    };
+    rerender(<ProductionDetailPage production={refreshed} lossReasons={[aLossReason()]} />);
+
+    expect(screen.getByLabelText("Produzido de Recheio")).toHaveValue("0,7");
+    expect(screen.queryByRole("form", { name: "Finalizar Casquinha" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Casquinha" })).not.toBeInTheDocument();
+
+    await leftoversSettled();
+  });
+
+  it("asks for a new weighing on a damaged item, as its main action", () => {
     open(
       aProduction({
         id: "prod-1",
@@ -173,26 +235,247 @@ describe("ProductionDetailPage, item actions", () => {
       }),
     );
 
-    expect(region("Casquinha").getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
+    const card = region("Casquinha");
+    expect(card.getByText("Avariado — faça uma nova pesagem")).toBeInTheDocument();
+    expect(card.getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
       "href",
       "/pre-weighings/new?productionId=prod-1&itemId=shell&productSku=sku-shell&quantity=3",
     );
-    expect(region("Casquinha").queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
+    expect(card.queryByRole("button", { name: "Finalizar Casquinha" })).not.toBeInTheDocument();
+    expect(card.queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
   });
 
-  it("shows no item action without permission or outside an open production", () => {
+  it("says nothing of an origin on an item awaiting a new weighing", () => {
+    open(
+      aProduction({ items: [aProductionItem({ id: "shell", product: product("Casquinha"), awaitsWeighing: true })] }),
+    );
+
+    const card = region("Casquinha");
+    expect(card.queryByText("da receita")).not.toBeInTheDocument();
+    expect(card.queryByRole("link", { name: "da pré-pesagem" })).not.toBeInTheDocument();
+    expect(card.getByText(/^Previsto /)).toBeInTheDocument();
+  });
+
+  it("tells a read-only user the item awaits a weighing, without telling them to weigh", () => {
+    open(
+      aProduction({ items: [aProductionItem({ id: "shell", product: product("Casquinha"), awaitsWeighing: true })] }),
+      ["PRODUCTION_READ"],
+    );
+
+    const card = region("Casquinha");
+    expect(card.getByText("Avariado — aguardando nova pesagem")).toBeInTheDocument();
+    expect(card.queryByText("Avariado — faça uma nova pesagem")).not.toBeInTheDocument();
+    expect(card.queryByRole("link", { name: "Nova pesagem" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the receipt of a damaged, re-weighed and finished item on its finish line only, left of the text", () => {
+    open(
+      aProduction({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T16:00:00.000Z",
+        items: [
+          aProductionItem({
+            id: "shell",
+            product: product("Casquinha"),
+            status: "FINISHED",
+            finishedAt: "2026-10-14T15:00:00.000Z",
+            producedQuantity: "3",
+            preWeighingId: "pw-2",
+            weighedAt: "2026-10-14T14:00:00.000Z",
+            damages: [
+              {
+                id: "d1",
+                reason: { id: "r1", name: "Queimou" },
+                note: null,
+                createdAt: "2026-10-14T13:00:00.000Z",
+                preWeighingId: null,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const done = region("Feito");
+    expect(done.getAllByRole("button", { name: "Detalhes de Casquinha" })).toHaveLength(1);
+    const line = within(done.getByText(/^Casquinha finalizado/).closest("li")!);
+    const button = line.getByRole("button", { name: "Detalhes de Casquinha" });
+    expect(
+      button.compareDocumentPosition(line.getByText(/^Casquinha finalizado/)) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("names the stock, not the recipe, as the origin of a substituted item's receipt", async () => {
+    open(
+      aProduction({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T16:00:00.000Z",
+        items: [
+          aProductionItem({
+            id: "shell",
+            product: product("Casquinha"),
+            status: "SUBSTITUTED",
+            substitutedAt: "2026-10-14T13:00:00.000Z",
+          }),
+        ],
+      }),
+    );
+
+    await userEvent.click(region("Feito").getByRole("button", { name: "Detalhes de Casquinha" }));
+
+    const sheet = within(await screen.findByRole("dialog", { name: "Casquinha" }));
+    expect(sheet.getByText("Origem").nextSibling).toHaveTextContent("Estoque");
+    expect(sheet.queryByText("Receita")).not.toBeInTheDocument();
+  });
+
+  it("shows the last 3 events until asked for all of them", async () => {
+    const damage = (id: string, createdAt: string) => ({
+      id,
+      reason: { id: "r1", name: `Queimou ${id}` },
+      note: null,
+      createdAt,
+      preWeighingId: null,
+    });
+    open(
+      aProduction({
+        items: [
+          aProductionItem({
+            damages: [
+              damage("1", "2026-10-14T12:10:00.000Z"),
+              damage("2", "2026-10-14T12:20:00.000Z"),
+              damage("3", "2026-10-14T12:30:00.000Z"),
+              damage("4", "2026-10-14T12:40:00.000Z"),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const done = region("Feito");
+    expect(done.getAllByRole("listitem")).toHaveLength(3);
+    expect(done.queryByText("Produção iniciada")).not.toBeInTheDocument();
+    expect(done.getByText("Pão francês avariado · Queimou 4")).toBeInTheDocument();
+
+    await userEvent.click(done.getByRole("button", { name: "Ver tudo (5)" }));
+
+    expect(done.getAllByRole("listitem")).toHaveLength(5);
+    expect(done.getByText("Produção iniciada")).toBeInTheDocument();
+  });
+
+  it("shows every event once a refresh brings the production finished", () => {
+    const item = (id: string, description: string, finishedAt: string | null) =>
+      aProductionItem({
+        id,
+        product: product(description),
+        ...(finishedAt !== null ? { status: "FINISHED" as const, finishedAt, producedQuantity: "1" } : {}),
+      });
+    const running = aProduction({
+      items: [
+        item("a", "Recheio", "2026-10-14T13:00:00.000Z"),
+        item("b", "Casquinha", "2026-10-14T14:00:00.000Z"),
+        item("c", "Bombom", "2026-10-14T15:00:00.000Z"),
+        item("d", "Caixa", null),
+      ],
+    });
+    const { rerender } = open(running);
+    expect(region("Feito").getAllByRole("listitem")).toHaveLength(3);
+
+    const finished = {
+      ...running,
+      status: "FINISHED" as const,
+      finishedAt: "2026-10-14T16:00:00.000Z",
+      items: [...running.items.slice(0, 3), item("d", "Caixa", "2026-10-14T15:30:00.000Z")],
+    };
+    rerender(<ProductionDetailPage production={finished} lossReasons={[aLossReason()]} />);
+
+    expect(region("Feito").getAllByRole("listitem")).toHaveLength(6);
+    expect(screen.queryByRole("button", { name: /^Ver tudo/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a canceled production's pending items as not produced, with no actions", () => {
+    open({ ...STAGED, status: "CANCELED", canceledAt: "2026-10-14T15:00:00.000Z" });
+
+    expect(screen.queryByRole("heading", { name: "Agora" })).not.toBeInTheDocument();
+    const next = region("Depois");
+    for (const name of ["Bombom", "Recheio", "Casquinha"]) {
+      expect(next.getByText(`${name} · Não produzido`)).toBeInTheDocument();
+    }
+    expect(next.queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
+    expect(region("Feito").getByText("Produção cancelada")).toBeInTheDocument();
+  });
+
+  it("shows only what was done on a finished production, all of it", () => {
+    const finished = (id: string, description: string, finishedAt: string) =>
+      aProductionItem({ id, product: product(description), status: "FINISHED", finishedAt, producedQuantity: "1" });
+    open(
+      aProduction({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T16:00:00.000Z",
+        items: [
+          finished("a", "Recheio", "2026-10-14T13:00:00.000Z"),
+          finished("b", "Casquinha", "2026-10-14T14:00:00.000Z"),
+          finished("c", "Bombom", "2026-10-14T15:00:00.000Z"),
+        ],
+      }),
+    );
+
+    expect(screen.getAllByRole("heading", { level: 2 }).map(({ textContent }) => textContent)).toEqual(["Feito"]);
+    expect(region("Feito").getAllByRole("listitem")).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: /^Ver tudo/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a read-only user no finish or action buttons, only the receipts", () => {
     open(STAGED, ["PRODUCTION_READ"]);
+
+    expect(screen.getByRole("heading", { name: "Agora" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Finalizar / })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
+    expect(region("Recheio").getByRole("button", { name: "Detalhes de Recheio" })).toBeInTheDocument();
   });
 
-  it("shows no item action once the production is finished", () => {
-    open(aProduction({ ...STAGED, status: "FINISHED", finishedAt: "2026-10-14T15:00:00.000Z" }));
-    expect(screen.queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
+  it("tells the cancel dialog whether items were already finished", async () => {
+    const user = userEvent.setup();
+    open(aProduction({ items: [aProductionItem({ status: "FINISHED" }), aProductionItem({ id: "other" })] }));
+
+    await user.click(screen.getByRole("button", { name: "Cancelar produção" }));
+
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("Os itens já finalizados continuam no estoque.");
+  });
+
+  it("keeps the cancel at the end of the page", async () => {
+    open(BOMBOM);
+
+    const cancel = screen.getByRole("button", { name: "Cancelar produção" });
+    const next = screen.getByRole("region", { name: "Depois" });
+    expect(next.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await leftoversSettled();
   });
 });
 
+// The item's details live behind the receipt button left of its name.
+async function details(name: string) {
+  await userEvent.click(screen.getAllByRole("button", { name: `Detalhes de ${name}` })[0]!);
+
+  return within(await screen.findByRole("dialog", { name }));
+}
+
 describe("ProductionDetailPage", () => {
-  it("shows each item with its origin, quantities and inputs", () => {
+  it("keeps each item's details behind a receipt button left of its name", async () => {
+    open();
+
+    const item = screen.getByRole("region", { name: "Pão francês" });
+    const button = within(item).getByRole("button", { name: "Detalhes de Pão francês" });
+    const heading = within(item).getByRole("heading", { name: "Pão francês" });
+    expect(button.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(item).queryByRole("table")).not.toBeInTheDocument();
+
+    await leftoversSettled();
+  });
+
+  it("shows each item with its origin, quantities and inputs", async () => {
     open(
       aProduction({
         items: [
@@ -206,26 +489,29 @@ describe("ProductionDetailPage", () => {
       }),
     );
 
-    const guided = screen.getByRole("region", { name: "Pão francês" });
-    const free = screen.getByRole("region", { name: "Pão de queijo" });
-
-    expect(within(guided).getByRole("link", { name: "Pré-pesagem" })).toHaveAttribute(
+    const guided = await details("Pão francês");
+    expect(guided.getByRole("link", { name: "Pré-pesagem" })).toHaveAttribute(
       "href",
       "/pre-weighings/018f0000-0000-7000-8000-0000000000a0",
     );
-    expect(within(guided).getByText("10 kg")).toBeInTheDocument();
-    expect(within(guided).getByRole("cell", { name: "Farinha de trigo" })).toBeInTheDocument();
-    expect(within(free).getByText("Receita")).toBeInTheDocument();
-    expect(within(free).getByText("4 kg")).toBeInTheDocument();
+    expect(guided.getByText("10 kg")).toBeInTheDocument();
+    expect(guided.getByRole("cell", { name: "Farinha de trigo" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    const free = await details("Pão de queijo");
+    expect(free.getByText("Receita")).toBeInTheDocument();
+    expect(free.getByText("4 kg")).toBeInTheDocument();
   });
 
-  it("shows the costs of a finished production", () => {
+  it("shows the costs of a finished production", async () => {
     open(
       aProduction({
         status: "FINISHED",
         finishedAt: "2026-10-14T15:00:00.000Z",
         items: [
           aProductionItem({
+            status: "FINISHED",
+            finishedAt: "2026-10-14T14:00:00.000Z",
             producedQuantity: "9.5",
             unitCost: "2.5",
             inputs: [{ ...aProductionItem().inputs[0]!, unitCost: "1.2" }],
@@ -235,12 +521,13 @@ describe("ProductionDetailPage", () => {
     );
 
     expect(screen.getByText(/^Finalizada em/)).toBeInTheDocument();
-    expect(screen.getByText("9,5 kg")).toBeInTheDocument();
-    expect(screen.getByText(moneyOf("2.5"))).toBeInTheDocument();
-    expect(screen.getByText(moneyOf("1.2"))).toBeInTheDocument();
+    const item = await details("Pão francês");
+    expect(item.getByText("9,5 kg")).toBeInTheDocument();
+    expect(item.getByText(moneyOf("2.5"))).toBeInTheDocument();
+    expect(item.getByText(moneyOf("1.2"))).toBeInTheDocument();
   });
 
-  it("tells what was discarded of opened packagings and whether its cost went into the production", () => {
+  it("tells what was discarded of opened packagings and whether its cost went into the production", async () => {
     const milk = { sku: "sku-milk", description: "Leite condensado", unit: "GRAM" as const };
 
     open(
@@ -249,6 +536,8 @@ describe("ProductionDetailPage", () => {
         finishedAt: "2026-10-14T15:00:00.000Z",
         items: [
           aProductionItem({
+            status: "FINISHED",
+            finishedAt: "2026-10-14T14:00:00.000Z",
             hasLeftoversInCost: true,
             producedQuantity: "1",
             unitCost: "7.9",
@@ -266,20 +555,20 @@ describe("ProductionDetailPage", () => {
       }),
     );
 
-    expect(screen.getByRole("columnheader", { name: "Sobra descartada" })).toBeInTheDocument();
-    const [, milkRow, flourRow] = screen.getAllByRole("row").map((row) => within(row));
+    const item = await details("Pão francês");
+    expect(item.getByRole("columnheader", { name: "Sobra descartada" })).toBeInTheDocument();
+    const [, milkRow, flourRow] = item.getAllByRole("row").map((row) => within(row));
     expect(milkRow!.getByText("95 g · R$ 1,90")).toBeInTheDocument();
     expect(flourRow!.getByText("—")).toBeInTheDocument();
-    const item = within(screen.getByRole("region", { name: "Pão francês" }));
     expect(item.getByText("Sobras no custo")).toBeInTheDocument();
     expect(item.getByText("Sim")).toBeInTheDocument();
-    expect(screen.queryByText("Sobras no custo", { selector: "dt" })).toBeInTheDocument();
   });
 
-  it("shows the leftover choice on each finished item, not as one fact of the production", () => {
+  it("shows the leftover choice on each finished item, not as one fact of the production", async () => {
     const discarded = (over: Partial<Production["items"][number]>) =>
       aProductionItem({
         status: "FINISHED",
+        finishedAt: "2026-10-14T14:00:00.000Z",
         inputs: [{ ...aProductionItem().inputs[0]!, leftovers: [{ lotId: "lot-1", quantity: "0.1", unitCost: "2" }] }],
         ...over,
       });
@@ -302,15 +591,15 @@ describe("ProductionDetailPage", () => {
       }),
     );
 
-    expect(within(screen.getByRole("region", { name: "Recheio" })).getByText("Sim")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Casquinha" })).getByText("Não")).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("region", { name: "Bombom" })).queryByText("Sobras no custo"),
-    ).not.toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Resumo da produção" })).queryByText("Sobras no custo")).toBeNull();
+    expect((await details("Recheio")).getByText("Sim")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect((await details("Casquinha")).getByText("Não")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect((await details("Bombom")).queryByText("Sobras no custo")).not.toBeInTheDocument();
   });
 
-  it("says when the leftovers were kept out of the cost, and says nothing while in progress", () => {
+  it("says when the leftovers were kept out of the cost, and says nothing while in progress", async () => {
     const discarded = aProductionItem({
       inputs: [{ ...aProductionItem().inputs[0]!, leftovers: [{ lotId: "lot-1", quantity: "0.1", unitCost: "2" }] }],
     });
@@ -318,43 +607,54 @@ describe("ProductionDetailPage", () => {
       aProduction({
         status: "FINISHED",
         finishedAt: "2026-10-14T15:00:00.000Z",
-        items: [{ ...discarded, hasLeftoversInCost: false }],
+        items: [
+          { ...discarded, status: "FINISHED", finishedAt: "2026-10-14T14:00:00.000Z", hasLeftoversInCost: false },
+        ],
       }),
     );
 
-    expect(within(screen.getByRole("region", { name: "Pão francês" })).getByText("Não")).toBeInTheDocument();
+    expect((await details("Pão francês")).getByText("Não")).toBeInTheDocument();
     unmount();
 
     open(aProduction());
-    expect(screen.queryByText("Sobras no custo")).not.toBeInTheDocument();
+    expect((await details("Pão francês")).queryByText("Sobras no custo")).not.toBeInTheDocument();
   });
 
-  it("says nothing of leftovers when nothing was discarded", () => {
-    open(aProduction({ status: "FINISHED", finishedAt: "2026-10-14T15:00:00.000Z" }));
+  it("says nothing of leftovers when nothing was discarded", async () => {
+    open(
+      aProduction({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T15:00:00.000Z",
+        items: [aProductionItem({ status: "FINISHED", finishedAt: "2026-10-14T14:00:00.000Z" })],
+      }),
+    );
 
-    expect(screen.queryByText("Sobras no custo")).not.toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: "Sobra descartada" })).not.toBeInTheDocument();
+    const item = await details("Pão francês");
+    expect(item.queryByText("Sobras no custo")).not.toBeInTheDocument();
+    expect(item.queryByRole("columnheader", { name: "Sobra descartada" })).not.toBeInTheDocument();
   });
 
-  it("offers finishing while in progress to whoever may record production", () => {
+  it("offers finishing while in progress to whoever may record production", async () => {
     open();
 
-    expect(screen.getByRole("button", { name: "Finalizar selecionados" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finalizar Pão francês" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancelar produção" })).toBeInTheDocument();
+
+    await leftoversSettled();
   });
 
   it("offers no finishing once the production is closed", () => {
     open(aProduction({ status: "CANCELED", canceledAt: "2026-10-14T15:00:00.000Z" }));
 
     expect(screen.getByText(/^Cancelada em/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Finalizar selecionados" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finalizar Pão francês" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
   });
 
   it("offers no finishing to whoever may only read production", () => {
     open(aProduction(), ["PRODUCTION_READ"]);
 
-    expect(screen.queryByRole("button", { name: "Finalizar selecionados" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finalizar Pão francês" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
   });
 });

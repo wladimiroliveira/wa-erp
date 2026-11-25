@@ -73,7 +73,7 @@ export function DamageItemDialog({ productionId, item, lossReasons }: DamageItem
 
   return (
     <>
-      <Button type="button" variant="outline" className="text-destructive" onClick={() => setOpen(true)}>
+      <Button type="button" variant="outline" size="sm" className="text-destructive" onClick={() => setOpen(true)}>
         Registrar avaria
       </Button>
 

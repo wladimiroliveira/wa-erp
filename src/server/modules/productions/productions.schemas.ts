@@ -94,6 +94,9 @@ export const productionSchema = z.object({
       // Whether the leftovers discarded when the item finished went into its cost; null until it finishes.
       hasLeftoversInCost: z.boolean().nullable(),
       product: productSummarySchema,
+      // When the item was substituted, and when the pre-weighing that guides it was recorded.
+      substitutedAt: z.iso.datetime().nullable(),
+      weighedAt: z.iso.datetime().nullable(),
       preWeighingId: z.uuid().nullable(),
       expectedQuantity: z.string(),
       producedQuantity: z.string().nullable(),

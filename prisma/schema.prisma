@@ -401,6 +401,8 @@ model ProductionItem {
   unitCost           Decimal?               @map("unit_cost") @db.Decimal(18, 6)
   status             ProductionItemStatus   @default(PENDING)
   finishedAt         DateTime?              @map("finished_at") @db.Timestamptz(3)
+  // When the item was substituted; null on an item that was not.
+  substitutedAt      DateTime?              @map("substituted_at") @db.Timestamptz(3)
   // Whether the cost of the leftovers discarded when the item finished went into its cost; null until it finishes.
   hasLeftoversInCost Boolean?               @map("has_leftovers_in_cost")
   inputs             ProductionItemInput[]

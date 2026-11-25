@@ -3,7 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { finishProductionItems, previewLeftovers, reduceProductionItem } from "@/features/productions/actions";
-import { FinishProductionForm } from "@/features/productions/FinishProductionForm";
+import { FinishItemForm } from "@/features/productions/FinishItemForm";
+import type { Production, ProductionItem } from "@/lib/api";
+import { leftoversSettled } from "@/tests/leftovers";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser, aProduction, aProductionItem } from "@/tests/samples";
 
@@ -16,15 +18,14 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const PRODUCTION = aProduction();
 const ITEM = PRODUCTION.items[0]!;
+const USER = aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] });
 
-function open() {
-  return renderWithProviders(<FinishProductionForm production={PRODUCTION} />, {
-    user: aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] }),
-  });
+function open(production: Production = PRODUCTION, item: ProductionItem = ITEM) {
+  return renderWithProviders(<FinishItemForm production={production} item={item} />, { user: USER });
 }
 
-const finish = () => userEvent.click(screen.getByRole("button", { name: "Finalizar selecionados" }));
-const pick = (name: string) => userEvent.click(screen.getByRole("checkbox", { name }));
+const finish = () => userEvent.click(screen.getByRole("button", { name: "Finalizar Pão francês" }));
+const typeProduced = (value: string) => userEvent.type(screen.getByLabelText("Produzido de Pão francês"), value);
 
 const NO_LEFTOVERS = { ok: true as const, data: { items: [], totalCost: "0.00" } };
 
@@ -35,13 +36,21 @@ beforeEach(() => {
   vi.mocked(toast.success).mockReset();
 });
 
-describe("FinishProductionForm", () => {
-  it("finishes with what each item produced and its expiry", async () => {
+describe("FinishItemForm", () => {
+  it("shows the quantity and expiry fields from the start", async () => {
+    open();
+
+    expect(screen.getByLabelText("Produzido de Pão francês")).toBeInTheDocument();
+    expect(screen.getByLabelText("Validade de Pão francês")).toBeInTheDocument();
+
+    await leftoversSettled();
+  });
+
+  it("finishes only its item with the typed quantity and expiry", async () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "9,5");
+    await typeProduced("9,5");
     await userEvent.type(screen.getByLabelText("Validade de Pão francês"), "2099-01-31");
     await finish();
 
@@ -57,8 +66,7 @@ describe("FinishProductionForm", () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     await waitFor(() =>
@@ -72,7 +80,7 @@ describe("FinishProductionForm", () => {
   it("refuses a blank produced quantity without calling the server", async () => {
     open();
 
-    await pick("Pão francês");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finalizar Pão francês" })).toBeEnabled());
     await finish();
 
     expect(await screen.findByText("Informe o produzido, com até 6 casas decimais.")).toBeInTheDocument();
@@ -82,8 +90,7 @@ describe("FinishProductionForm", () => {
   it("refuses an expiry in the past without calling the server", async () => {
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await userEvent.type(screen.getByLabelText("Validade de Pão francês"), "2020-01-01");
     await finish();
 
@@ -97,8 +104,7 @@ describe("FinishProductionForm", () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: false, status: 409, message: "Not in progress." });
     const { unmount } = open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
     unmount();
 
@@ -107,29 +113,12 @@ describe("FinishProductionForm", () => {
     );
     expect(toast.success).not.toHaveBeenCalled();
   });
-});
-
-describe("FinishProductionForm, what the form offers", () => {
-  it("lists the items unchecked, with the quantity and expiry only for the checked ones", async () => {
-    open();
-
-    expect(screen.getByRole("checkbox", { name: "Pão francês" })).not.toBeChecked();
-    expect(screen.queryByLabelText("Produzido de Pão francês")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Finalizar selecionados" })).toBeDisabled();
-    expect(previewLeftovers).not.toHaveBeenCalled();
-
-    await pick("Pão francês");
-
-    expect(screen.getByLabelText("Produzido de Pão francês")).toBeInTheDocument();
-    expect(screen.getByLabelText("Validade de Pão francês")).toBeInTheDocument();
-  });
 
   it("toasts the items finished while the production stays in progress", async () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: aProduction() });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Itens finalizados."));
@@ -139,8 +128,7 @@ describe("FinishProductionForm, what the form offers", () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Produção finalizada."));
@@ -164,8 +152,7 @@ describe("FinishProductionForm, what the form offers", () => {
     });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     await waitFor(() =>
@@ -174,7 +161,7 @@ describe("FinishProductionForm, what the form offers", () => {
   });
 });
 
-describe("FinishProductionForm, intermediates short in stock", () => {
+describe("FinishItemForm, intermediates short in stock", () => {
   const DOUGH = { sku: "018f0000-0000-7000-8000-0000000000d1", description: "Massa base", unit: "KILOGRAM" as const };
 
   it("opens the shortage dialog with what is missing", async () => {
@@ -190,8 +177,7 @@ describe("FinishProductionForm, intermediates short in stock", () => {
     });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     const dialog = await screen.findByRole("dialog", { name: "Falta material intermediário" });
@@ -216,8 +202,7 @@ describe("FinishProductionForm, intermediates short in stock", () => {
     });
     open();
 
-    await pick("Pão francês");
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
     await screen.findByRole("dialog", { name: "Falta material intermediário" });
     await userEvent.click(screen.getByRole("button", { name: "Reduzir" }));
@@ -227,68 +212,23 @@ describe("FinishProductionForm, intermediates short in stock", () => {
   });
 });
 
-describe("FinishProductionForm, a production finished item by item", () => {
+describe("FinishItemForm, one stage of several", () => {
   const SHELL_ID = "018f0000-0000-7000-8000-0000000000c2";
-  const FILLING_ID = "018f0000-0000-7000-8000-0000000000c3";
   const product = (description: string) => ({ ...ITEM.product, description });
   const STAGED = aProduction({
     items: [
-      aProductionItem({ product: product("Bombom"), dependsOn: [FILLING_ID, SHELL_ID] }),
-      aProductionItem({ id: FILLING_ID, product: product("Recheio"), status: "FINISHED" }),
+      aProductionItem({ product: product("Bombom"), dependsOn: [SHELL_ID] }),
       aProductionItem({ id: SHELL_ID, product: product("Casquinha") }),
     ],
   });
-  const FILLING_PENDING = aProductionItem({ id: FILLING_ID, product: product("Recheio") });
-  const WITH_TWO = aProduction({ items: [STAGED.items[0]!, FILLING_PENDING, STAGED.items[2]!] });
 
-  it("finishes just the recheio when only it is checked", async () => {
-    vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: WITH_TWO });
-    renderWithProviders(<FinishProductionForm production={WITH_TWO} />, {
-      user: aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] }),
-    });
-
-    await pick("Recheio");
-    await userEvent.type(screen.getByLabelText("Produzido de Recheio"), "20");
-    await finish();
-
-    await waitFor(() =>
-      expect(finishProductionItems).toHaveBeenCalledWith(WITH_TWO.id, {
-        items: [{ id: FILLING_ID, producedQuantity: "20", expiresAt: null }],
-        hasLeftoversInCost: true,
-      }),
-    );
-    expect(previewLeftovers).toHaveBeenCalledWith(WITH_TWO.id, [FILLING_ID]);
-  });
-
-  it("never asks for the leftovers of an item awaiting a weighing", async () => {
-    const damaged = aProduction({
-      items: [
-        aProductionItem({ id: "ok", product: product("Recheio") }),
-        aProductionItem({ id: "bad", product: product("Casquinha"), awaitsWeighing: true }),
-      ],
-    });
-    renderWithProviders(<FinishProductionForm production={damaged} />, {
-      user: aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] }),
-    });
-
-    expect(screen.queryByRole("checkbox", { name: "Casquinha" })).not.toBeInTheDocument();
-    await pick("Recheio");
-    await waitFor(() => expect(previewLeftovers).toHaveBeenCalledWith(damaged.id, ["ok"]));
-  });
-
-  it("finishes only the checked items", async () => {
+  it("asks the preview for its own id only and finishes just its own item", async () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: STAGED });
-    renderWithProviders(<FinishProductionForm production={STAGED} />, {
-      user: aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] }),
-    });
+    open(STAGED, STAGED.items[1]!);
 
-    expect(screen.queryByRole("checkbox", { name: "Bombom" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Recheio" })).not.toBeInTheDocument();
-    await pick("Casquinha");
     await waitFor(() => expect(previewLeftovers).toHaveBeenCalledWith(STAGED.id, [SHELL_ID]));
-
     await userEvent.type(screen.getByLabelText("Produzido de Casquinha"), "50");
-    await finish();
+    await userEvent.click(screen.getByRole("button", { name: "Finalizar Casquinha" }));
 
     await waitFor(() =>
       expect(finishProductionItems).toHaveBeenCalledWith(STAGED.id, {
@@ -299,33 +239,7 @@ describe("FinishProductionForm, a production finished item by item", () => {
   });
 });
 
-describe("FinishProductionForm, the next items after a refresh", () => {
-  it("starts blank for the items a refresh brings", async () => {
-    const shellId = "018f0000-0000-7000-8000-0000000000c2";
-    const product = (description: string) => ({ ...ITEM.product, description });
-    const before = aProduction({
-      items: [
-        aProductionItem({ product: product("Bombom"), dependsOn: [shellId] }),
-        aProductionItem({ id: shellId, product: product("Casquinha") }),
-      ],
-    });
-    const after = aProduction({
-      items: [before.items[0]!, { ...before.items[1]!, status: "FINISHED" }],
-    });
-    const user = aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] });
-    const { rerender } = renderWithProviders(<FinishProductionForm production={before} />, { user });
-    await pick("Casquinha");
-    await userEvent.type(screen.getByLabelText("Produzido de Casquinha"), "50");
-
-    rerender(<FinishProductionForm production={after} />);
-
-    await userEvent.click(await screen.findByRole("checkbox", { name: "Bombom" }));
-
-    expect(screen.getByLabelText("Produzido de Bombom")).toHaveValue("");
-  });
-});
-
-describe("FinishProductionForm, leftovers of opened packagings", () => {
+describe("FinishItemForm, leftovers of opened packagings", () => {
   const MILK = { sku: "018f0000-0000-7000-8000-000000000024", description: "Leite condensado", unit: "GRAM" as const };
   const WITH_LEFTOVERS = {
     ok: true as const,
@@ -350,19 +264,24 @@ describe("FinishProductionForm, leftovers of opened packagings", () => {
 
   const section = () => screen.getByRole("region", { name: "Sobras que serão descartadas" });
 
+  it("asks for the leftovers of its item when it mounts", async () => {
+    open();
+
+    await waitFor(() => expect(previewLeftovers).toHaveBeenCalledWith(PRODUCTION.id, [ITEM.id]));
+  });
+
   it("tells what will be discarded and puts it into the cost unless unchecked", async () => {
     vi.mocked(previewLeftovers).mockResolvedValue(WITH_LEFTOVERS);
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
     open();
 
-    await pick("Pão francês");
     expect(await screen.findByText("Leite condensado: 95 g (R$ 1,90)")).toBeInTheDocument();
     expect(section()).toHaveTextContent("Total: R$ 1,90");
     const inCost = screen.getByRole("checkbox", { name: "Incluir as sobras no custo da produção" });
     expect(inCost).toBeChecked();
 
     await userEvent.click(inCost);
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     await waitFor(() =>
@@ -376,7 +295,6 @@ describe("FinishProductionForm, leftovers of opened packagings", () => {
   it("shows nothing about leftovers when there are none", async () => {
     open();
 
-    await pick("Pão francês");
     await waitFor(() => expect(previewLeftovers).toHaveBeenCalledWith(PRODUCTION.id, [ITEM.id]));
     expect(screen.queryByRole("region", { name: "Sobras que serão descartadas" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Incluir as sobras no custo da produção" })).not.toBeInTheDocument();
@@ -387,11 +305,10 @@ describe("FinishProductionForm, leftovers of opened packagings", () => {
     vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: aProduction({ status: "FINISHED" }) });
     open();
 
-    await pick("Pão francês");
     expect(await screen.findByText("Não foi possível calcular as sobras.")).toBeInTheDocument();
     // Whatever the server finds is still the user's to keep out of the cost.
     await userEvent.click(screen.getByRole("checkbox", { name: "Incluir as sobras no custo da produção" }));
-    await userEvent.type(screen.getByLabelText("Produzido de Pão francês"), "10");
+    await typeProduced("10");
     await finish();
 
     await waitFor(() =>
@@ -403,17 +320,16 @@ describe("FinishProductionForm, leftovers of opened packagings", () => {
   });
 });
 
-describe("FinishProductionForm, while the leftovers are worked out", () => {
+describe("FinishItemForm, while the leftovers are worked out", () => {
   const MILK = { sku: "018f0000-0000-7000-8000-000000000024", description: "Leite condensado", unit: "GRAM" as const };
   const lotOf = (lotId: string) => ({ product: MILK, lotId, quantity: "0.25", unitCost: "0.02", cost: "0.01" });
 
-  it("does not finish until the leftovers are known, and says it is working them out", async () => {
+  it("does not finish until the leftovers are known, and says it is working them out", () => {
     vi.mocked(previewLeftovers).mockReturnValue(new Promise(() => undefined));
     open();
 
-    await pick("Pão francês");
     expect(screen.getByRole("status")).toHaveTextContent("Calculando as sobras…");
-    expect(screen.getByRole("button", { name: "Finalizar selecionados" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Finalizar Pão francês" })).toBeDisabled();
   });
 
   it("announces the leftovers once they arrive", async () => {
@@ -431,9 +347,8 @@ describe("FinishProductionForm, while the leftovers are worked out", () => {
     });
     open();
 
-    await pick("Pão francês");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Leite condensado: 95 g (R$ 1,90)"));
-    expect(screen.getByRole("button", { name: "Finalizar selecionados" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Finalizar Pão francês" })).toBeEnabled();
   });
 
   it("prices a line of several lots the way the total is priced, rounding once", async () => {
@@ -451,7 +366,6 @@ describe("FinishProductionForm, while the leftovers are worked out", () => {
     });
     open();
 
-    await pick("Pão francês");
     expect(await screen.findByText("Leite condensado: 0,5 g (R$ 0,01)")).toBeInTheDocument();
     expect(screen.getByText("Total: R$ 0,01")).toBeInTheDocument();
   });
@@ -459,9 +373,8 @@ describe("FinishProductionForm, while the leftovers are worked out", () => {
   it("works the leftovers out again when the page brings the production anew", async () => {
     const { rerender } = open();
 
-    await pick("Pão francês");
     await waitFor(() => expect(previewLeftovers).toHaveBeenCalledTimes(1));
-    rerender(<FinishProductionForm production={{ ...PRODUCTION }} />);
+    rerender(<FinishItemForm production={{ ...PRODUCTION }} item={ITEM} />);
 
     await waitFor(() => expect(previewLeftovers).toHaveBeenCalledTimes(2));
   });

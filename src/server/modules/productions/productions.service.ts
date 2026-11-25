@@ -94,6 +94,8 @@ export const presentProduction = (production: ProductionRecord) => {
       finishedAt: item.finishedAt?.toISOString() ?? null,
       hasLeftoversInCost: item.hasLeftoversInCost,
       product: item.product,
+      substitutedAt: item.substitutedAt?.toISOString() ?? null,
+      weighedAt: item.preWeighing?.createdAt.toISOString() ?? null,
       preWeighingId: item.preWeighingId,
       expectedQuantity: item.expectedQuantity.toString(),
       producedQuantity: item.producedQuantity?.toString() ?? null,

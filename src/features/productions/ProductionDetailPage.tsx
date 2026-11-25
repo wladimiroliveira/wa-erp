@@ -90,7 +90,8 @@ function StageCard({ production, item, lossReasons, canRecord }: StageCardProps)
   return (
     <section
       aria-labelledby={headingId}
-      className="flex flex-col gap-4 rounded-lg border border-primary/40 bg-primary/5 p-4"
+      // Narrow, so the fields and buttons inside it keep the width of what they hold.
+      className="flex w-full max-w-xl flex-col gap-4 rounded-lg border border-primary/40 bg-primary/5 p-4"
     >
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">

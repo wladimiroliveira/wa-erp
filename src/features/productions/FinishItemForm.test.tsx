@@ -37,6 +37,15 @@ beforeEach(() => {
 });
 
 describe("FinishItemForm", () => {
+  it("fills its fields with the page's background, so they stand out on a highlighted card", async () => {
+    open();
+
+    expect(screen.getByLabelText("Produzido de Pão francês")).toHaveClass("bg-background");
+    expect(screen.getByLabelText("Validade de Pão francês")).toHaveClass("bg-background");
+
+    await leftoversSettled();
+  });
+
   it("shows the quantity and expiry fields from the start", async () => {
     open();
 

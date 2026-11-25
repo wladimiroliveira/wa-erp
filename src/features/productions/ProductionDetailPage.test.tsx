@@ -139,6 +139,14 @@ describe("ProductionDetailPage, timeline", () => {
     await leftoversSettled();
   });
 
+  it("keeps a card narrow, so what is inside it does not stretch across the page", async () => {
+    open(BOMBOM);
+
+    expect(screen.getByRole("region", { name: "Recheio" })).toHaveClass("max-w-xl");
+
+    await leftoversSettled();
+  });
+
   it("says a free item comes from the recipe", async () => {
     open();
 

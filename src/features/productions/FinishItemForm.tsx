@@ -163,6 +163,8 @@ export function FinishItemForm({ production, item }: { production: Production; i
             <NumericInput
               id={quantityId}
               aria-label={`Produzido de ${description}`}
+              // Filled with the page's background: on the highlighted card a transparent field reads poorly.
+              className="bg-background"
               {...form.register("producedQuantity")}
             />
             {errors.producedQuantity ? (
@@ -176,6 +178,7 @@ export function FinishItemForm({ production, item }: { production: Production; i
               type="date"
               min={todayIso()}
               aria-label={`Validade de ${description}`}
+              className="bg-background"
               {...form.register("expiresAt")}
             />
             {errors.expiresAt ? <p className="text-sm text-destructive">{errors.expiresAt.message}</p> : null}

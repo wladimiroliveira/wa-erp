@@ -2,6 +2,7 @@
 
 exports[`routes inventory > matches the recorded access of every route 1`] = `
 "DELETE /v1/pre-weighings/{id} -> PRODUCTION_CREATE
+DELETE /v1/productions/{id}/items/{itemId}/batches/{batchId} -> PRODUCTION_CREATE
 DELETE /v1/roles/{id} -> ACCESS_UPDATE
 DELETE /v1/sessions/me/table-layouts/{tableKey} -> authenticated
 GET /v1/health -> public
@@ -40,11 +41,12 @@ POST /v1/losses -> LOSSES_CREATE
 POST /v1/pre-weighings -> PRODUCTION_CREATE
 POST /v1/productions -> PRODUCTION_CREATE
 POST /v1/productions/{id}/cancel -> PRODUCTION_CREATE
-POST /v1/productions/{id}/finish -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items/{itemId}/batches -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items/{itemId}/conclude -> PRODUCTION_CREATE
 POST /v1/productions/{id}/items/{itemId}/damage -> PRODUCTION_CREATE
-POST /v1/productions/{id}/items/{itemId}/reduce -> PRODUCTION_CREATE
 POST /v1/productions/{id}/items/{itemId}/substitute -> PRODUCTION_CREATE
-POST /v1/productions/{id}/weighings -> PRODUCTION_CREATE
+POST /v1/productions/{id}/items/{itemId}/weighings -> PRODUCTION_CREATE
 POST /v1/products -> CATALOG_CREATE
 POST /v1/roles -> ACCESS_CREATE
 POST /v1/sessions/refresh -> public

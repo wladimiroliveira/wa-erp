@@ -86,6 +86,12 @@ export const createPreWeighingBodySchema = preWeighingStageBodySchema.extend({
   stages: preWeighingStagesSchema(),
 });
 
+/** The 409s a weighing answers when what was sent no longer matches what the recipe plans. */
+export const PLAN_MISMATCHES = {
+  items: "The items do not match the ingredients of the recipe.",
+  stage: "A stage does not match the plan.",
+} as const;
+
 export const preWeighingIdParamsSchema = z.object({ id: z.uuid() });
 
 export const preWeighingStatusSchema = z.enum(["PENDING", "IN_PRODUCTION", "PRODUCED", "DAMAGED"]);

@@ -32,6 +32,17 @@ function eventsOf(production: Production): TimelineEvent[] {
       });
     }
 
+    for (const batch of item.batches) {
+      const made = `Leva de ${name} registrada · ${quantityOf(batch.quantity, item.product.unit)}`;
+
+      events.push({
+        at: batch.createdAt,
+        text: batch.source === "EXISTING" ? `${made} · já existia` : made,
+        item,
+        ends: false,
+      });
+    }
+
     for (const damage of item.damages) {
       events.push({ at: damage.createdAt, text: `${name} avariado · ${damage.reason.name}`, item, ends: false });
     }

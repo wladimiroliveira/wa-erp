@@ -2,6 +2,7 @@ import type {
   MeasurementUnit as PrismaMeasurementUnit,
   Permission as PrismaPermission,
   ProductKind as PrismaProductKind,
+  ProductionBatchSource as PrismaProductionBatchSource,
   ProductionItemStatus as PrismaProductionItemStatus,
   ProductionStatus as PrismaProductionStatus,
   StockMovementType as PrismaStockMovementType,
@@ -76,6 +77,14 @@ export const PRODUCTION_ITEM_STATUSES = [
   "FINISHED",
   "SUBSTITUTED",
 ] as const satisfies readonly PrismaProductionItemStatus[];
+
+export const PRODUCTION_BATCH_SOURCES = [
+  "PRODUCED",
+  "EXISTING",
+] as const satisfies readonly PrismaProductionBatchSource[];
+
+export const productionBatchSourceSchema = z.enum(PRODUCTION_BATCH_SOURCES);
+export type ProductionBatchSource = (typeof PRODUCTION_BATCH_SOURCES)[number];
 
 export const productionItemStatusSchema = z.enum(PRODUCTION_ITEM_STATUSES);
 export type ProductionItemStatus = (typeof PRODUCTION_ITEM_STATUSES)[number];

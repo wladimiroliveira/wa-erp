@@ -1,17 +1,28 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { finishProductionItems } from "@/features/productions/actions";
+import { concludeItem, planProductionItem, recordBatch } from "@/features/productions/actions";
 import { ProductionDetailPage } from "@/features/productions/ProductionDetailPage";
 import { moneyOf } from "@/features/stock/stock-format";
 import { formatDateTime } from "@/lib/dates";
 import type { Permission, Production } from "@/lib/api";
 import { leftoversSettled } from "@/tests/leftovers";
 import { renderWithProviders } from "@/tests/render";
-import { aCurrentUser, aLossReason, aProduction, aProductionItem } from "@/tests/samples";
+import {
+  aCurrentUser,
+  aLossReason,
+  aPreWeighingPlan,
+  aProduction,
+  aProductionBatch,
+  aProductionItem,
+} from "@/tests/samples";
 
 vi.mock("@/features/productions/actions", () => ({
-  finishProductionItems: vi.fn(),
+  concludeItem: vi.fn(),
+  recordBatch: vi.fn(),
+  planProductionItem: vi.fn(),
+  weighItem: vi.fn(),
+  removeBatch: vi.fn(),
   cancelProduction: vi.fn(),
   damageProductionItem: vi.fn(),
   previewSubstitution: vi.fn(),
@@ -28,6 +39,19 @@ function open(production: Production = aProduction(), permissions: Permission[] 
 }
 
 const product = (description: string) => ({ sku: description, description, unit: "KILOGRAM" as const });
+// A damage that took the item's pre-weighing away: the item waits for a new weighing.
+const DAMAGED = {
+  awaitsWeighing: true,
+  damages: [
+    {
+      id: "d1",
+      reason: { id: "r1", name: "Queimou" },
+      note: null,
+      createdAt: "2026-10-14T13:00:00.000Z",
+      preWeighingId: "pw-1",
+    },
+  ],
+};
 const STAGED = aProduction({
   items: [
     aProductionItem({ id: "shell", product: product("Casquinha") }),
@@ -133,7 +157,7 @@ describe("ProductionDetailPage, timeline", () => {
     expect(card.getByRole("button", { name: "Detalhes de Recheio" })).toBeInTheDocument();
     expect(card.getByText("Previsto 0,7 kg")).toBeInTheDocument();
     expect(card.getByRole("link", { name: "da pré-pesagem" })).toHaveAttribute("href", "/pre-weighings/pw-1");
-    expect(card.getByRole("button", { name: "Finalizar Recheio" })).toBeInTheDocument();
+    expect(card.getByRole("button", { name: "Concluir Recheio" })).toBeInTheDocument();
     expect(card.getByRole("button", { name: "Registrar avaria" })).toBeInTheDocument();
 
     await leftoversSettled();
@@ -161,7 +185,7 @@ describe("ProductionDetailPage, timeline", () => {
     const next = region("Depois");
     expect(next.getByText("Bombom · aguardando Recheio")).toBeInTheDocument();
     expect(next.getByRole("button", { name: "Detalhes de Bombom" })).toBeInTheDocument();
-    expect(next.queryByRole("button", { name: "Finalizar Bombom" })).not.toBeInTheDocument();
+    expect(next.queryByRole("button", { name: "Concluir Bombom" })).not.toBeInTheDocument();
     expect(next.queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
 
     await leftoversSettled();
@@ -187,30 +211,58 @@ describe("ProductionDetailPage, timeline", () => {
     await leftoversSettled();
   });
 
-  it("gives each ready stage its own card, and finishing one sends only that item", async () => {
-    vi.mocked(finishProductionItems).mockResolvedValue({ ok: true, data: STAGED });
+  it("gives each ready stage its own card, and a leva registered in one goes to that item only", async () => {
+    vi.mocked(recordBatch).mockResolvedValue({ ok: true, data: STAGED });
     open(STAGED);
 
-    expect(region("Recheio").getByRole("form", { name: "Finalizar Recheio" })).toBeInTheDocument();
-    expect(region("Casquinha").getByRole("form", { name: "Finalizar Casquinha" })).toBeInTheDocument();
-    expect(screen.queryByRole("form", { name: "Finalizar Bombom" })).not.toBeInTheDocument();
+    expect(region("Recheio").getByRole("form", { name: "Registrar leva de Recheio" })).toBeInTheDocument();
+    expect(region("Casquinha").getByRole("form", { name: "Registrar leva de Casquinha" })).toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Registrar leva de Bombom" })).not.toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("Produzido de Recheio"), "0,7");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Finalizar Recheio" })).toBeEnabled());
-    await userEvent.click(screen.getByRole("button", { name: "Finalizar Recheio" }));
+    await userEvent.type(screen.getByLabelText("Quantidade da leva de Recheio"), "0,7");
+    await userEvent.click(region("Recheio").getByRole("button", { name: "Registrar leva" }));
 
     await waitFor(() =>
-      expect(finishProductionItems).toHaveBeenCalledWith(STAGED.id, {
-        items: [{ id: "filling", producedQuantity: "0.7", expiresAt: null }],
-        hasLeftoversInCost: true,
+      expect(recordBatch).toHaveBeenCalledWith(STAGED.id, "filling", {
+        quantity: "0.7",
+        expiresAt: null,
+        source: "PRODUCED",
       }),
     );
+    await leftoversSettled();
+  });
+
+  it("shows in a card how far its levas went, lists them and concludes only that item", async () => {
+    vi.mocked(concludeItem).mockResolvedValue({ ok: true, data: STAGED });
+    const withBatches = {
+      ...STAGED,
+      items: STAGED.items.map((item) =>
+        item.id === "filling"
+          ? { ...item, batches: [aProductionBatch({ quantity: "10", createdAt: "2026-10-14T12:30:00.000Z" })] }
+          : item,
+      ),
+    };
+    open(withBatches);
+
+    const card = region("Recheio");
+    expect(card.getByText("10 kg de 10 kg · meta atingida")).toBeInTheDocument();
+    expect(card.getByRole("progressbar", { name: "Progresso de Recheio" })).toBeInTheDocument();
+    expect(
+      card.getByRole("button", { name: `Remover leva de ${formatDateTime("2026-10-14T12:30:00.000Z")}` }),
+    ).toBeInTheDocument();
+    expect(region("Casquinha").getByText("0 kg de 10 kg · faltam 10 kg")).toBeInTheDocument();
+
+    await waitFor(() => expect(card.getByRole("button", { name: "Concluir Recheio" })).toBeEnabled());
+    expect(region("Casquinha").getByRole("button", { name: "Concluir Casquinha" })).toBeDisabled();
+    await userEvent.click(card.getByRole("button", { name: "Concluir Recheio" }));
+
+    await waitFor(() => expect(concludeItem).toHaveBeenCalledWith(STAGED.id, "filling", { hasLeftoversInCost: true }));
   });
 
   it("keeps what was typed in a ready card when a refresh finishes another, and drops the card that left", async () => {
     const { rerender } = open(STAGED);
 
-    await userEvent.type(screen.getByLabelText("Produzido de Recheio"), "0,7");
+    await userEvent.type(screen.getByLabelText("Quantidade da leva de Recheio"), "0,7");
     const refreshed = {
       ...STAGED,
       items: STAGED.items.map((item) =>
@@ -221,14 +273,15 @@ describe("ProductionDetailPage, timeline", () => {
     };
     rerender(<ProductionDetailPage production={refreshed} lossReasons={[aLossReason()]} />);
 
-    expect(screen.getByLabelText("Produzido de Recheio")).toHaveValue("0,7");
-    expect(screen.queryByRole("form", { name: "Finalizar Casquinha" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Quantidade da leva de Recheio")).toHaveValue("0,7");
+    expect(screen.queryByRole("form", { name: "Registrar leva de Casquinha" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Casquinha" })).not.toBeInTheDocument();
 
     await leftoversSettled();
   });
 
-  it("asks for a new weighing on a damaged item, as its main action", () => {
+  it("opens the weighing on a damaged item, as its main action", async () => {
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: aPreWeighingPlan() });
     open(
       aProduction({
         id: "prod-1",
@@ -237,7 +290,7 @@ describe("ProductionDetailPage, timeline", () => {
             id: "shell",
             product: { sku: "sku-shell", description: "Casquinha", unit: "KILOGRAM" },
             expectedQuantity: "3",
-            awaitsWeighing: true,
+            ...DAMAGED,
           }),
         ],
       }),
@@ -245,12 +298,54 @@ describe("ProductionDetailPage, timeline", () => {
 
     const card = region("Casquinha");
     expect(card.getByText("Avariado — faça uma nova pesagem")).toBeInTheDocument();
-    expect(card.getByRole("link", { name: "Nova pesagem" })).toHaveAttribute(
-      "href",
-      "/pre-weighings/new?productionId=prod-1&itemId=shell&productSku=sku-shell&quantity=3",
-    );
-    expect(card.queryByRole("button", { name: "Finalizar Casquinha" })).not.toBeInTheDocument();
+    expect(card.getByLabelText("Quanto fazer")).toHaveValue("3");
+    expect(card.getByRole("button", { name: "Registrar pesagem" })).toBeInTheDocument();
+    expect(card.queryByRole("link", { name: "Nova pesagem" })).not.toBeInTheDocument();
+    expect(card.queryByRole("button", { name: "Concluir Casquinha" })).not.toBeInTheDocument();
     expect(card.queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
+
+    await card.findByLabelText("Pesado de Farinha de trigo");
+  });
+
+  it.each([
+    ["whoever may record production", RECORDER],
+    ["a read-only user", ["PRODUCTION_READ"] satisfies Permission[]],
+  ])("says an item added for a shortage, never damaged, awaits a weighing, to %s", async (_, permissions) => {
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: aPreWeighingPlan() });
+    open(
+      aProduction({
+        items: [
+          aProductionItem({
+            id: "filling",
+            product: product("Recheio"),
+            preWeighingId: null,
+            inputs: [],
+            awaitsWeighing: true,
+          }),
+        ],
+      }),
+      permissions,
+    );
+
+    const card = region("Recheio");
+    expect(card.getByText("Aguardando pesagem")).toBeInTheDocument();
+    expect(card.queryByText(/Avariado/)).not.toBeInTheDocument();
+
+    if (permissions === RECORDER) await card.findByLabelText("Pesado de Farinha de trigo");
+  });
+
+  it("offers one more leva to weigh behind a button on a card in progress", async () => {
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: aPreWeighingPlan() });
+    const user = userEvent.setup();
+    open(aProduction({ items: [aProductionItem({ id: "shell", product: product("Casquinha") })] }));
+
+    const card = region("Casquinha");
+    expect(card.queryByLabelText("Quanto fazer")).not.toBeInTheDocument();
+
+    await user.click(card.getByRole("button", { name: "Pesar mais uma leva" }));
+
+    expect(card.getByLabelText("Quanto fazer")).toBeInTheDocument();
+    await card.findByLabelText("Pesado de Farinha de trigo");
   });
 
   it("says nothing of an origin on an item awaiting a new weighing", () => {
@@ -265,10 +360,9 @@ describe("ProductionDetailPage, timeline", () => {
   });
 
   it("tells a read-only user the item awaits a weighing, without telling them to weigh", () => {
-    open(
-      aProduction({ items: [aProductionItem({ id: "shell", product: product("Casquinha"), awaitsWeighing: true })] }),
-      ["PRODUCTION_READ"],
-    );
+    open(aProduction({ items: [aProductionItem({ id: "shell", product: product("Casquinha"), ...DAMAGED })] }), [
+      "PRODUCTION_READ",
+    ]);
 
     const card = region("Casquinha");
     expect(card.getByText("Avariado — aguardando nova pesagem")).toBeInTheDocument();
@@ -436,7 +530,8 @@ describe("ProductionDetailPage, timeline", () => {
     open(STAGED, ["PRODUCTION_READ"]);
 
     expect(screen.getByRole("heading", { name: "Agora" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Finalizar / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Concluir / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Registrar leva" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Registrar avaria" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Usar do estoque" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
@@ -645,7 +740,7 @@ describe("ProductionDetailPage", () => {
   it("offers finishing while in progress to whoever may record production", async () => {
     open();
 
-    expect(screen.getByRole("button", { name: "Finalizar Pão francês" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Concluir Pão francês" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancelar produção" })).toBeInTheDocument();
 
     await leftoversSettled();
@@ -655,14 +750,14 @@ describe("ProductionDetailPage", () => {
     open(aProduction({ status: "CANCELED", canceledAt: "2026-10-14T15:00:00.000Z" }));
 
     expect(screen.getByText(/^Cancelada em/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Finalizar Pão francês" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Concluir Pão francês" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
   });
 
   it("offers no finishing to whoever may only read production", () => {
     open(aProduction(), ["PRODUCTION_READ"]);
 
-    expect(screen.queryByRole("button", { name: "Finalizar Pão francês" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Concluir Pão francês" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar produção" })).not.toBeInTheDocument();
   });
 });

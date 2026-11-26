@@ -15,6 +15,10 @@ export function finishableItems(items: Item[]): Item[] {
 /** Items whose stage can go wrong now: the same ones the form can finish. */
 export const canDamage = (item: Item, items: Item[]): boolean => finishableItems(items).includes(item);
 
+/** Whether another item of the production takes this one: an intermediate, not the main product. */
+export const isTakenByAnother = (item: Item, items: Item[]): boolean =>
+  items.some(({ id, dependsOn }) => id !== item.id && dependsOn.includes(item.id));
+
 /** Pending items another item takes: the only ones stock of the same product can stand in for. */
 export const canSubstitute = (item: Item, items: Item[]): boolean =>
-  item.status === "PENDING" && items.some(({ id, dependsOn }) => id !== item.id && dependsOn.includes(item.id));
+  item.status === "PENDING" && isTakenByAnother(item, items);

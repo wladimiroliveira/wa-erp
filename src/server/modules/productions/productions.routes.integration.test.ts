@@ -1,16 +1,19 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MeasurementUnit, Permission, ProductKind } from "@prisma/client";
 import * as productionCancel from "@/app/v1/productions/[id]/cancel/route";
-import * as productionFinish from "@/app/v1/productions/[id]/finish/route";
 import * as productionDamage from "@/app/v1/productions/[id]/items/[itemId]/damage/route";
 import * as productionSubstitute from "@/app/v1/productions/[id]/items/[itemId]/substitute/route";
-import * as productionReduce from "@/app/v1/productions/[id]/items/[itemId]/reduce/route";
-import * as productionWeighings from "@/app/v1/productions/[id]/weighings/route";
+import * as productionBatches from "@/app/v1/productions/[id]/items/[itemId]/batches/route";
+import * as productionBatchById from "@/app/v1/productions/[id]/items/[itemId]/batches/[batchId]/route";
+import * as productionConclude from "@/app/v1/productions/[id]/items/[itemId]/conclude/route";
+import * as productionItemWeighings from "@/app/v1/productions/[id]/items/[itemId]/weighings/route";
+import * as productionItems from "@/app/v1/productions/[id]/items/route";
 import * as productionLeftovers from "@/app/v1/productions/[id]/leftovers/route";
 import * as productionById from "@/app/v1/productions/[id]/route";
 import * as productions from "@/app/v1/productions/route";
 import * as preWeighingById from "@/app/v1/pre-weighings/[id]/route";
 import { rateLimiter } from "@/server/http/rate-limit";
+import { collectRoutes } from "@/server/routes";
 import { authenticateAs } from "@/server/testing/authenticate";
 import { resetDatabase, testPrisma } from "@/server/testing/database";
 import { inject } from "@/server/testing/inject";
@@ -164,30 +167,30 @@ const postCancel = (headers: Headers, id: string) =>
 const listProductions = (headers: Headers, query: Record<string, string> = {}) =>
   inject(productions, { method: "GET", url: "/v1/productions", headers, query });
 
-// Every finished item says whether what it produced expires; the tests that are not about it say
-// it does not.
-const postFinish = (headers: Headers, id: string, payload: { items?: unknown[]; hasLeftoversInCost?: boolean }) =>
-  inject(productionFinish, {
+const postConclude = (headers: Headers, id: string, itemId: string, payload: Record<string, unknown> = {}) =>
+  inject(productionConclude, {
     method: "POST",
-    url: `/v1/productions/${id}/finish`,
-    params: { id },
-    headers,
-    payload: {
-      ...payload,
-      items: payload.items?.map((item) =>
-        typeof item === "object" && item !== null ? { expiresAt: null, ...item } : item,
-      ),
-    },
-  });
-
-const postReduce = (headers: Headers, id: string, itemId: string, payload: Record<string, unknown>) =>
-  inject(productionReduce, {
-    method: "POST",
-    url: `/v1/productions/${id}/items/${itemId}/reduce`,
+    url: `/v1/productions/${id}/items/${itemId}/conclude`,
     params: { id, itemId },
     headers,
     payload,
   });
+
+// An item made in one batch of what it produced, then concluded, a yield below its target taken as
+// meant: what finishing an item was before batches. A batch refused is the answer.
+async function makeItem(
+  headers: Headers,
+  id: string,
+  itemId: string,
+  quantity: string,
+  { expiresAt = null, ...body }: { expiresAt?: string | null; hasLeftoversInCost?: boolean } = {},
+) {
+  const batch = await postBatch(headers, id, itemId, { quantity, expiresAt, source: "PRODUCED" });
+
+  if (batch.statusCode !== 201) return batch;
+
+  return postConclude(headers, id, itemId, { belowTarget: true, ...body });
+}
 
 const postDamage = (headers: Headers, id: string, itemId: string, payload: Record<string, unknown>) =>
   inject(productionDamage, {
@@ -198,20 +201,40 @@ const postDamage = (headers: Headers, id: string, itemId: string, payload: Recor
     payload,
   });
 
-const postWeighing = (headers: Headers, id: string, payload: Record<string, unknown>) =>
-  inject(productionWeighings, {
+const postItemWeighing = (headers: Headers, id: string, itemId: string, payload: Record<string, unknown>) =>
+  inject(productionItemWeighings, {
     method: "POST",
-    url: `/v1/productions/${id}/weighings`,
-    params: { id },
+    url: `/v1/productions/${id}/items/${itemId}/weighings`,
+    params: { id, itemId },
     headers,
     payload,
   });
+
+const postItem = (headers: Headers, id: string, payload: Record<string, unknown>) =>
+  inject(productionItems, { method: "POST", url: `/v1/productions/${id}/items`, params: { id }, headers, payload });
 
 const postSubstitute = (headers: Headers, id: string, itemId: string) =>
   inject(productionSubstitute, {
     method: "POST",
     url: `/v1/productions/${id}/items/${itemId}/substitute`,
     params: { id, itemId },
+    headers,
+  });
+
+const postBatch = (headers: Headers, id: string, itemId: string, payload: Record<string, unknown>) =>
+  inject(productionBatches, {
+    method: "POST",
+    url: `/v1/productions/${id}/items/${itemId}/batches`,
+    params: { id, itemId },
+    headers,
+    payload,
+  });
+
+const deleteBatch = (headers: Headers, id: string, itemId: string, batchId: string) =>
+  inject(productionBatchById, {
+    method: "DELETE",
+    url: `/v1/productions/${id}/items/${itemId}/batches/${batchId}`,
+    params: { id, itemId, batchId },
     headers,
   });
 
@@ -225,6 +248,9 @@ const getSubstitution = (headers: Headers, id: string, itemId: string) =>
 
 const getPreWeighing = (headers: Headers, id: string) =>
   inject(preWeighingById, { method: "GET", url: `/v1/pre-weighings/${id}`, params: { id }, headers });
+
+const deletePreWeighing = (headers: Headers, id: string) =>
+  inject(preWeighingById, { method: "DELETE", url: `/v1/pre-weighings/${id}`, params: { id }, headers });
 
 const canRead = () => authenticateAs([Permission.PRODUCTION_READ]);
 const canCreate = () => authenticateAs([Permission.PRODUCTION_CREATE]);
@@ -260,6 +286,8 @@ describe("POST /v1/productions", () => {
           dependsOn: [],
           awaitsWeighing: false,
           damages: [],
+          batches: [],
+          extraWeighings: 0,
           inputs: [
             {
               product: { sku: water.sku, description: "Water", unit: "LITER" },
@@ -571,6 +599,46 @@ describe("GET /v1/productions/:id", () => {
     expect(response.json()).toEqual(started.json());
   });
 
+  it("presents the batches of an item, oldest first, and how many extra weighings it took", async () => {
+    const { headers, userId } = await canDoBoth();
+    const { dough } = await createDough();
+    const created = (await postProduction(headers, { items: [{ productSku: dough.sku, quantity: "50" }] })).json();
+    const item = created.items[0];
+    const batch = (quantity: string, createdAt: string, expiresAt: Date | null, source: "PRODUCED" | "EXISTING") =>
+      testPrisma.productionItemBatch.create({
+        data: {
+          productionItemId: item.id,
+          quantity,
+          expiresAt,
+          source,
+          createdById: userId,
+          createdAt: new Date(createdAt),
+        },
+      });
+    const second = await batch("20", "2026-11-24T11:00:00Z", null, "EXISTING");
+    const first = await batch("30.5", "2026-11-24T10:00:00Z", new Date("2027-02-01T00:00:00Z"), "PRODUCED");
+    const preWeighing = await testPrisma.preWeighing.create({
+      data: { productSku: dough.sku, quantity: "5", createdById: userId },
+    });
+    await testPrisma.productionItemWeighing.create({
+      data: { productionItemId: item.id, preWeighingId: preWeighing.id },
+    });
+
+    const presented = (await getProduction(headers, created.id)).json().items[0];
+
+    expect(presented.batches).toEqual([
+      {
+        id: first.id,
+        quantity: "30.5",
+        expiresAt: "2027-02-01",
+        source: "PRODUCED",
+        createdAt: "2026-11-24T10:00:00.000Z",
+      },
+      { id: second.id, quantity: "20", expiresAt: null, source: "EXISTING", createdAt: "2026-11-24T11:00:00.000Z" },
+    ]);
+    expect(presented.extraWeighings).toBe(1);
+  });
+
   it("answers 404 for a production that does not exist", async () => {
     const { headers } = await canRead();
 
@@ -588,7 +656,7 @@ describe("GET /v1/productions/:id", () => {
   });
 });
 
-describe("POST /v1/productions/:id/finish", () => {
+describe("POST /v1/productions/:id/items/:itemId/conclude", () => {
   // 50 kg of dough takes 30 kg of flour at 2.00 and 18 L of water at 0.50: 69.00 of inputs.
   async function startDough(headers: Headers) {
     const products = await createDough();
@@ -603,9 +671,7 @@ describe("POST /v1/productions/:id/finish", () => {
     const { headers, userId } = await canDoBoth();
     const { dough, flour, water, production } = await startDough(headers);
 
-    const response = await postFinish(headers, production.id, {
-      items: [{ id: production.items[0].id, producedQuantity: "46" }],
-    });
+    const response = await makeItem(headers, production.id, production.items[0].id, "46");
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
@@ -654,16 +720,14 @@ describe("POST /v1/productions/:id/finish", () => {
     await stock(water.sku, "50", "0.5");
     const production = (await postProduction(headers, { preWeighingId: preWeighing.id })).json();
 
-    const response = await postFinish(headers, production.id, {
-      items: [{ id: production.items[0].id, producedQuantity: "50" }],
-    });
+    const response = await makeItem(headers, production.id, production.items[0].id, "50");
 
     expect(response.statusCode).toBe(200);
     expect(await stockOf(flour.sku)).toEqual({ quantity: "69.75", averageCost: "2" });
     expect(await stockOf(water.sku)).toEqual({ quantity: "32.1", averageCost: "0.5" });
   });
 
-  it("finishes every item of a production with several recipes", async () => {
+  it("concludes each item of a production with several recipes", async () => {
     const { headers } = await canDoBoth();
     const { dough } = await createDough();
     const { syrup, sugar } = await createSyrup();
@@ -677,12 +741,8 @@ describe("POST /v1/productions/:id/finish", () => {
     ).json();
     const [doughItem, syrupItem] = production.items;
 
-    const response = await postFinish(headers, production.id, {
-      items: [
-        { id: syrupItem.id, producedQuantity: "4.5" },
-        { id: doughItem.id, producedQuantity: "48" },
-      ],
-    });
+    expect((await makeItem(headers, production.id, syrupItem.id, "4.5")).statusCode).toBe(200);
+    const response = await makeItem(headers, production.id, doughItem.id, "48");
 
     expect(response.statusCode).toBe(200);
     expect(await stockOf(dough.sku)).toMatchObject({ quantity: "48" });
@@ -696,9 +756,7 @@ describe("POST /v1/productions/:id/finish", () => {
     await stock(flour.sku, "10", "2");
     const production = (await postProduction(headers, { items: [{ productSku: dough.sku, quantity: "50" }] })).json();
 
-    const response = await postFinish(headers, production.id, {
-      items: [{ id: production.items[0].id, producedQuantity: "50" }],
-    });
+    const response = await makeItem(headers, production.id, production.items[0].id, "50");
 
     expect(response.statusCode).toBe(200);
     expect(response.json().items[0].unitCost).toBe("1.2");
@@ -717,7 +775,7 @@ describe("POST /v1/productions/:id/finish", () => {
     }
 
     const finish = (headers: Headers, production: { id: string; items: { id: string }[] }, produced = "5") =>
-      postFinish(headers, production.id, { items: [{ id: production.items[0]!.id, producedQuantity: produced }] });
+      makeItem(headers, production.id, production.items[0]!.id, produced);
 
     const consumptionsOf = async (productSku: string) =>
       (
@@ -838,64 +896,139 @@ describe("POST /v1/productions/:id/finish", () => {
     });
   });
 
-  describe("bringing the product in as a lot", () => {
+  describe("bringing the batches in as lots", () => {
+    const lotsOf = async (productSku: string) =>
+      (await testPrisma.stockLot.findMany({ where: { productSku }, orderBy: [{ expiresAt: "asc" }] })).map((found) => ({
+        supplierId: found.supplierId,
+        expiresAt: found.expiresAt?.toISOString().slice(0, 10) ?? null,
+        initialQuantity: found.initialQuantity.toString(),
+        quantity: found.quantity.toString(),
+        unitCost: found.unitCost.toString(),
+      }));
+
     it("opens a lot of what was produced, with its expiry date and what it cost", async () => {
       const { headers } = await canDoBoth();
       const { dough, production } = await startDough(headers);
 
-      const response = await postFinish(headers, production.id, {
-        items: [{ id: production.items[0].id, producedQuantity: "46", expiresAt: daysFromToday(3) }],
+      const response = await makeItem(headers, production.id, production.items[0].id, "46", {
+        expiresAt: daysFromToday(3),
       });
 
       expect(response.statusCode).toBe(200);
-
-      const [produced] = await testPrisma.stockLot.findMany({ where: { productSku: dough.sku } });
-
-      expect(produced).toMatchObject({ supplierId: null });
-      expect(produced!.expiresAt?.toISOString().slice(0, 10)).toBe(daysFromToday(3));
-      expect(produced!.initialQuantity.toString()).toBe("46");
-      expect(produced!.quantity.toString()).toBe("46");
-      expect(produced!.unitCost.toString()).toBe("1.5");
+      expect(await lotsOf(dough.sku)).toEqual([
+        { supplierId: null, expiresAt: daysFromToday(3), initialQuantity: "46", quantity: "46", unitCost: "1.5" },
+      ]);
+      const produced = await testPrisma.stockLot.findFirstOrThrow({ where: { productSku: dough.sku } });
       expect((await testPrisma.stockMovement.findFirstOrThrow({ where: { type: "PRODUCTION_OUTPUT" } })).lotId).toBe(
-        produced!.id,
+        produced.id,
       );
     });
 
-    it("opens a lot that never expires when told so", async () => {
+    it("opens a lot that never expires when the batches do not", async () => {
       const { headers } = await canDoBoth();
       const { dough, production } = await startDough(headers);
 
-      await postFinish(headers, production.id, {
-        items: [{ id: production.items[0].id, producedQuantity: "46", expiresAt: null }],
-      });
+      await makeItem(headers, production.id, production.items[0].id, "46", { expiresAt: null });
 
       expect((await testPrisma.stockLot.findFirstOrThrow({ where: { productSku: dough.sku } })).expiresAt).toBeNull();
     });
 
-    it("answers 400 when an item does not say whether what it produced expires", async () => {
+    it("opens one lot per expiry, summing the batches of each, all at the real cost", async () => {
       const { headers } = await canDoBoth();
-      const { production } = await startDough(headers);
-
-      const response = await inject(productionFinish, {
-        method: "POST",
-        url: `/v1/productions/${production.id}/finish`,
-        params: { id: production.id },
-        headers,
-        payload: { items: [{ id: production.items[0].id, producedQuantity: "46" }] },
+      const { dough, production } = await startDough(headers);
+      const itemId = production.items[0].id;
+      await postBatch(headers, production.id, itemId, {
+        quantity: "20",
+        expiresAt: daysFromToday(3),
+        source: "PRODUCED",
+      });
+      await postBatch(headers, production.id, itemId, {
+        quantity: "20",
+        expiresAt: daysFromToday(5),
+        source: "PRODUCED",
+      });
+      await postBatch(headers, production.id, itemId, {
+        quantity: "10",
+        expiresAt: daysFromToday(3),
+        source: "PRODUCED",
       });
 
-      expect(response.statusCode).toBe(400);
+      const response = await postConclude(headers, production.id, itemId);
+
+      // 69.00 of inputs for 50 kg made.
+      expect(response.statusCode).toBe(200);
+      expect(response.json().items[0]).toMatchObject({ status: "FINISHED", producedQuantity: "50", unitCost: "1.38" });
+      expect(await lotsOf(dough.sku)).toEqual([
+        { supplierId: null, expiresAt: daysFromToday(3), initialQuantity: "30", quantity: "30", unitCost: "1.38" },
+        { supplierId: null, expiresAt: daysFromToday(5), initialQuantity: "20", quantity: "20", unitCost: "1.38" },
+      ]);
+      expect(await testPrisma.stockMovement.count({ where: { type: "PRODUCTION_OUTPUT" } })).toBe(2);
+      expect(await stockOf(dough.sku)).toEqual({ quantity: "50", averageCost: "1.38" });
     });
 
-    it("answers 400 for a product that would come in already expired", async () => {
+    it("takes half of every input for 25 made and 25 that already existed of 50, the existing at the average cost", async () => {
       const { headers } = await canDoBoth();
-      const { production } = await startDough(headers);
-
-      const response = await postFinish(headers, production.id, {
-        items: [{ id: production.items[0].id, producedQuantity: "46", expiresAt: daysFromToday(-1) }],
+      const { dough, flour, water, production } = await startDough(headers);
+      await stock(dough.sku, "10", "3");
+      const itemId = production.items[0].id;
+      await postBatch(headers, production.id, itemId, { quantity: "25", expiresAt: null, source: "PRODUCED" });
+      await postBatch(headers, production.id, itemId, {
+        quantity: "25",
+        expiresAt: daysFromToday(10),
+        source: "EXISTING",
       });
 
-      expect(response.statusCode).toBe(400);
+      const response = await postConclude(headers, production.id, itemId);
+
+      // 15 kg of flour at 2 and 9 L of water at 0.5 are 34.50, for the 25 kg made.
+      expect(response.statusCode).toBe(200);
+      expect(response.json().items[0]).toMatchObject({ producedQuantity: "50", unitCost: "1.38" });
+      expect(await stockOf(flour.sku)).toMatchObject({ quantity: "85" });
+      expect(await stockOf(water.sku)).toMatchObject({ quantity: "41" });
+      // 10 kg at 3 already in stock, the 25 that existed at that average and the 25 made at 1.38.
+      expect(await stockOf(dough.sku)).toEqual({ quantity: "60", averageCost: "2.325" });
+      expect(
+        (await lotsOf(dough.sku))
+          .filter(({ initialQuantity }) => initialQuantity === "25")
+          .map(({ expiresAt, unitCost }) => ({ expiresAt, unitCost })),
+      ).toEqual([
+        { expiresAt: daysFromToday(10), unitCost: "3" },
+        { expiresAt: null, unitCost: "1.38" },
+      ]);
+    });
+
+    it("takes nothing below the target when nothing was made now: 20 that already existed of 50", async () => {
+      const { headers } = await canDoBoth();
+      const { dough, flour, water, production } = await startDough(headers);
+      await stock(dough.sku, "10", "3");
+      const itemId = production.items[0].id;
+      await postBatch(headers, production.id, itemId, { quantity: "20", expiresAt: null, source: "EXISTING" });
+
+      const response = await postConclude(headers, production.id, itemId, { belowTarget: true });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().items[0]).toMatchObject({ status: "FINISHED", producedQuantity: "20", unitCost: "3" });
+      expect(await stockOf(flour.sku)).toMatchObject({ quantity: "100" });
+      expect(await stockOf(water.sku)).toMatchObject({ quantity: "50" });
+      expect(await testPrisma.stockMovement.count({ where: { type: "PRODUCTION_CONSUMPTION" } })).toBe(0);
+      expect(await stockOf(dough.sku)).toEqual({ quantity: "30", averageCost: "3" });
+    });
+
+    it("takes nothing when every batch already existed, and brings them in at no cost when the product has none", async () => {
+      const { headers } = await canDoBoth();
+      const { dough, flour, production } = await startDough(headers);
+      const itemId = production.items[0].id;
+      await postBatch(headers, production.id, itemId, { quantity: "50", expiresAt: null, source: "EXISTING" });
+
+      const response = await postConclude(headers, production.id, itemId);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().items[0]).toMatchObject({ status: "FINISHED", producedQuantity: "50", unitCost: "0" });
+      expect(await stockOf(flour.sku)).toMatchObject({ quantity: "100" });
+      expect(await testPrisma.stockMovement.count({ where: { type: "PRODUCTION_CONSUMPTION" } })).toBe(0);
+      expect(await lotsOf(dough.sku)).toEqual([
+        { supplierId: null, expiresAt: null, initialQuantity: "50", quantity: "50", unitCost: "0" },
+      ]);
     });
   });
 
@@ -904,25 +1037,25 @@ describe("POST /v1/productions/:id/finish", () => {
     const { dough, production } = await startDough(headers);
     await stock(dough.sku, "46", "3");
 
-    await postFinish(headers, production.id, { items: [{ id: production.items[0].id, producedQuantity: "46" }] });
+    await makeItem(headers, production.id, production.items[0].id, "46");
 
     expect(await stockOf(dough.sku)).toEqual({ quantity: "92", averageCost: "2.25" });
   });
 
-  it("answers 409 for a production that is already finished, and moves the stock only once", async () => {
+  it("answers 409 for an item already concluded, and moves the stock only once", async () => {
     const { headers } = await canDoBoth();
     const { flour, production } = await startDough(headers);
-    const payload = { items: [{ id: production.items[0].id, producedQuantity: "46" }] };
-    await postFinish(headers, production.id, payload);
+    await makeItem(headers, production.id, production.items[0].id, "46");
 
-    const response = await postFinish(headers, production.id, payload);
+    const response = await postConclude(headers, production.id, production.items[0].id, { belowTarget: true });
 
     expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "Production is not in progress." });
     expect(await stockOf(flour.sku)).toMatchObject({ quantity: "70" });
     expect(await testPrisma.stockMovement.count()).toBe(3);
   });
 
-  it("finishes only the items it is given, and closes the production with the last one", async () => {
+  it("concludes only the item asked for, and closes the production with the last one", async () => {
     const { headers } = await canDoBoth();
     const { dough } = await createDough();
     const { syrup, sugar } = await createSyrup();
@@ -936,10 +1069,7 @@ describe("POST /v1/productions/:id/finish", () => {
     ).json();
     const [doughItem, syrupItem] = production.items;
 
-    const first = await postFinish(headers, production.id, {
-      items: [{ id: doughItem.id, producedQuantity: "48" }],
-      hasLeftoversInCost: false,
-    });
+    const first = await makeItem(headers, production.id, doughItem.id, "48", { hasLeftoversInCost: false });
 
     expect(first.statusCode).toBe(200);
     expect(first.json()).toMatchObject({
@@ -953,7 +1083,12 @@ describe("POST /v1/productions/:id/finish", () => {
     expect(await stockOf(dough.sku)).toMatchObject({ quantity: "48" });
     expect(await stockOf(sugar.sku)).toBeNull();
 
-    const last = await postFinish(headers, production.id, { items: [{ id: syrupItem.id, producedQuantity: "4.5" }] });
+    const again = await postConclude(headers, production.id, doughItem.id, { belowTarget: true });
+
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toEqual({ message: "The item is not pending." });
+
+    const last = await makeItem(headers, production.id, syrupItem.id, "4.5");
 
     expect(last.statusCode).toBe(200);
     expect(last.json()).toMatchObject({
@@ -967,32 +1102,29 @@ describe("POST /v1/productions/:id/finish", () => {
     expect(await stockOf(sugar.sku)).toMatchObject({ quantity: "-2" });
   });
 
-  it("answers 409 when the items bring one of another production, and moves nothing", async () => {
+  it("refuses an item with no batch, and moves nothing", async () => {
     const { headers } = await canDoBoth();
-    const { dough } = await createDough();
-    const { syrup } = await createSyrup();
-    const production = (
-      await postProduction(headers, {
-        items: [
-          { productSku: dough.sku, quantity: "50" },
-          { productSku: syrup.sku, quantity: "5" },
-        ],
-      })
-    ).json();
+    const { production } = await startDough(headers);
 
-    const response = await postFinish(headers, production.id, {
-      items: [
-        { id: production.items[0].id, producedQuantity: "46" },
-        { id: MISSING_ID, producedQuantity: "4" },
-      ],
-    });
+    const response = await postConclude(headers, production.id, production.items[0].id);
 
     expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ message: "The items do not match the items of the production." });
+    expect(response.json()).toEqual({ message: "The item has no batch." });
     expect(await testPrisma.stockMovement.count()).toBe(0);
-    expect((await testPrisma.production.findUniqueOrThrow({ where: { id: production.id } })).status).toBe(
-      "IN_PROGRESS",
-    );
+  });
+
+  it("refuses an item below its target unless told it is meant, and moves nothing", async () => {
+    const { headers } = await canDoBoth();
+    const { production } = await startDough(headers);
+    const itemId = production.items[0].id;
+    await postBatch(headers, production.id, itemId, { quantity: "46", expiresAt: null, source: "PRODUCED" });
+
+    const response = await postConclude(headers, production.id, itemId);
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "The item is below its target." });
+    expect(await testPrisma.stockMovement.count()).toBe(0);
+    expect((await postConclude(headers, production.id, itemId, { belowTarget: true })).statusCode).toBe(200);
   });
 
   it("answers 409 when the cost of a produced unit does not fit, and undoes what it had moved", async () => {
@@ -1001,9 +1133,7 @@ describe("POST /v1/productions/:id/finish", () => {
     await stock(flour.sku, "100", "900000000000");
     const production = (await postProduction(headers, { items: [{ productSku: dough.sku, quantity: "50" }] })).json();
 
-    const response = await postFinish(headers, production.id, {
-      items: [{ id: production.items[0].id, producedQuantity: "0.000001" }],
-    });
+    const response = await makeItem(headers, production.id, production.items[0].id, "0.001");
 
     expect(response.statusCode).toBe(409);
     expect(await stockOf(flour.sku)).toMatchObject({ quantity: "100" });
@@ -1011,43 +1141,78 @@ describe("POST /v1/productions/:id/finish", () => {
     expect((await getProduction(headers, production.id)).json()).toMatchObject({ status: "IN_PROGRESS" });
   });
 
-  it("answers 404 for a production that does not exist", async () => {
-    const { headers } = await canCreate();
+  it("lets a batch sent together with the conclusion in only before it", async () => {
+    const { headers } = await canDoBoth();
+    const { dough } = await createDough();
+    const { syrup } = await createSyrup();
+    // The syrup keeps the production in progress once the dough is concluded.
+    const production = (
+      await postProduction(headers, {
+        items: [
+          { productSku: dough.sku, quantity: "50" },
+          { productSku: syrup.sku, quantity: "5" },
+        ],
+      })
+    ).json();
+    const itemId = production.items[0].id;
+    await postBatch(headers, production.id, itemId, { quantity: "50", expiresAt: null, source: "PRODUCED" });
 
-    const response = await postFinish(headers, MISSING_ID, { items: [{ id: MISSING_ID, producedQuantity: "1" }] });
+    const [concluded, batch] = await Promise.all([
+      postConclude(headers, production.id, itemId),
+      postBatch(headers, production.id, itemId, { quantity: "10", expiresAt: null, source: "PRODUCED" }),
+    ]);
 
-    expect(response.statusCode).toBe(404);
+    // Both hold the production: a batch after the conclusion finds the item no longer pending, and
+    // one before it is concluded with the rest.
+    expect(concluded.statusCode).toBe(200);
+    const doughItem = (await getProduction(headers, production.id)).json().items[0];
+    if (batch.statusCode === 201) {
+      expect(doughItem.producedQuantity).toBe("60");
+    } else {
+      expect(batch.statusCode).toBe(409);
+      expect(batch.json()).toEqual({ message: "The item is not pending." });
+      expect(doughItem.producedQuantity).toBe("50");
+    }
+    expect(await testPrisma.productionItemBatch.count()).toBe(batch.statusCode === 201 ? 2 : 1);
   });
 
-  it.each([
-    ["no item", () => []],
-    ["a zero produced quantity", (id: string) => [{ id, producedQuantity: "0" }]],
-    ["a missing produced quantity", (id: string) => [{ id }]],
-    [
-      "the same item twice",
-      (id: string) => [
-        { id, producedQuantity: "1" },
-        { id, producedQuantity: "2" },
-      ],
-    ],
-  ])("answers 400 for %s", async (_label, itemsFor: (id: string) => unknown[]) => {
+  it("answers 404 for an item not of the production, or a production that does not exist", async () => {
     const { headers } = await canDoBoth();
     const { production } = await startDough(headers);
 
-    const response = await postFinish(headers, production.id, { items: itemsFor(production.items[0].id) });
+    const missingItem = await postConclude(headers, production.id, MISSING_ID);
+    const missingProduction = await postConclude(headers, MISSING_ID, production.items[0].id);
+
+    expect(missingItem.statusCode).toBe(404);
+    expect(missingItem.json()).toEqual({ message: "Production item not found." });
+    expect(missingProduction.statusCode).toBe(404);
+  });
+
+  it("answers 400 for a body that does not say yes or no", async () => {
+    const { headers } = await canDoBoth();
+    const { production } = await startDough(headers);
+
+    const response = await postConclude(headers, production.id, production.items[0].id, { belowTarget: "yes" });
 
     expect(response.statusCode).toBe(400);
-    expect(await testPrisma.stockMovement.count()).toBe(0);
   });
 
   it("answers 403 without PRODUCTION_CREATE", async () => {
     const { headers } = await canRead();
 
-    expect((await postFinish(headers, MISSING_ID, {})).statusCode).toBe(403);
+    expect((await postConclude(headers, MISSING_ID, MISSING_ID)).statusCode).toBe(403);
   });
 
   it("answers 401 without a token", async () => {
-    expect((await postFinish(undefined, MISSING_ID, {})).statusCode).toBe(401);
+    expect((await postConclude(undefined, MISSING_ID, MISSING_ID)).statusCode).toBe(401);
+  });
+
+  it("no longer offers the finish of a production nor the reduction of an item", async () => {
+    const paths = (await collectRoutes()).map(({ path }) => path);
+
+    expect(paths).toContain("/v1/productions/{id}/items/{itemId}/conclude");
+    expect(paths).not.toContain("/v1/productions/{id}/finish");
+    expect(paths).not.toContain("/v1/productions/{id}/items/{itemId}/reduce");
   });
 });
 
@@ -1198,16 +1363,25 @@ describe("finishing a product with intermediates", () => {
     };
   }
 
-  const finishAs = (headers: Headers, production: { id: string; items: { id: string }[] }, produced: string[]) =>
-    postFinish(headers, production.id, {
-      items: production.items.map((item, index) => ({ id: item.id, producedQuantity: produced[index] })),
-    });
+  // Each item made and concluded in turn, in the order given: the first refusal, or the last answer.
+  async function concludeItems(headers: Headers, productionId: string, items: [{ id: string }, string][]) {
+    let response;
 
-  const finishItems = (headers: Headers, productionId: string, items: [{ id: string }, string][], body = {}) =>
-    postFinish(headers, productionId, {
-      items: items.map(([item, producedQuantity]) => ({ id: item.id, producedQuantity })),
-      ...body,
-    });
+    for (const [item, quantity] of items) {
+      response = await makeItem(headers, productionId, item.id, quantity);
+
+      if (response.statusCode !== 200) return response;
+    }
+
+    return response!;
+  }
+
+  const concludeAs = (headers: Headers, production: { id: string; items: { id: string }[] }, produced: string[]) =>
+    concludeItems(
+      headers,
+      production.id,
+      production.items.map((item, index) => [item, produced[index]!]),
+    );
 
   const shortageMessage = "Not enough of an intermediate in stock.";
 
@@ -1225,18 +1399,18 @@ describe("finishing a product with intermediates", () => {
     ]);
   });
 
-  it("finishes the filling and the shells together, sharing an opened can, and stays in progress", async () => {
+  it("concludes the filling and then the shells, each discarding what its opened can leaves, and stays in progress", async () => {
     const { headers, userId } = await canDoBoth();
     const tree = await bonbonTree(userId, { chocolateInCans: true });
     const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
 
-    const response = await finishItems(headers, id, [
+    const response = await concludeItems(headers, id, [
       [fillingItem, "0.7"],
       [shellItem, "50"],
     ]);
 
-    // One can opened for 0.14 + 0.5 kg: 0.36 kg left, split by what each took. The filling costs
-    // (0.56 × 2 + 0.14 × 10 + 0.07875 × 10) ÷ 0.7 and the shells (0.5 × 10 + 0.28125 × 10) ÷ 50.
+    // The filling opens a can for 0.14 kg and leaves 0.86 kg of it: (0.56 × 2 + 0.14 × 10 + 0.86 × 10)
+    // ÷ 0.7. The shells open the next for 0.5 kg and leave 0.5 kg: (0.5 × 10 + 0.5 × 10) ÷ 50.
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       status: "IN_PROGRESS",
@@ -1248,20 +1422,20 @@ describe("finishing a product with intermediates", () => {
           status: "FINISHED",
           finishedAt: expect.any(String),
           hasLeftoversInCost: true,
-          unitCost: "4.725",
+          unitCost: "15.885714",
         },
         {
           id: shellItem.id,
           status: "FINISHED",
           finishedAt: expect.any(String),
           hasLeftoversInCost: true,
-          unitCost: "0.15625",
+          unitCost: "0.2",
         },
       ],
     });
     const leftovers = await testPrisma.productionLeftover.findMany({ orderBy: { quantity: "asc" } });
-    expect(leftovers.map(({ quantity }) => quantity.toString())).toEqual(["0.07875", "0.28125"]);
-    expect(await stockOf(tree.chocolate.sku)).toMatchObject({ quantity: "9" });
+    expect(leftovers.map(({ quantity }) => quantity.toString())).toEqual(["0.5", "0.86"]);
+    expect(await stockOf(tree.chocolate.sku)).toMatchObject({ quantity: "8" });
     expect(await stockOf(tree.bonbon.sku)).toBeNull();
   });
 
@@ -1269,10 +1443,10 @@ describe("finishing a product with intermediates", () => {
     const { headers, userId } = await canDoBoth();
     const tree = await bonbonTree(userId);
     const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
-    await finishItems(headers, id, [[fillingItem, "0.7"]]);
+    await concludeItems(headers, id, [[fillingItem, "0.7"]]);
     const movements = await testPrisma.stockMovement.count();
 
-    const response = await finishItems(headers, id, [[bonbonItem, "50"]]);
+    const response = await concludeItems(headers, id, [[bonbonItem, "50"]]);
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({
@@ -1292,16 +1466,12 @@ describe("finishing a product with intermediates", () => {
     });
   });
 
-  it("refuses the bombom finished together with what it waits for", async () => {
+  it("refuses to conclude the bombom while what it waits for is pending, naming both", async () => {
     const { headers, userId } = await canDoBoth();
     const tree = await bonbonTree(userId);
     const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
 
-    const response = await finishItems(headers, id, [
-      [bonbonItem, "50"],
-      [fillingItem, "0.7"],
-      [shellItem, "50"],
-    ]);
+    const response = await postConclude(headers, id, bonbonItem.id, { belowTarget: true });
 
     expect(response.statusCode).toBe(409);
     expect(response.json().waitingFor).toEqual([
@@ -1321,13 +1491,13 @@ describe("finishing a product with intermediates", () => {
     const tree = await bonbonTree(userId);
     const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
     const finished = (
-      await finishItems(headers, id, [
+      await concludeItems(headers, id, [
         [fillingItem, "0.7"],
         [shellItem, "50"],
       ])
     ).json();
 
-    const response = await finishItems(headers, id, [[bonbonItem, "50"]]);
+    const response = await concludeItems(headers, id, [[bonbonItem, "50"]]);
 
     // The filling made costs (0.56 × 2 + 0.14 × 10) ÷ 0.7 = 3.6 and the shells 0.5 × 10 ÷ 50 = 0.1;
     // the bonbons take 0.3 of filling at 1 and 0.7 at 3.6, 50 shells and 0.25 of sprinkles at 4:
@@ -1355,7 +1525,7 @@ describe("finishing a product with intermediates", () => {
     const { headers, userId } = await canDoBoth();
     const tree = await bonbonTree(userId);
     const { id, fillingItem } = await startTree(headers, tree);
-    await finishItems(headers, id, [[fillingItem, "0.7"]]);
+    await concludeItems(headers, id, [[fillingItem, "0.7"]]);
     const fillingStock = await stockOf(tree.filling.sku);
 
     const response = await postCancel(headers, id);
@@ -1368,14 +1538,91 @@ describe("finishing a product with intermediates", () => {
     expect((await getPreWeighing(headers, tree.shellStage.id)).json()).toMatchObject({ status: "PENDING" });
   });
 
+  it("cancels concluding each item with batches with what it made, and releases the pre-weighings of the others", async () => {
+    const { headers, userId } = await canDoBoth();
+    const tree = await bonbonTree(userId);
+    const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
+    // Below its target, the bombom short of it, and a batch recorded yesterday that expired today:
+    // a cancel concludes it anyway, as it happened at the bench.
+    await postBatch(headers, id, fillingItem.id, { quantity: "0.5", expiresAt: null, source: "PRODUCED" });
+    await testPrisma.productionItemBatch.create({
+      data: {
+        productionItemId: fillingItem.id,
+        quantity: "0.1",
+        expiresAt: new Date(daysFromToday(-1)),
+        source: "PRODUCED",
+        createdById: userId,
+      },
+    });
+
+    const response = await postCancel(headers, id);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "CANCELED",
+      canceledAt: expect.any(String),
+      finishedAt: null,
+      items: [
+        { id: bonbonItem.id, status: "PENDING", preWeighingId: null },
+        {
+          id: fillingItem.id,
+          status: "FINISHED",
+          producedQuantity: "0.6",
+          hasLeftoversInCost: true,
+          preWeighingId: tree.fillingStage.id,
+        },
+        { id: shellItem.id, status: "PENDING", preWeighingId: null },
+      ],
+    });
+    expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "0.9" });
+    expect(await stockOf(tree.milk.sku)).toMatchObject({ quantity: "9.44" });
+    expect(await testPrisma.stockLot.count({ where: { productSku: tree.filling.sku } })).toBe(3);
+    expect((await getPreWeighing(headers, tree.fillingStage.id)).json()).toMatchObject({ status: "PRODUCED" });
+    expect((await getPreWeighing(headers, tree.root.id)).json()).toMatchObject({ status: "PENDING" });
+    expect((await getPreWeighing(headers, tree.shellStage.id)).json()).toMatchObject({ status: "PENDING" });
+  });
+
+  it("cancels concluding the filling before the bombom that takes it, which takes the lot it made", async () => {
+    const { headers, userId } = await canDoBoth();
+    const tree = await bonbonTree(userId);
+    const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
+    await postBatch(headers, id, fillingItem.id, { quantity: "0.7", expiresAt: null, source: "PRODUCED" });
+    await postBatch(headers, id, shellItem.id, { quantity: "50", expiresAt: null, source: "PRODUCED" });
+    // The bombom was made at the bench while its intermediates were still open on the screen.
+    await testPrisma.productionItemBatch.create({
+      data: { productionItemId: bonbonItem.id, quantity: "50", source: "PRODUCED", createdById: userId },
+    });
+
+    const response = await postCancel(headers, id);
+
+    // The filling: 0.56 kg of milk at 2 and 0.14 of chocolate at 10 for 0.7 kg, 3.6 a kg; the shells:
+    // 0.5 kg of chocolate for 50, 0.1 each. The bombom takes the 0.3 kg of filling at 1 and the 0.7 made
+    // at 3.6, the 50 shells and 0.25 kg of sprinkles at 4: (0.3 + 2.52 + 5 + 1) ÷ 50.
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "CANCELED",
+      items: [
+        { id: bonbonItem.id, status: "FINISHED", producedQuantity: "50", unitCost: "0.1764" },
+        { id: fillingItem.id, status: "FINISHED", producedQuantity: "0.7", unitCost: "3.6" },
+        { id: shellItem.id, status: "FINISHED", producedQuantity: "50", unitCost: "0.1" },
+      ],
+    });
+    expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "0" });
+    expect(await stockOf(tree.shell.sku)).toMatchObject({ quantity: "0" });
+    expect(await stockOf(tree.milk.sku)).toMatchObject({ quantity: "9.44" });
+    expect(await stockOf(tree.chocolate.sku)).toMatchObject({ quantity: "9.36" });
+    expect(await stockOf(tree.sprinkles.sku)).toMatchObject({ quantity: "9.75" });
+    expect(await stockOf(tree.bonbon.sku)).toEqual({ quantity: "50", averageCost: "0.1764" });
+  });
+
   it("refuses an item already finished, and moves nothing", async () => {
     const { headers, userId } = await canDoBoth();
     const tree = await bonbonTree(userId);
     const { id, fillingItem } = await startTree(headers, tree);
-    await finishItems(headers, id, [[fillingItem, "0.7"]]);
+    await concludeItems(headers, id, [[fillingItem, "0.7"]]);
     const movements = await testPrisma.stockMovement.count();
 
-    const response = await finishItems(headers, id, [[fillingItem, "0.7"]]);
+    const response = await concludeItems(headers, id, [[fillingItem, "0.7"]]);
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ message: "The item is not pending." });
@@ -1398,7 +1645,7 @@ describe("finishing a product with intermediates", () => {
       },
     });
 
-    const response = await finishItems(headers, id, [[fillingItem, "0.7"]]);
+    const response = await concludeItems(headers, id, [[fillingItem, "0.7"]]);
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ message: "The item waits for a new weighing." });
@@ -1496,7 +1743,7 @@ describe("finishing a product with intermediates", () => {
       const reason = await burnt();
       await postDamage(headers, id, fillingItem.id, { reasonId: reason.id });
 
-      const finish = await finishItems(headers, id, [[fillingItem, "0.7"]]);
+      const finish = await concludeItems(headers, id, [[fillingItem, "0.7"]]);
       const again = await postDamage(headers, id, fillingItem.id, { reasonId: reason.id });
 
       expect(finish.json()).toEqual({ message: "The item waits for a new weighing." });
@@ -1525,7 +1772,7 @@ describe("finishing a product with intermediates", () => {
       expect(await testPrisma.stockLoss.count({ where: { reasonId: reason.id } })).toBe(2);
       expect(await stockOf(flour.sku)).toMatchObject({ quantity: "70" });
 
-      const finished = await postFinish(headers, started.id, { items: [{ id: itemId, producedQuantity: "50" }] });
+      const finished = await makeItem(headers, started.id, itemId, "50");
 
       expect(finished.statusCode).toBe(200);
       expect(finished.json()).toMatchObject({ status: "FINISHED", items: [{ status: "FINISHED" }] });
@@ -1592,7 +1839,7 @@ describe("finishing a product with intermediates", () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
-      await finishItems(headers, id, [[fillingItem, "0.7"]]);
+      await concludeItems(headers, id, [[fillingItem, "0.7"]]);
       const movements = await testPrisma.stockMovement.count();
       const reason = await burnt();
 
@@ -1608,7 +1855,7 @@ describe("finishing a product with intermediates", () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
-      await finishItems(headers, id, [[fillingItem, "0.7"]]);
+      await concludeItems(headers, id, [[fillingItem, "0.7"]]);
       const movements = await testPrisma.stockMovement.count();
       const reason = await burnt();
 
@@ -1677,26 +1924,26 @@ describe("finishing a product with intermediates", () => {
       expect(missingProduction.json()).toEqual({ message: "Production not found." });
     });
 
-    it("lets only one of a finish and a damage of the same item sent together through", async () => {
+    it("lets only one of a batch and a damage of the same item sent together through", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
       const reason = await burnt();
 
-      const [finish, damage] = await Promise.all([
-        finishItems(headers, id, [[fillingItem, "0.7"]]),
+      const [batch, damage] = await Promise.all([
+        postBatch(headers, id, fillingItem.id, { quantity: "0.7", expiresAt: null, source: "PRODUCED" }),
         postDamage(headers, id, fillingItem.id, { reasonId: reason.id }),
       ]);
 
       // Both hold the production, so one runs after the other and sees what it wrote: a damage after
-      // the finish finds the item finished, a finish after the damage finds it waiting for a weighing.
-      expect([finish.statusCode, damage.statusCode].sort()).toEqual([200, 409]);
-      if (finish.statusCode === 200) {
-        expect(damage.json()).toEqual({ message: "The item is not pending." });
+      // the batch finds the item with a batch, a batch after the damage finds it waiting for a weighing.
+      expect([batch.statusCode, damage.statusCode].sort()).toEqual([201, 409]);
+      if (batch.statusCode === 201) {
+        expect(damage.json()).toEqual({ message: "The item already has batches." });
         expect(await testPrisma.productionItemDamage.count()).toBe(0);
       } else {
-        expect(finish.json()).toEqual({ message: "The item waits for a new weighing." });
-        expect(await testPrisma.productionItem.count({ where: { status: "FINISHED" } })).toBe(0);
+        expect(batch.json()).toEqual({ message: "The item waits for a new weighing." });
+        expect(await testPrisma.productionItemBatch.count()).toBe(0);
       }
     });
 
@@ -1721,14 +1968,13 @@ describe("finishing a product with intermediates", () => {
     });
   });
 
-  describe("POST /v1/productions/:id/weighings", () => {
+  describe("weighing an item and adding one for a shortage", () => {
     const burnt = () => testPrisma.lossReason.create({ data: { name: "Queimou" } });
 
     type Tree = Awaited<ReturnType<typeof bonbonTree>>;
 
-    // A filling weighed again: condensed milk and chocolate, both weighed.
-    const fillingBody = (tree: Tree, quantity: string, milk: string, chocolate: string) => ({
-      productSku: tree.filling.sku,
+    // A filling weighed: condensed milk and chocolate, both weighed.
+    const fillingWeighing = (tree: Tree, quantity: string, milk: string, chocolate: string) => ({
       quantity,
       items: [
         { productSku: tree.milk.sku, weighedQuantity: milk },
@@ -1739,258 +1985,315 @@ describe("finishing a product with intermediates", () => {
     const newPreWeighingOf = (productSku: string, except: string[]) =>
       testPrisma.preWeighing.findFirstOrThrow({ where: { productSku, id: { notIn: except } } });
 
-    it("re-guides the damaged filling with the new weighing, recorded where the damaged one was, and lets it finish", async () => {
+    const quantitiesOf = (item: { inputs: { quantity: string }[] }) => item.inputs.map(({ quantity }) => quantity);
+
+    type PresentedItem = { id: string; inputs: { quantity: string }[]; [field: string]: unknown };
+
+    const itemIn = (production: { items: PresentedItem[] }, id: string) =>
+      production.items.find((item) => item.id === id)!;
+
+    it("records an extra weighing of the filling under the root, and sums its lines into the inputs", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
-      const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
-      await postDamage(headers, id, fillingItem.id, { reasonId: (await burnt()).id });
+      const { id, fillingItem } = await startTree(headers, tree);
 
-      const response = await postWeighing(headers, id, {
-        itemId: fillingItem.id,
-        ...fillingBody(tree, "0.5", "0.4", "0.1"),
-      });
+      const response = await postItemWeighing(
+        headers,
+        id,
+        fillingItem.id,
+        fillingWeighing(tree, "0.3", "0.24", "0.06"),
+      );
 
       expect(response.statusCode).toBe(200);
       const weighed = await newPreWeighingOf(tree.filling.sku, [tree.fillingStage.id]);
       expect(weighed.parentId).toBe(tree.root.id);
-      const items = response.json().items;
-      expect(items.map((item: { id: string }) => item.id)).toEqual([bonbonItem.id, fillingItem.id, shellItem.id]);
-      expect(items[1]).toMatchObject({
-        id: fillingItem.id,
-        status: "PENDING",
-        preWeighingId: weighed.id,
-        awaitsWeighing: false,
-        expectedQuantity: "0.5",
-        damages: [{ preWeighingId: tree.fillingStage.id }],
-      });
-      expect(items[1].inputs.map(({ quantity }: { quantity: string }) => quantity)).toEqual(["0.1", "0.4"]);
-      expect(items[1].weighedAt).toBe(weighed.createdAt.toISOString());
-      expect(items[1].weighedAt).not.toBe(
-        (
-          await testPrisma.preWeighing.findUniqueOrThrow({ where: { id: tree.fillingStage.id } })
-        ).createdAt.toISOString(),
-      );
-      expect((await getPreWeighing(headers, tree.fillingStage.id)).json()).toMatchObject({ status: "DAMAGED" });
-      expect((await getPreWeighing(headers, weighed.id)).json()).toMatchObject({ status: "IN_PRODUCTION" });
-
-      const finished = await finishItems(headers, id, [[fillingItem, "0.5"]]);
-
-      expect(finished.statusCode).toBe(200);
-      expect(finished.json().items[1]).toMatchObject({ id: fillingItem.id, status: "FINISHED" });
-      expect(await stockOf(tree.milk.sku)).toMatchObject({ quantity: "9.04" });
-    });
-
-    it("brings the stages of a new weighing of the bombom in as new items it waits for", async () => {
-      const { headers, userId } = await canDoBoth();
-      const tree = await bonbonTree(userId);
-      const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
-      await finishItems(headers, id, [
-        [fillingItem, "0.7"],
-        [shellItem, "50"],
+      expect(await testPrisma.productionItemWeighing.findMany()).toEqual([
+        expect.objectContaining({ productionItemId: fillingItem.id, preWeighingId: weighed.id }),
       ]);
-      await postDamage(headers, id, bonbonItem.id, { reasonId: (await burnt()).id });
-
-      // The damage took the 1 kg of filling there was: a new 50 bombons make 1 kg of it again, and
-      // take the shells from stock.
-      const response = await postWeighing(headers, id, {
-        itemId: bonbonItem.id,
-        productSku: tree.bonbon.sku,
-        quantity: "50",
-        items: [
-          { productSku: tree.filling.sku },
-          { productSku: tree.shell.sku },
-          { productSku: tree.sprinkles.sku, weighedQuantity: "0.25" },
-        ],
-        stages: [fillingBody(tree, "1", "0.8", "0.2")],
-      });
-
-      expect(response.statusCode).toBe(200);
-      const root = await newPreWeighingOf(tree.bonbon.sku, [tree.root.id]);
-      const stage = await newPreWeighingOf(tree.filling.sku, [tree.fillingStage.id]);
-      expect(root.parentId).toBeNull();
-      expect(stage.parentId).toBe(root.id);
-      const items = response.json().items;
-      expect(items).toHaveLength(4);
-      const added = items.find((item: { preWeighingId: string }) => item.preWeighingId === stage.id);
-      expect(added).toMatchObject({ status: "PENDING", expectedQuantity: "1", awaitsWeighing: false });
-      expect(items.find((item: { id: string }) => item.id === bonbonItem.id)).toMatchObject({
-        preWeighingId: root.id,
-        awaitsWeighing: false,
-        dependsOn: expect.arrayContaining([fillingItem.id, shellItem.id, added.id]),
-      });
-    });
-
-    it("adds the complement of a shortage as an item the bombom now waits for", async () => {
-      const { headers, userId } = await canDoBoth();
-      const tree = await bonbonTree(userId);
-      const production = await startOneEach([tree.root.id]);
-      const bonbonItem = production.items[0]!;
-      const short = await finishItems(headers, production.id, [[bonbonItem, "50"]]);
-      expect(short.json()).toMatchObject({ message: shortageMessage });
-
-      const response = await postWeighing(headers, production.id, {
-        parentId: tree.root.id,
-        ...fillingBody(tree, "0.7", "0.56", "0.14"),
-      });
-
-      expect(response.statusCode).toBe(200);
-      const complement = await newPreWeighingOf(tree.filling.sku, [tree.fillingStage.id]);
-      expect(complement.parentId).toBe(tree.root.id);
-      const items = response.json().items;
-      const added = items.find((item: { preWeighingId: string }) => item.preWeighingId === complement.id);
-      expect(added).toMatchObject({
-        status: "PENDING",
-        product: { sku: tree.filling.sku },
+      const filling = itemIn(response.json(), fillingItem.id);
+      expect(filling).toMatchObject({
+        preWeighingId: tree.fillingStage.id,
         expectedQuantity: "0.7",
-        dependsOn: [],
+        extraWeighings: 1,
+        awaitsWeighing: false,
       });
-      expect(added.inputs.map(({ quantity }: { quantity: string }) => quantity)).toEqual(["0.14", "0.56"]);
-      expect(items.find((item: { id: string }) => item.id === bonbonItem.id)).toMatchObject({
-        dependsOn: [added.id],
-      });
-      expect((await getPreWeighing(headers, complement.id)).json()).toMatchObject({ status: "IN_PRODUCTION" });
+      // Chocolate, then condensed milk: 0.14 + 0.06 and 0.56 + 0.24.
+      expect(quantitiesOf(filling)).toEqual(["0.2", "0.8"]);
+      expect((await getPreWeighing(headers, weighed.id)).json()).toMatchObject({ status: "IN_PRODUCTION" });
     });
 
-    it("refuses an item that does not wait for a new weighing, and records nothing", async () => {
+    it("lets go of an extra weighing of an item canceled without a batch: it is pending and can be deleted", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
-      const before = await testPrisma.preWeighing.count();
+      await postItemWeighing(headers, id, fillingItem.id, fillingWeighing(tree, "0.3", "0.24", "0.06"));
+      const weighed = await newPreWeighingOf(tree.filling.sku, [tree.fillingStage.id]);
 
-      const response = await postWeighing(headers, id, {
-        itemId: fillingItem.id,
-        ...fillingBody(tree, "0.7", "0.56", "0.14"),
-      });
+      const response = await postCancel(headers, id);
 
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "The item does not wait for a new weighing." });
-      expect(await testPrisma.preWeighing.count()).toBe(before);
+      expect(response.statusCode).toBe(200);
+      expect(itemIn(response.json(), fillingItem.id)).toMatchObject({ status: "PENDING", extraWeighings: 0 });
+      expect((await getPreWeighing(headers, weighed.id)).json()).toMatchObject({ status: "PENDING" });
+      expect((await deletePreWeighing(headers, weighed.id)).statusCode).toBe(204);
     });
 
-    it("refuses a weighing that does not match the recipe, and leaves the item as it was", async () => {
+    it("concludes the bombom below its target taking of its intermediates only what was made of all it was weighed for", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
+      await concludeItems(headers, id, [
+        [fillingItem, "0.7"],
+        [shellItem, "50"],
+      ]);
+      const weighing = await postItemWeighing(headers, id, bonbonItem.id, {
+        quantity: "10",
+        items: [
+          { productSku: tree.filling.sku },
+          { productSku: tree.shell.sku },
+          { productSku: tree.sprinkles.sku, weighedQuantity: "0.05" },
+        ],
+      });
+      await postBatch(headers, id, bonbonItem.id, { quantity: "45", expiresAt: null, source: "PRODUCED" });
+
+      const response = await postConclude(headers, id, bonbonItem.id, { belowTarget: true });
+
+      // Weighed for 60: 1.2 kg of filling and 60 shells; the 45 made take 0.9 kg and 45 shells, the
+      // 0.3 kg of sprinkles weighed whole.
+      expect(weighing.statusCode).toBe(200);
+      expect(response.statusCode).toBe(200);
+      expect(itemIn(response.json(), bonbonItem.id)).toMatchObject({ status: "FINISHED", producedQuantity: "45" });
+      expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "0.1" });
+      expect(await stockOf(tree.shell.sku)).toMatchObject({ quantity: "5" });
+      expect(await stockOf(tree.sprinkles.sku)).toMatchObject({ quantity: "9.7" });
+    });
+
+    it("re-guides the damaged filling with the new weighing, recorded where the damaged one was", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
       await postDamage(headers, id, fillingItem.id, { reasonId: (await burnt()).id });
+
+      const response = await postItemWeighing(headers, id, fillingItem.id, fillingWeighing(tree, "0.5", "0.4", "0.1"));
+
+      expect(response.statusCode).toBe(200);
+      const weighed = await newPreWeighingOf(tree.filling.sku, [tree.fillingStage.id]);
+      expect(weighed.parentId).toBe(tree.root.id);
+      const filling = itemIn(response.json(), fillingItem.id);
+      expect(filling).toMatchObject({
+        status: "PENDING",
+        preWeighingId: weighed.id,
+        awaitsWeighing: false,
+        expectedQuantity: "0.5",
+        extraWeighings: 0,
+        weighedAt: weighed.createdAt.toISOString(),
+        damages: [{ preWeighingId: tree.fillingStage.id }],
+      });
+      expect(quantitiesOf(filling)).toEqual(["0.1", "0.4"]);
+      expect(await testPrisma.productionItemWeighing.count()).toBe(0);
+      expect((await getPreWeighing(headers, tree.fillingStage.id)).json()).toMatchObject({ status: "DAMAGED" });
+      expect((await getPreWeighing(headers, weighed.id)).json()).toMatchObject({ status: "IN_PRODUCTION" });
+    });
+
+    it("adds a filling for a shortage that awaits a weighing, refuses a batch until it is weighed, then takes one", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, bonbonItem } = await startTree(headers, tree);
+
+      const added = await postItem(headers, id, { productSku: tree.filling.sku, quantity: "0.3" });
+
+      expect(added.statusCode).toBe(201);
+      const fillings = added
+        .json()
+        .items.filter((item: { product: { sku: string } }) => item.product.sku === tree.filling.sku);
+      expect(fillings).toHaveLength(2);
+      const shortage = fillings.find((item: { preWeighingId: string | null }) => item.preWeighingId === null);
+      expect(shortage).toMatchObject({
+        status: "PENDING",
+        expectedQuantity: "0.3",
+        awaitsWeighing: true,
+        inputs: [],
+        batches: [],
+        damages: [],
+      });
+      expect(itemIn(added.json(), bonbonItem.id).dependsOn).toEqual(expect.arrayContaining([shortage.id]));
+
+      const refused = await postBatch(headers, id, shortage.id, {
+        quantity: "0.3",
+        source: "PRODUCED",
+        expiresAt: null,
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().message).toBe("The item waits for a new weighing.");
+
+      const weighing = await postItemWeighing(headers, id, shortage.id, fillingWeighing(tree, "0.3", "0.24", "0.06"));
+
+      expect(weighing.statusCode).toBe(200);
+      const weighed = await newPreWeighingOf(tree.filling.sku, [tree.fillingStage.id]);
+      expect(weighed.parentId).toBeNull();
+      const guided = itemIn(weighing.json(), shortage.id);
+      expect(guided).toMatchObject({ preWeighingId: weighed.id, awaitsWeighing: false, expectedQuantity: "0.3" });
+      expect(quantitiesOf(guided)).toEqual(["0.06", "0.24"]);
+
+      const accepted = await postBatch(headers, id, shortage.id, {
+        quantity: "0.3",
+        source: "PRODUCED",
+        expiresAt: null,
+      });
+      expect(accepted.statusCode).toBe(201);
+    });
+
+    it("refuses to add a product no item of the production takes", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id } = await startTree(headers, tree);
+      const before = await testPrisma.productionItem.count();
+
+      const notTaken = await postItem(headers, id, { productSku: tree.bonbon.sku, quantity: "10" });
+      const missing = await postItem(headers, id, { productSku: MISSING_ID, quantity: "1" });
+
+      for (const response of [notTaken, missing]) {
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ message: "Only an intermediate of the production can be added." });
+      }
+      expect(await testPrisma.productionItem.count()).toBe(before);
+    });
+
+    it("refuses to add a bought ingredient, or an intermediate only finished items take", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, bonbonItem } = await startTree(headers, tree);
+      const before = await testPrisma.productionItem.count();
+
+      const bought = await postItem(headers, id, { productSku: tree.milk.sku, quantity: "0.3" });
+      // Only the bombom takes the shells; once it is finished, no pending item lacks them.
+      await testPrisma.productionItem.update({ where: { id: bonbonItem.id }, data: { status: "FINISHED" } });
+      const takenByFinished = await postItem(headers, id, { productSku: tree.shell.sku, quantity: "10" });
+
+      for (const response of [bought, takenByFinished]) {
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ message: "Only an intermediate of the production can be added." });
+      }
+      expect(await testPrisma.productionItem.count()).toBe(before);
+    });
+
+    it("refuses to add more decimal places than the product's unit allows", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id } = await startTree(headers, tree);
+
+      const response = await postItem(headers, id, { productSku: tree.shell.sku, quantity: "2.5" });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ message: "The quantity has more decimal places than the unit allows." });
+    });
+
+    it("answers 404 and 409 for adding to a production missing or not in progress, and checks the body and permission", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id } = await startTree(headers, tree);
+      const readOnly = await authenticateAs([Permission.PRODUCTION_READ], "reader");
+      const body = { productSku: tree.filling.sku, quantity: "0.3" };
+
+      expect((await postItem(headers, id, { productSku: tree.filling.sku, quantity: "0" })).statusCode).toBe(400);
+      expect((await postItem(headers, id, { quantity: "1" })).statusCode).toBe(400);
+      expect((await postItem(readOnly.headers, id, body)).statusCode).toBe(403);
+      expect((await postItem(headers, MISSING_ID, body)).statusCode).toBe(404);
+      await postCancel(headers, id);
+      const canceled = await postItem(headers, id, body);
+      expect(canceled.statusCode).toBe(409);
+      expect(canceled.json()).toEqual({ message: "Production is not in progress." });
+    });
+
+    it("refuses a weighing that does not match the recipe, and writes nothing", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
       const before = await testPrisma.preWeighing.count();
 
-      const response = await postWeighing(headers, id, {
-        itemId: fillingItem.id,
-        productSku: tree.filling.sku,
-        quantity: "0.7",
-        items: [{ productSku: tree.milk.sku, weighedQuantity: "0.56" }],
+      const response = await postItemWeighing(headers, id, fillingItem.id, {
+        quantity: "0.3",
+        items: [{ productSku: tree.milk.sku, weighedQuantity: "0.24" }],
       });
 
       expect(response.statusCode).toBe(409);
       expect(response.json()).toEqual({ message: "The items do not match the ingredients of the recipe." });
       expect(await testPrisma.preWeighing.count()).toBe(before);
-      const item = (await getProduction(headers, id))
-        .json()
-        .items.find((found: { id: string }) => found.id === fillingItem.id);
-      expect(item).toMatchObject({ preWeighingId: null, awaitsWeighing: true, expectedQuantity: "0.7" });
-      expect(item.inputs.map(({ quantity }: { quantity: string }) => quantity)).toEqual(["0.14", "0.56"]);
+      expect(await testPrisma.productionItemWeighing.count()).toBe(0);
+      const filling = itemIn((await getProduction(headers, id)).json(), fillingItem.id);
+      expect(filling).toMatchObject({
+        preWeighingId: tree.fillingStage.id,
+        expectedQuantity: "0.7",
+        extraWeighings: 0,
+      });
+      expect(quantitiesOf(filling)).toEqual(["0.14", "0.56"]);
     });
 
-    it("refuses a weighing of another product than the item's", async () => {
+    it("refuses to weigh an item that is not pending or waits for another item, and records nothing", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, bonbonItem, fillingItem } = await startTree(headers, tree);
+      await concludeItems(headers, id, [[fillingItem, "0.7"]]);
+      const before = await testPrisma.preWeighing.count();
+
+      const finished = await postItemWeighing(
+        headers,
+        id,
+        fillingItem.id,
+        fillingWeighing(tree, "0.3", "0.24", "0.06"),
+      );
+      const waiting = await postItemWeighing(headers, id, bonbonItem.id, {
+        quantity: "10",
+        items: [
+          { productSku: tree.filling.sku },
+          { productSku: tree.shell.sku },
+          { productSku: tree.sprinkles.sku, weighedQuantity: "0.05" },
+        ],
+      });
+
+      expect(finished.statusCode).toBe(409);
+      expect(finished.json().message).toBe("The item is not pending.");
+      expect(waiting.statusCode).toBe(409);
+      expect(waiting.json().message).toBe("An item waits for another item of the production.");
+      expect(await testPrisma.preWeighing.count()).toBe(before);
+    });
+
+    it("answers 404 for an item or a production missing, and 409 for one not in progress", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
-      await postDamage(headers, id, fillingItem.id, { reasonId: (await burnt()).id });
-      const before = await testPrisma.preWeighing.count();
+      const body = fillingWeighing(tree, "0.3", "0.24", "0.06");
 
-      const response = await postWeighing(headers, id, {
-        itemId: fillingItem.id,
-        productSku: tree.shell.sku,
-        quantity: "50",
-        items: [{ productSku: tree.chocolate.sku, weighedQuantity: "0.5" }],
-      });
-
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "The product does not match the item." });
-      expect(await testPrisma.preWeighing.count()).toBe(before);
-    });
-
-    it("refuses a parent that guides no pending item of the production", async () => {
-      const { headers, userId } = await canDoBoth();
-      const tree = await bonbonTree(userId);
-      const { id, fillingItem } = await startTree(headers, tree);
-      await finishItems(headers, id, [[fillingItem, "0.7"]]);
-      const before = await testPrisma.preWeighing.count();
-
-      const finishedParent = await postWeighing(headers, id, {
-        parentId: tree.fillingStage.id,
-        ...fillingBody(tree, "0.7", "0.56", "0.14"),
-      });
-      const missingParent = await postWeighing(headers, id, {
-        parentId: MISSING_ID,
-        ...fillingBody(tree, "0.7", "0.56", "0.14"),
-      });
-
-      for (const response of [finishedParent, missingParent]) {
-        expect(response.statusCode).toBe(409);
-        expect(response.json()).toEqual({ message: "The parent is not a pending item of the production." });
-      }
-      expect(await testPrisma.preWeighing.count()).toBe(before);
-    });
-
-    it("refuses a complement of a product the parent's item does not take", async () => {
-      const { headers, userId } = await canDoBoth();
-      const tree = await bonbonTree(userId);
-      const { id } = await startTree(headers, tree);
-      const before = await testPrisma.preWeighing.count();
-
-      const response = await postWeighing(headers, id, {
-        parentId: tree.fillingStage.id,
-        productSku: tree.shell.sku,
-        quantity: "50",
-        items: [{ productSku: tree.chocolate.sku, weighedQuantity: "0.5" }],
-      });
-
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "The parent's recipe does not take this product." });
-      expect(await testPrisma.preWeighing.count()).toBe(before);
-    });
-
-    it("refuses a production that is not in progress, and records nothing", async () => {
-      const { headers, userId } = await canDoBoth();
-      const tree = await bonbonTree(userId);
-      const { id } = await startTree(headers, tree);
+      const noItem = await postItemWeighing(headers, id, MISSING_ID, body);
+      const noProduction = await postItemWeighing(headers, MISSING_ID, fillingItem.id, body);
       await postCancel(headers, id);
       const before = await testPrisma.preWeighing.count();
+      const canceled = await postItemWeighing(headers, id, fillingItem.id, body);
 
-      const response = await postWeighing(headers, id, {
-        parentId: tree.root.id,
-        ...fillingBody(tree, "0.7", "0.56", "0.14"),
-      });
-      const missing = await postWeighing(headers, MISSING_ID, {
-        parentId: tree.root.id,
-        ...fillingBody(tree, "0.7", "0.56", "0.14"),
-      });
-
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "Production is not in progress." });
-      expect(missing.statusCode).toBe(404);
+      expect([noItem.statusCode, noProduction.statusCode, canceled.statusCode]).toEqual([404, 404, 409]);
+      expect(noItem.json().message).toBe("Production item not found.");
+      expect(noProduction.json().message).toBe("Production not found.");
+      expect(canceled.json().message).toBe("Production is not in progress.");
       expect(await testPrisma.preWeighing.count()).toBe(before);
     });
 
-    it("answers 400 unless exactly one of the item and the parent is sent", async () => {
+    it("validates the weighing body and the permission", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
-      const body = fillingBody(tree, "0.7", "0.56", "0.14");
+      const readOnly = await authenticateAs([Permission.PRODUCTION_READ], "reader");
+      const body = fillingWeighing(tree, "0.3", "0.24", "0.06");
 
-      expect((await postWeighing(headers, id, body)).statusCode).toBe(400);
-      expect(
-        (await postWeighing(headers, id, { ...body, itemId: fillingItem.id, parentId: tree.root.id })).statusCode,
-      ).toBe(400);
+      expect((await postItemWeighing(headers, id, fillingItem.id, { ...body, items: [] })).statusCode).toBe(400);
+      expect((await postItemWeighing(headers, id, fillingItem.id, { ...body, quantity: "0" })).statusCode).toBe(400);
+      expect((await postItemWeighing(readOnly.headers, id, fillingItem.id, body)).statusCode).toBe(403);
+      expect((await postItemWeighing(undefined, id, fillingItem.id, body)).statusCode).toBe(401);
     });
 
-    it("requires the permission to create productions", async () => {
-      const { headers } = await canRead();
+    it("no longer offers the production-level weighing", async () => {
+      const paths = (await collectRoutes()).map(({ path }) => path);
 
-      const response = await postWeighing(headers, MISSING_ID, { itemId: MISSING_ID });
-
-      expect(response.statusCode).toBe(403);
+      expect(paths).toContain("/v1/productions/{id}/items/{itemId}/weighings");
+      expect(paths).not.toContain("/v1/productions/{id}/weighings");
     });
   });
 
@@ -2047,7 +2350,7 @@ describe("finishing a product with intermediates", () => {
       ]);
       expect(response.json().totalCost).toBe("3.60");
 
-      await finishItems(headers, id, [[fillingItem, "0.7"]]);
+      await concludeItems(headers, id, [[fillingItem, "0.7"]]);
       const after = await preview(headers, id);
 
       expect(after.json().items.map(({ itemId }: { itemId: string }) => itemId)).toEqual([bonbonItem.id, shellItem.id]);
@@ -2064,7 +2367,7 @@ describe("finishing a product with intermediates", () => {
       expect(foreign.statusCode).toBe(409);
       expect(foreign.json()).toEqual({ message: "The items do not match the items of the production." });
 
-      await finishItems(headers, id, [[fillingItem, "0.7"]]);
+      await concludeItems(headers, id, [[fillingItem, "0.7"]]);
       const finished = await preview(headers, id, [fillingItem.id]);
 
       expect(finished.statusCode).toBe(409);
@@ -2123,9 +2426,9 @@ describe("finishing a product with intermediates", () => {
       const tree = await bonbonTree(userId);
       const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
       await postSubstitute(headers, id, fillingItem.id);
-      await finishItems(headers, id, [[shellItem, "50"]]);
+      await concludeItems(headers, id, [[shellItem, "50"]]);
 
-      const response = await finishItems(headers, id, [[bonbonItem, "50"]]);
+      const response = await concludeItems(headers, id, [[bonbonItem, "50"]]);
 
       expect(response.statusCode).toBe(409);
       expect(response.json()).toMatchObject({
@@ -2185,7 +2488,7 @@ describe("finishing a product with intermediates", () => {
     await stock(shell.sku, "50", "0.1");
     const bonbon = await startOneEach([root.id]);
 
-    const response = await finishAs(headers, bonbon, ["50"]);
+    const response = await concludeAs(headers, bonbon, ["50"]);
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ status: "FINISHED" });
@@ -2197,11 +2500,11 @@ describe("finishing a product with intermediates", () => {
     const { root, filling, fillingStage, shellStage } = await bonbonTree(userId);
     const fillingProduction = await startOneEach([fillingStage.id]);
     await postCancel(headers, fillingProduction.id);
-    await finishAs(headers, await startOneEach([shellStage.id]), ["50"]);
+    await concludeAs(headers, await startOneEach([shellStage.id]), ["50"]);
     const bonbon = await startOneEach([root.id]);
     const movements = await testPrisma.stockMovement.count();
 
-    const response = await finishAs(headers, bonbon, ["50"]);
+    const response = await concludeAs(headers, bonbon, ["50"]);
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({
@@ -2212,37 +2515,67 @@ describe("finishing a product with intermediates", () => {
     expect(await testPrisma.stockMovement.count()).toBe(movements);
   });
 
-  it("refuses to finish when the intermediate yielded less", async () => {
+  it("refuses the filling below its target when the bombom would lack it, naming what is missing, and moves nothing", async () => {
+    const { headers, userId } = await canDoBoth();
+    const tree = await bonbonTree(userId);
+    const { id, fillingItem } = await startTree(headers, tree);
+    await postBatch(headers, id, fillingItem.id, { quantity: "0.5", expiresAt: null, source: "PRODUCED" });
+
+    const response = await postConclude(headers, id, fillingItem.id, { belowTarget: true });
+
+    // The bombom takes 1 kg: 0.3 in stock and 0.5 made leave 0.2 missing.
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "An intermediate would fall short.",
+      missing: [{ product: { sku: tree.filling.sku, description: "Filling", unit: "KILOGRAM" }, quantity: "0.2" }],
+    });
+    expect(await testPrisma.stockMovement.count()).toBe(0);
+    expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "0.3" });
+    expect((await getProduction(headers, id)).json().items[1]).toMatchObject({ id: fillingItem.id, status: "PENDING" });
+  });
+
+  it("concludes the filling below its target when the stock covers what the bombom takes", async () => {
+    const { headers, userId } = await canDoBoth();
+    const tree = await bonbonTree(userId);
+    await testPrisma.productStock.update({ where: { productSku: tree.filling.sku }, data: { quantity: "0.5" } });
+    await lot(tree.filling.sku, "0.2", "1");
+    const { id, fillingItem } = await startTree(headers, tree);
+    await postBatch(headers, id, fillingItem.id, { quantity: "0.5", expiresAt: null, source: "PRODUCED" });
+
+    const refused = await postConclude(headers, id, fillingItem.id);
+    const response = await postConclude(headers, id, fillingItem.id, { belowTarget: true });
+
+    expect(refused.json()).toEqual({ message: "The item is below its target." });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().items[1]).toMatchObject({ status: "FINISHED", producedQuantity: "0.5" });
+    expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "1" });
+  });
+
+  it("concludes the bombom below its target taking of what it took unweighed only what was made", async () => {
     const { headers, userId } = await canDoBoth();
     const tree = await bonbonTree(userId);
     const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
-    await finishItems(headers, id, [
-      [fillingItem, "0.5"],
+    await concludeItems(headers, id, [
+      [fillingItem, "0.7"],
       [shellItem, "50"],
     ]);
-    const movements = await testPrisma.stockMovement.count();
 
-    const response = await finishItems(headers, id, [[bonbonItem, "50"]]);
+    const response = await makeItem(headers, id, bonbonItem.id, "40");
 
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({
-      message: shortageMessage,
-      shortages: [
-        {
-          itemId: bonbonItem.id,
-          product: { sku: tree.filling.sku, description: "Filling", unit: "KILOGRAM" },
-          needed: "1",
-          available: "0.8",
-        },
-      ],
-      items: [{ itemId: bonbonItem.id, maxQuantity: "40" }],
+    // 40 of 50: 0.8 kg of filling (0.3 at 1 and 0.5 at 3.6) and 40 shells at 0.1 leave; the 0.25 kg
+    // of sprinkles weighed leave whole, at 4: (0.3 + 1.8 + 4 + 1) ÷ 40.
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "FINISHED",
+      items: [{ id: bonbonItem.id, producedQuantity: "40", unitCost: "0.1775" }, {}, {}],
     });
-    expect(await testPrisma.stockMovement.count()).toBe(movements);
-    expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "0.8" });
-    expect((await getProduction(headers, id)).json()).toMatchObject({ status: "IN_PROGRESS" });
+    expect(await stockOf(tree.filling.sku)).toMatchObject({ quantity: "0.2" });
+    expect(await stockOf(tree.shell.sku)).toMatchObject({ quantity: "10" });
+    expect(await stockOf(tree.sprinkles.sku)).toMatchObject({ quantity: "9.75" });
+    expect(await stockOf(tree.bonbon.sku)).toMatchObject({ quantity: "40" });
   });
 
-  it("sums an intermediate taken by two items of the production", async () => {
+  it("checks each bombom against what the stock has left when it is concluded", async () => {
     const { headers, userId } = await canDoBoth();
     const { bonbon, filling, shell } = await bonbonTree(userId);
     await stock(shell.sku, "50", "0.1");
@@ -2256,180 +2589,222 @@ describe("finishing a product with intermediates", () => {
         ],
       })
     ).json();
+    const [first, second] = production.items;
 
-    const response = await finishAs(headers, production, ["25", "25"]);
+    expect((await makeItem(headers, production.id, first.id, "25")).statusCode).toBe(200);
+    const movements = await testPrisma.stockMovement.count();
+    const response = await makeItem(headers, production.id, second.id, "25");
 
+    // The first took 0.5 of the 0.8: 0.3 make 15 of the 25.
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({
       message: shortageMessage,
-      shortages: production.items.map((item: { id: string }) => ({
-        itemId: item.id,
-        product: { sku: filling.sku },
-        needed: "0.5",
-        available: "0.8",
-      })),
-      // Each item gets the share of the stock its need is of the whole: 0.8 × 0.5 ÷ 1 = 0.4, which
-      // makes 20 of the 25.
-      items: production.items.map((item: { id: string }) => ({ itemId: item.id, maxQuantity: "20" })),
+      shortages: [{ itemId: second.id, product: { sku: filling.sku }, needed: "0.5", available: "0.3" }],
+      items: [{ itemId: second.id, maxQuantity: "15" }],
     });
-    expect(await testPrisma.stockMovement.count()).toBe(0);
+    expect(await testPrisma.stockMovement.count()).toBe(movements);
   });
 
-  describe("POST /v1/productions/:id/items/:itemId/reduce", () => {
-    // The bonbon production after its intermediates yielded less: 0.8 of filling for 50 bonbons that
-    // take 1.
-    async function bonbonShort() {
-      const { headers, userId } = await canDoBoth();
-      const tree = await bonbonTree(userId);
-      const { id, bonbonItem, fillingItem, shellItem } = await startTree(headers, tree);
-      await finishItems(headers, id, [
-        [fillingItem, "0.5"],
-        [shellItem, "50"],
-      ]);
-      // Only the bombom is left to finish.
-      const production = { id, items: [bonbonItem] };
-
-      return { headers, production, itemId: bonbonItem.id, ...tree };
-    }
-
-    const inputsOf = async (headers: Headers, id: string) =>
-      Object.fromEntries(
-        (await getProduction(headers, id))
-          .json()
-          .items[0].inputs.map((input: { product: { description: string }; quantity: string }) => [
-            input.product.description,
-            input.quantity,
-          ]),
-      );
-
-    it("reduces the item and scales every input", async () => {
-      const { headers, production, itemId } = await bonbonShort();
-
-      const response = await postReduce(headers, production.id, itemId, { quantity: "40" });
-
-      expect(response.statusCode).toBe(200);
-      expect(response.json().items[0].expectedQuantity).toBe("40");
-      expect(await inputsOf(headers, production.id)).toEqual({ Sprinkles: "0.2", Filling: "0.8", Shell: "40" });
+  describe("recording and removing batches", () => {
+    const batchOf = (quantity: string, source = "PRODUCED", expiresAt: string | null = null) => ({
+      quantity,
+      source,
+      expiresAt,
     });
+    const alreadyHasBatches = "The item already has batches.";
 
-    it("finds the item by an id written in capitals", async () => {
-      const { headers, production, itemId } = await bonbonShort();
-
-      const response = await postReduce(headers, production.id, itemId.toUpperCase(), { quantity: "40" });
-
-      expect(response.statusCode).toBe(200);
-      expect(response.json().items[0].expectedQuantity).toBe("40");
-    });
-
-    it("reduces again from the current quantity", async () => {
-      const { headers, production, itemId } = await bonbonShort();
-      await postReduce(headers, production.id, itemId, { quantity: "40" });
-
-      const response = await postReduce(headers, production.id, itemId, { quantity: "20" });
-
-      expect(response.statusCode).toBe(200);
-      expect(await inputsOf(headers, production.id)).toEqual({ Sprinkles: "0.1", Filling: "0.4", Shell: "20" });
-    });
-
-    it("then finishes with what the stock has", async () => {
-      const { headers, production, itemId, filling } = await bonbonShort();
-      expect((await finishAs(headers, production, ["50"])).statusCode).toBe(409);
-      await postReduce(headers, production.id, itemId, { quantity: "40" });
-
-      const response = await finishAs(headers, production, ["40"]);
-
-      expect(response.statusCode).toBe(200);
-      expect(await stockOf(filling.sku)).toMatchObject({ quantity: "0" });
-    });
-
-    it("refuses a quantity not below the expected one", async () => {
-      const { headers, production, itemId } = await bonbonShort();
-
-      for (const quantity of ["50", "60"]) {
-        const response = await postReduce(headers, production.id, itemId, { quantity });
-
-        expect(response.statusCode).toBe(409);
-        expect(response.json()).toEqual({ message: "The quantity must be less than the expected quantity." });
-      }
-      expect(await inputsOf(headers, production.id)).toMatchObject({ Filling: "1" });
-    });
-
-    it("refuses fractional units", async () => {
-      const { headers, production, itemId } = await bonbonShort();
-
-      const response = await postReduce(headers, production.id, itemId, { quantity: "39.5" });
-
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "The quantity has more decimal places than the unit allows." });
-      expect(await inputsOf(headers, production.id)).toMatchObject({ Filling: "1" });
-    });
-
-    it("refuses a production not in progress", async () => {
-      const { headers, production, itemId } = await bonbonShort();
-      await postCancel(headers, production.id);
-
-      const response = await postReduce(headers, production.id, itemId, { quantity: "40" });
-
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "Production is not in progress." });
-      expect(await inputsOf(headers, production.id)).toMatchObject({ Filling: "1" });
-    });
-
-    it("refuses a missing production", async () => {
-      const { headers, itemId } = await bonbonShort();
-
-      const response = await postReduce(headers, MISSING_ID, itemId, { quantity: "40" });
-
-      expect(response.statusCode).toBe(404);
-      expect(response.json()).toEqual({ message: "Production not found." });
-    });
-
-    it("refuses an item of another production", async () => {
-      const { headers, production, filling } = await bonbonShort();
-      const other = (await postProduction(headers, { items: [{ productSku: filling.sku, quantity: "1" }] })).json();
-
-      const response = await postReduce(headers, production.id, other.items[0].id, { quantity: "40" });
-
-      expect(response.statusCode).toBe(404);
-      expect(response.json()).toEqual({ message: "Production item not found." });
-    });
-
-    it("refuses an item already finished, and leaves it as it was", async () => {
+    it("records a produced and an existing batch on the filling, presented in order", async () => {
       const { headers, userId } = await canDoBoth();
       const tree = await bonbonTree(userId);
       const { id, fillingItem } = await startTree(headers, tree);
-      await finishItems(headers, id, [[fillingItem, "0.7"]]);
 
-      const response = await postReduce(headers, id, fillingItem.id, { quantity: "0.5" });
+      const produced = await postBatch(headers, id, fillingItem.id, batchOf("0.4", "PRODUCED", "2099-03-04"));
+      const existing = await postBatch(headers, id, fillingItem.id, batchOf("0.2", "EXISTING"));
 
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "The item is not pending." });
-      const filling = (await getProduction(headers, id)).json().items[1];
-      expect(filling).toMatchObject({ id: fillingItem.id, expectedQuantity: "0.7" });
-      expect(filling.inputs.map((input: { quantity: string }) => input.quantity)).toEqual(["0.14", "0.56"]);
+      expect(produced.statusCode).toBe(201);
+      expect(existing.statusCode).toBe(201);
+      const filling = existing.json().items.find((item: { id: string }) => item.id === fillingItem.id);
+      expect(filling.batches).toEqual([
+        {
+          id: expect.any(String),
+          quantity: "0.4",
+          expiresAt: "2099-03-04",
+          source: "PRODUCED",
+          createdAt: expect.any(String),
+        },
+        { id: expect.any(String), quantity: "0.2", expiresAt: null, source: "EXISTING", createdAt: expect.any(String) },
+      ]);
+      const stored = await testPrisma.productionItemBatch.findFirstOrThrow({ where: { source: "PRODUCED" } });
+      expect(stored.expiresAt?.toISOString()).toBe("2099-03-04T00:00:00.000Z");
+      expect(stored.createdById).toBe(userId);
+      expect(filling.status).toBe("PENDING");
     });
 
-    it("refuses when an input would round to nothing", async () => {
-      const { headers, production, itemId, sprinkles } = await bonbonShort();
-      await testPrisma.productionItemInput.updateMany({
-        where: { productionItemId: itemId, productSku: sprinkles.sku },
-        data: { quantity: "0.000001" },
+    it("refuses a batch on the bombom while the filling is pending, naming what it waits for", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, bonbonItem, fillingItem } = await startTree(headers, tree);
+
+      const response = await postBatch(headers, id, bonbonItem.id, batchOf("50"));
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({
+        message: "An item waits for another item of the production.",
+        waitingFor: [
+          {
+            itemId: bonbonItem.id,
+            waitsFor: expect.arrayContaining([{ itemId: fillingItem.id, product: expect.anything() }]),
+          },
+        ],
+      });
+    });
+
+    it("refuses a batch on a finished item", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+      await concludeItems(headers, id, [[fillingItem, "0.7"]]);
+
+      const response = await postBatch(headers, id, fillingItem.id, batchOf("0.1"));
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().message).toBe("The item is not pending.");
+    });
+
+    it("refuses a batch on an item that waits for a new weighing", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+      const reason = await testPrisma.lossReason.create({ data: { name: "Queimou" } });
+      await postDamage(headers, id, fillingItem.id, { reasonId: reason.id });
+
+      const response = await postBatch(headers, id, fillingItem.id, batchOf("0.1"));
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().message).toBe("The item waits for a new weighing.");
+    });
+
+    it("refuses more decimal places than the unit allows", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, shellItem } = await startTree(headers, tree);
+
+      const response = await postBatch(headers, id, shellItem.id, batchOf("2.5"));
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().message).toBe("The quantity has more decimal places than the unit allows.");
+    });
+
+    it("answers 404 for an item or a production that does not exist, and 409 for one not in progress", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+
+      const noItem = await postBatch(headers, id, MISSING_ID, batchOf("1"));
+      const noProduction = await postBatch(headers, MISSING_ID, fillingItem.id, batchOf("1"));
+      await postCancel(headers, id);
+      const canceled = await postBatch(headers, id, fillingItem.id, batchOf("1"));
+
+      expect([noItem.statusCode, noProduction.statusCode, canceled.statusCode]).toEqual([404, 404, 409]);
+      expect(noItem.json().message).toBe("Production item not found.");
+      expect(canceled.json().message).toBe("Production is not in progress.");
+    });
+
+    it("validates the body and the permission", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+      const readOnly = await authenticateAs([Permission.PRODUCTION_READ], "reader");
+
+      expect((await postBatch(headers, id, fillingItem.id, { source: "PRODUCED" })).statusCode).toBe(400);
+      expect((await postBatch(headers, id, fillingItem.id, batchOf("0"))).statusCode).toBe(400);
+      expect((await postBatch(headers, id, fillingItem.id, batchOf("1", "OTHER"))).statusCode).toBe(400);
+      expect((await postBatch(headers, id, fillingItem.id, batchOf("1", "PRODUCED", "2001-01-01"))).statusCode).toBe(
+        400,
+      );
+      expect((await postBatch(readOnly.headers, id, fillingItem.id, batchOf("1"))).statusCode).toBe(403);
+      expect((await postBatch(undefined, id, fillingItem.id, batchOf("1"))).statusCode).toBe(401);
+    });
+
+    it("records a batch sent without an expiry as one that never expires", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+
+      const response = await postBatch(headers, id, fillingItem.id, { quantity: "0.4", source: "PRODUCED" });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().items.find((item: { id: string }) => item.id === fillingItem.id).batches).toMatchObject([
+        { quantity: "0.4", expiresAt: null },
+      ]);
+    });
+
+    it("removes a batch of a pending item", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+      const recorded = await postBatch(headers, id, fillingItem.id, batchOf("0.4"));
+      const batchId = recorded.json().items.find((item: { id: string }) => item.id === fillingItem.id).batches[0].id;
+
+      const response = await deleteBatch(headers, id, fillingItem.id, batchId);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().items.find((item: { id: string }) => item.id === fillingItem.id).batches).toEqual([]);
+      expect(await testPrisma.productionItemBatch.count()).toBe(0);
+    });
+
+    it("answers 404 when the batch is another item's, and refuses removal from a finished item", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem, shellItem } = await startTree(headers, tree);
+      const recorded = await postBatch(headers, id, fillingItem.id, batchOf("0.7"));
+      const batchId = recorded.json().items.find((item: { id: string }) => item.id === fillingItem.id).batches[0].id;
+
+      const other = await deleteBatch(headers, id, shellItem.id, batchId);
+      const missing = await deleteBatch(headers, id, fillingItem.id, MISSING_ID);
+      await postConclude(headers, id, fillingItem.id);
+      const finished = await deleteBatch(headers, id, fillingItem.id, batchId);
+
+      expect(other.statusCode).toBe(404);
+      expect(other.json().message).toBe("Batch not found.");
+      expect(missing.statusCode).toBe(404);
+      expect(finished.statusCode).toBe(409);
+      expect(finished.json().message).toBe("The item is not pending.");
+      expect(await testPrisma.productionItemBatch.count()).toBe(1);
+    });
+
+    it("refuses damage and substitute on an item with a batch", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+      const reason = await testPrisma.lossReason.create({ data: { name: "Queimou" } });
+      await postBatch(headers, id, fillingItem.id, batchOf("0.4"));
+
+      const damage = await postDamage(headers, id, fillingItem.id, { reasonId: reason.id });
+      const substitute = await postSubstitute(headers, id, fillingItem.id);
+
+      expect([damage.statusCode, substitute.statusCode]).toEqual([409, 409]);
+      expect(damage.json().message).toBe(alreadyHasBatches);
+      expect(substitute.json().message).toBe(alreadyHasBatches);
+    });
+
+    it("refuses damage and substitute on an item with an extra weighing", async () => {
+      const { headers, userId } = await canDoBoth();
+      const tree = await bonbonTree(userId);
+      const { id, fillingItem } = await startTree(headers, tree);
+      const reason = await testPrisma.lossReason.create({ data: { name: "Queimou" } });
+      const extra = await testPrisma.preWeighing.create({
+        data: { productSku: tree.filling.sku, quantity: "0.1", createdById: userId },
+      });
+      await testPrisma.productionItemWeighing.create({
+        data: { productionItemId: fillingItem.id, preWeighingId: extra.id },
       });
 
-      const response = await postReduce(headers, production.id, itemId, { quantity: "10" });
+      const damage = await postDamage(headers, id, fillingItem.id, { reasonId: reason.id });
+      const substitute = await postSubstitute(headers, id, fillingItem.id);
 
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ message: "Quantity is out of range for this recipe." });
-      expect(await inputsOf(headers, production.id)).toMatchObject({ Filling: "1" });
-    });
-
-    it("requires the permission to create productions", async () => {
-      const { production, itemId } = await bonbonShort();
-      const { headers: reader } = await authenticateAs([Permission.PRODUCTION_READ], "reader");
-
-      const response = await postReduce(reader, production.id, itemId, { quantity: "40" });
-
-      expect(response.statusCode).toBe(403);
+      expect(damage.json().message).toBe(alreadyHasBatches);
+      expect(substitute.json().message).toBe(alreadyHasBatches);
     });
   });
 });
@@ -2476,7 +2851,7 @@ describe("POST /v1/productions/:id/cancel", () => {
     const { headers, userId } = await canDoBoth();
     const { preWeighing } = await createDoughPreWeighing(userId);
     const production = (await postProduction(headers, { preWeighingId: preWeighing.id })).json();
-    await postFinish(headers, production.id, { items: [{ id: production.items[0].id, producedQuantity: "50" }] });
+    await makeItem(headers, production.id, production.items[0].id, "50");
 
     const response = await postCancel(headers, production.id);
 
@@ -2494,10 +2869,14 @@ describe("POST /v1/productions/:id/cancel", () => {
     const production = (await postProduction(headers, { items: [{ productSku: dough.sku, quantity: "50" }] })).json();
     await postCancel(headers, production.id);
 
-    const response = await postFinish(headers, production.id, {
-      items: [{ id: production.items[0].id, producedQuantity: "50" }],
+    const batch = await postBatch(headers, production.id, production.items[0].id, {
+      quantity: "50",
+      expiresAt: null,
+      source: "PRODUCED",
     });
+    const response = await postConclude(headers, production.id, production.items[0].id);
 
+    expect(batch.statusCode).toBe(409);
     expect(response.statusCode).toBe(409);
     expect(await testPrisma.stockMovement.count()).toBe(0);
   });
@@ -2598,7 +2977,7 @@ describe("GET /v1/productions", () => {
 
 type Ids = { dough: string; preWeighing: string };
 
-describe("finishing two productions that share inputs at the same time", () => {
+describe("concluding two productions that share inputs at the same time", () => {
   // A product made of one unit of each of its ingredients.
   async function createMade(description: string, ingredientSkus: string[]) {
     const product = await createProduct(description, { kind: "MANUFACTURED" });
@@ -2614,15 +2993,14 @@ describe("finishing two productions that share inputs at the same time", () => {
     return product;
   }
 
-  async function startOf(headers: Headers, productSkus: string[]) {
-    const production = (
-      await postProduction(headers, { items: productSkus.map((productSku) => ({ productSku, quantity: "1" })) })
-    ).json();
+  // A production of one unit of a product, its batch already recorded.
+  async function startOf(headers: Headers, productSku: string) {
+    const production = (await postProduction(headers, { items: [{ productSku, quantity: "1" }] })).json();
+    const itemId = production.items[0].id as string;
 
-    return {
-      id: production.id as string,
-      items: production.items.map((item: { id: string }) => ({ id: item.id, producedQuantity: "1" })),
-    };
+    await postBatch(headers, production.id, itemId, { quantity: "1", expiresAt: null, source: "PRODUCED" });
+
+    return { id: production.id as string, itemId };
   }
 
   async function waitingForALock(sessions: number) {
@@ -2640,19 +3018,18 @@ describe("finishing two productions that share inputs at the same time", () => {
     throw new Error("The productions never got to wait for the stock.");
   }
 
-  it("finishes both, whatever the order each of them reaches the inputs in", async () => {
+  it("concludes both, whatever the order each of them reaches the inputs in", async () => {
     const { headers } = await canDoBoth();
     const sugar = await createProduct("Sugar");
     const flour = await createProduct("Flour");
     const egg = await createProduct("Egg");
     const milk = await createProduct("Milk");
 
-    // The first reaches sugar, then egg, then flour; the second flour, then milk, then sugar.
-    const syrup = await createMade("Alpha syrup", [sugar.sku]);
-    const dough = await createMade("Beta dough", [egg.sku, flour.sku]);
+    // The first takes egg, flour and sugar; the second flour, milk and sugar.
+    const dough = await createMade("Alpha dough", [sugar.sku, egg.sku, flour.sku]);
     const mix = await createMade("Gamma mix", [flour.sku, milk.sku, sugar.sku]);
-    const first = await startOf(headers, [syrup.sku, dough.sku]);
-    const second = await startOf(headers, [mix.sku]);
+    const first = await startOf(headers, dough.sku);
+    const second = await startOf(headers, mix.sku);
 
     // Egg and milk are held by something else just long enough for each production to stop
     // halfway, holding the input the other is about to ask for.
@@ -2677,7 +3054,7 @@ describe("finishing two productions that share inputs at the same time", () => {
     });
     await holding;
 
-    const finishing = [first, second].map(({ id, items }) => postFinish(headers, id, { items }));
+    const finishing = [first, second].map(({ id, itemId }) => postConclude(headers, id, itemId));
 
     await waitingForALock(2);
     release();
@@ -2740,11 +3117,14 @@ describe("leftovers of opened packagings", () => {
     return { milk, milkLot, production: started.json() };
   }
 
-  const finishAll = (headers: Headers, production: { id: string; items: { id: string }[] }, body = {}) =>
-    postFinish(headers, production.id, {
-      items: production.items.map(({ id }) => ({ id, producedQuantity: "1" })),
-      ...body,
-    });
+  // Each item made of one batch of 1 and concluded, one after the other.
+  async function finishAll(headers: Headers, production: { id: string; items: { id: string }[] }, body = {}) {
+    let response;
+
+    for (const { id } of production.items) response = await makeItem(headers, production.id, id, "1", body);
+
+    return response!;
+  }
 
   it("discards what is left of the opened can and puts its cost into what was produced", async () => {
     const { headers } = await canDoBoth();
@@ -2797,21 +3177,21 @@ describe("leftovers of opened packagings", () => {
     expect(await testPrisma.productionLeftover.count()).toBe(0);
   });
 
-  it("lets the items of a production share an opened can, splitting what is left by what each took", async () => {
-    // A flan and a pudding finished together, 100 g each, out of the same can lot: one can is opened
-    // for 200 g, so 195 g are left, half for each.
+  it("discards at each conclusion what the can it opened leaves, the next item opening another", async () => {
+    // A flan and a pudding, 100 g each, out of the same can lot: the first opens a can for 100 g and
+    // discards its other 295 g, and so does the second.
     const { headers } = await canDoBoth();
     const { milkLot, production } = await startPudding(headers, { withFlan: true, dose: "100" });
 
     const response = await finishAll(headers, production);
 
-    expect(await lotQuantity(milkLot.id)).toBe("3555");
+    expect(await lotQuantity(milkLot.id)).toBe("3160");
     const leftovers = await testPrisma.productionLeftover.findMany();
-    expect(leftovers.map(({ quantity }) => quantity.toString())).toEqual(["97.5", "97.5"]);
-    expect(response.json().items.map(({ unitCost }: { unitCost: string }) => unitCost)).toEqual(["3.95", "3.95"]);
+    expect(leftovers.map(({ quantity }) => quantity.toString())).toEqual(["295", "295"]);
+    expect(response.json().items.map(({ unitCost }: { unitCost: string }) => unitCost)).toEqual(["7.9", "7.9"]);
   });
 
-  it("previews the shared can the same way", async () => {
+  it("previews the items asked for together, sharing an opened can", async () => {
     const { headers } = await canDoBoth();
     const { production } = await startPudding(headers, { withFlan: true, dose: "100" });
 

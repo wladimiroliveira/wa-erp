@@ -46,7 +46,12 @@ export function setMinimumQuantity(
   `;
 }
 
-type HeldBalance = { productSku: string; quantity: Prisma.Decimal; lastEntryCost: Prisma.Decimal | null };
+type HeldBalance = {
+  productSku: string;
+  quantity: Prisma.Decimal;
+  lastEntryCost: Prisma.Decimal | null;
+  averageCost: Prisma.Decimal | null;
+};
 
 // Holds the balances of several products until the transaction ends, always in the same order.
 // Whatever moves more than one product holds them all here before moving any: taking them one by
@@ -65,7 +70,7 @@ export async function holdStockBalances(client: Prisma.TransactionClient, produc
   `;
 
   return client.$queryRaw<HeldBalance[]>`
-    SELECT product_sku::text AS "productSku", quantity, last_entry_cost AS "lastEntryCost"
+    SELECT product_sku::text AS "productSku", quantity, last_entry_cost AS "lastEntryCost", average_cost AS "averageCost"
     FROM product_stocks
     WHERE product_sku IN (${Prisma.join(skus.map((sku) => Prisma.sql`${sku}::uuid`))})
     ORDER BY product_sku

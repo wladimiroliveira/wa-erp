@@ -21,14 +21,16 @@ import type {
   startCandidateSchema,
 } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import type {
+  addProductionItemBodySchema,
+  batchBodySchema,
+  concludeItemBodySchema,
   damageProductionItemBodySchema,
   finishConflictSchema,
-  finishProductionBodySchema,
+  itemWeighingBodySchema,
   productionPageSchema,
   productionLeftoversSchema,
   productionSchema,
   productionSubstitutionSchema,
-  productionWeighingBodySchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
 import type {
@@ -124,9 +126,12 @@ export type ProductionSubstitution = z.output<typeof productionSubstitutionSchem
 export type ProductionItem = Production["items"][number];
 export type ProductionPage = z.output<typeof productionPageSchema>;
 export type StartProductionBody = z.input<typeof startProductionBodySchema>;
-export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
+export type ProductionBatch = ProductionItem["batches"][number];
+export type BatchBody = z.input<typeof batchBodySchema>;
+export type ItemWeighingBody = z.input<typeof itemWeighingBodySchema>;
+export type AddProductionItemBody = z.input<typeof addProductionItemBodySchema>;
+export type ConcludeItemBody = z.input<typeof concludeItemBodySchema>;
 export type DamageProductionItemBody = z.input<typeof damageProductionItemBodySchema>;
-export type ProductionWeighingBody = z.input<typeof productionWeighingBodySchema>;
 export type FinishConflict = z.output<typeof finishConflictSchema>;
 export type LeftoversPreview = z.output<typeof productionLeftoversSchema>;
 

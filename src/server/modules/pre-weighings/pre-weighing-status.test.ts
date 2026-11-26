@@ -16,6 +16,17 @@ describe("preWeighingStatusOf", () => {
   });
 });
 
+describe("preWeighingStatusOf for an extra weighing", () => {
+  it.each([
+    [false, "PENDING", "IN_PRODUCTION"],
+    [false, "FINISHED", "PRODUCED"],
+    [false, "SUBSTITUTED", "PENDING"],
+    [true, "PENDING", "DAMAGED"],
+  ] as const)("damaged %s with the item %s is %s", (damaged, extraItemStatus, expected) => {
+    expect(preWeighingStatusOf({ damaged, itemStatus: null, extraItemStatus })).toBe(expected);
+  });
+});
+
 describe("isStale", () => {
   const now = new Date("2026-11-22T12:00:00.000Z");
 

@@ -5,12 +5,16 @@ import { STALE_AFTER_MS, type PreWeighingStatus } from "./pre-weighing-status";
 
 const productSelect = { sku: true, description: true, unit: true } satisfies Prisma.ProductSelect;
 
+// The item that took a pre-weighing as an extra weighing, when it did.
+const extraItemSelect = { select: { productionItem: { select: { status: true } } } } as const;
+
 const preWeighingSelect = {
   id: true,
   quantity: true,
   createdAt: true,
   product: { select: productSelect },
   production: { select: { status: true } },
+  productionWeighing: extraItemSelect,
   damage: { select: { id: true } },
   parent: { select: { id: true, product: { select: productSelect } } },
   children: {
@@ -94,13 +98,14 @@ export function findComplementParent(id: string) {
     select: {
       product: { select: { recipe: { select: { ingredients: { select: { productSku: true } } } } } },
       production: { select: { status: true } },
+      productionWeighing: extraItemSelect,
       damage: { select: { id: true } },
     },
   });
 }
 
 // Deletes a pre-weighing and every one recorded under it, unless one of them is not pending: guided
-// by a production item or named by a damage.
+// by a production item, taken as an extra weighing or named by a damage.
 // The rows are held first, so no production can start from one of them while they are checked.
 export function deletePreWeighingTree(id: string): Promise<"deleted" | "missing" | "not-pending"> {
   return prisma.$transaction(async (tx) => {
@@ -119,6 +124,7 @@ export function deletePreWeighingTree(id: string): Promise<"deleted" | "missing"
     await tx.$queryRaw`SELECT id FROM pre_weighings WHERE id = ANY(${ids}::uuid[]) FOR UPDATE`;
 
     if ((await tx.productionItem.count({ where: { preWeighingId: { in: ids } } })) > 0) return "not-pending";
+    if ((await tx.productionItemWeighing.count({ where: { preWeighingId: { in: ids } } })) > 0) return "not-pending";
     if ((await tx.productionItemDamage.count({ where: { preWeighingId: { in: ids } } })) > 0) return "not-pending";
 
     await tx.preWeighingItem.deleteMany({ where: { preWeighingId: { in: ids } } });
@@ -141,11 +147,17 @@ export async function findPreWeighingParentId(id: string, client: Prisma.Transac
   return found?.parentId;
 }
 
+// Guided by an item, or taken as an extra weighing of one: either reads the same.
+const ofItem = (status: "FINISHED" | "PENDING"): Prisma.PreWeighingWhereInput => ({
+  damage: null,
+  OR: [{ production: { status } }, { productionWeighing: { productionItem: { status } } }],
+});
+
 const whereOfStatus: Record<PreWeighingStatus, Prisma.PreWeighingWhereInput> = {
   DAMAGED: { damage: { isNot: null } },
-  PRODUCED: { damage: null, production: { status: "FINISHED" } },
-  IN_PRODUCTION: { damage: null, production: { status: "PENDING" } },
-  PENDING: { damage: null, production: null },
+  PRODUCED: ofItem("FINISHED"),
+  IN_PRODUCTION: ofItem("PENDING"),
+  PENDING: { damage: null, production: null, productionWeighing: null },
 };
 
 const staleWhere = (now: Date): Prisma.PreWeighingWhereInput => ({

@@ -6,11 +6,18 @@ export type PreWeighingStatus = z.output<typeof preWeighingStatusSchema>;
 type ItemStatus = "PENDING" | "FINISHED" | "SUBSTITUTED";
 
 // Derived, never stored. A damage wins over everything; an item that was substituted no longer
-// uses the pre-weighing, so it counts as pending again.
-export function preWeighingStatusOf(input: { damaged: boolean; itemStatus: ItemStatus | null }): PreWeighingStatus {
+// uses the pre-weighing, so it counts as pending again. The item is the one the pre-weighing
+// guides, or else the one that took it as an extra weighing.
+export function preWeighingStatusOf(input: {
+  damaged: boolean;
+  itemStatus: ItemStatus | null;
+  extraItemStatus?: ItemStatus | null;
+}): PreWeighingStatus {
+  const itemStatus = input.itemStatus ?? input.extraItemStatus ?? null;
+
   if (input.damaged) return "DAMAGED";
-  if (input.itemStatus === "FINISHED") return "PRODUCED";
-  if (input.itemStatus === "PENDING") return "IN_PRODUCTION";
+  if (itemStatus === "FINISHED") return "PRODUCED";
+  if (itemStatus === "PENDING") return "IN_PRODUCTION";
 
   return "PENDING";
 }

@@ -7,34 +7,42 @@ import { fail, type Failure } from "@/server/lib/result";
 import { preWeighingPlanQuerySchema } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import { previewPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
 import {
+  addProductionItemBodySchema,
+  batchBodySchema,
+  concludeItemBodySchema,
   damageProductionItemBodySchema,
-  finishProductionBodySchema,
+  itemWeighingBodySchema,
   listProductionsQuerySchema,
+  productionBatchParamsSchema,
   productionIdParamsSchema,
   productionItemParamsSchema,
   productionLeftoversQuerySchema,
-  productionWeighingBodySchema,
-  reduceProductionItemBodySchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
+import * as batches from "@/server/modules/productions/production-batches.service";
 import * as productions from "@/server/modules/productions/productions.service";
 import type {
+  AddProductionItemBody,
+  BatchBody,
+  ConcludeItemBody,
   DamageProductionItemBody,
   FinishConflict,
-  FinishProductionBody,
+  ItemWeighingBody,
   LeftoversPreview,
   PreWeighingPlan,
   Production,
   ProductionPage,
   ProductionStatus,
   ProductionSubstitution,
-  ProductionWeighingBody,
   StartProductionBody,
 } from "@/lib/api";
 
 export type ProductionResult = { ok: true; data: Production } | Failure;
-/** A 409 on finishing says what blocks it: short stock, and the most each short item could make. */
-export type FinishProductionResult = ProductionResult | (Failure<409> & { details: FinishConflict });
+/**
+ * A 409 on concluding says what blocks it: short stock and the most the item could make, what it waits
+ * for, or what an intermediate below its target would leave missing.
+ */
+export type ConcludeItemResult = ProductionResult | (Failure<409> & { details: FinishConflict });
 export type LeftoversPreviewResult = { ok: true; data: LeftoversPreview } | Failure;
 export type ProductionPageResult = { ok: true; data: ProductionPage } | Failure;
 export type PlanResult = { ok: true; data: PreWeighingPlan } | Failure;
@@ -91,46 +99,27 @@ export async function previewLeftovers(id: string, itemIds?: string[]): Promise<
   return productions.previewLeftovers(params.data.id, query.data.items);
 }
 
-export async function finishProductionItems(id: string, body: FinishProductionBody): Promise<FinishProductionResult> {
-  const user = await requireUser();
-
-  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
-
-  const params = productionIdParamsSchema.safeParse({ id });
-  const parsed = finishProductionBodySchema.safeParse(body);
-
-  if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
-
-  const result = await productions.finishProduction({ ...parsed.data, id: params.data.id, createdById: user.id });
-
-  if (!result.ok) return result;
-
-  revalidateProduction(params.data.id);
-
-  return result;
-}
-
-/** Lowers the quantity an item takes, when the stock cannot cover it. */
-export async function reduceProductionItem(id: string, itemId: string, quantity: string): Promise<ProductionResult> {
+/** Concludes an item with what its batches add up to: its inputs leave the stock and its batches come in. */
+export async function concludeItem(id: string, itemId: string, body: ConcludeItemBody): Promise<ConcludeItemResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
 
   const params = productionItemParamsSchema.safeParse({ id, itemId });
-  const parsed = reduceProductionItemBodySchema.safeParse({ quantity });
+  const parsed = concludeItemBodySchema.safeParse(body);
 
   if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
 
-  const result = await productions.reduceProductionItem({
+  const result = await batches.concludeItem({
     productionId: params.data.id,
     itemId: params.data.itemId,
-    quantity: parsed.data.quantity,
+    ...parsed.data,
+    createdById: user.id,
   });
 
   if (!result.ok) return result;
 
-  revalidatePath(LIST_PATH);
-  revalidatePath(detailPath(params.data.id));
+  revalidateProduction(params.data.id);
 
   return result;
 }
@@ -144,7 +133,7 @@ export async function cancelProduction(id: string): Promise<ProductionResult> {
 
   if (!params.success) return fail(400, INVALID_INPUT);
 
-  const result = await productions.cancelProduction(params.data.id);
+  const result = await batches.cancelProduction({ id: params.data.id, createdById: user.id });
 
   if (!result.ok) return result;
 
@@ -248,25 +237,91 @@ export async function substituteProductionItem(id: string, itemId: string): Prom
   return result;
 }
 
-/** A pre-weighing recorded inside the production: a new weighing for a damaged item, or the complement of a short one. */
-export async function recordProductionWeighing(id: string, body: ProductionWeighingBody): Promise<ProductionResult> {
+/** One more batch ("leva") of an item: what came out of it, when it expires and whether it was made now or found. */
+export async function recordBatch(id: string, itemId: string, body: BatchBody): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionItemParamsSchema.safeParse({ id, itemId });
+  const parsed = batchBodySchema.safeParse(body);
+
+  if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
+
+  const result = await batches.recordBatch({
+    productionId: params.data.id,
+    itemId: params.data.itemId,
+    ...parsed.data,
+    createdById: user.id,
+  });
+
+  if (!result.ok) return result;
+
+  revalidateProduction(params.data.id);
+
+  return result;
+}
+
+/** Takes a batch back while its item is pending. */
+export async function removeBatch(id: string, itemId: string, batchId: string): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionBatchParamsSchema.safeParse({ id, itemId, batchId });
+
+  if (!params.success) return fail(400, INVALID_INPUT);
+
+  const result = await batches.removeBatch({
+    productionId: params.data.id,
+    itemId: params.data.itemId,
+    batchId: params.data.batchId,
+  });
+
+  if (!result.ok) return result;
+
+  revalidateProduction(params.data.id);
+
+  return result;
+}
+
+/** A weighing of an item: how much of it to make and what was weighed of each ingredient. */
+export async function weighItem(id: string, itemId: string, body: ItemWeighingBody): Promise<ProductionResult> {
+  const user = await requireUser();
+
+  if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
+
+  const params = productionItemParamsSchema.safeParse({ id, itemId });
+  const parsed = itemWeighingBodySchema.safeParse(body);
+
+  if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
+
+  const result = await batches.weighItem({
+    productionId: params.data.id,
+    itemId: params.data.itemId,
+    ...parsed.data,
+    createdById: user.id,
+  });
+
+  if (!result.ok) return result;
+
+  revalidateProduction(params.data.id);
+
+  return result;
+}
+
+/** What a shortage of an intermediate asks for: one more item of it, to be weighed and made. */
+export async function addShortageItem(id: string, body: AddProductionItemBody): Promise<ProductionResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_CREATE)) return fail(403, DENIED);
 
   const params = productionIdParamsSchema.safeParse({ id });
-  const parsed = productionWeighingBodySchema.safeParse(body);
+  const parsed = addProductionItemBodySchema.safeParse(body);
 
   if (!params.success || !parsed.success) return fail(400, INVALID_INPUT);
 
-  const { itemId, parentId, ...tree } = parsed.data;
-  const result = await productions.recordProductionWeighing({
-    productionId: params.data.id,
-    createdById: user.id,
-    itemId,
-    parentId,
-    tree,
-  });
+  const result = await batches.addShortageItem({ productionId: params.data.id, ...parsed.data });
 
   if (!result.ok) return result;
 

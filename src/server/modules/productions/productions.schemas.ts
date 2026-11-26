@@ -1,16 +1,10 @@
 import { z } from "zod";
 import { lotExpirySchema } from "@/server/modules/stock/stock.schemas";
 import { positiveDecimalSchema } from "@/shared/decimal";
-import { productionItemStatusSchema, productionStatusSchema } from "@/shared/enums";
+import { productionBatchSourceSchema, productionItemStatusSchema, productionStatusSchema } from "@/shared/enums";
 import { pageQuerySchema, pageSchema } from "@/server/lib/pagination";
 import { messageSchema } from "@/server/modules/auth/auth.schemas";
 import { productSummarySchema } from "@/server/modules/products/products.schemas";
-import {
-  preWeighingStageBodySchema,
-  preWeighingStagesSchema,
-} from "@/server/modules/pre-weighings/pre-weighings.schemas";
-
-const listsEachOnce = (ids: string[]) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length;
 
 // A production starts in one of two ways, never mixed. Guided, it follows one root pre-weighing and
 // brings the pending ones under it as items: the product, the expected yield and the inputs are the
@@ -23,13 +17,11 @@ export const startProductionBodySchema = z.union([
   z.strictObject({ items: z.array(freeItemSchema).min(1) }),
 ]);
 
-export const finishProductionBodySchema = z.object({
-  items: z
-    .array(z.object({ id: z.uuid(), producedQuantity: positiveDecimalSchema, expiresAt: lotExpirySchema }))
-    .min(1)
-    .refine((items) => listsEachOnce(items.map(({ id }) => id)), { message: "An item is listed more than once." }),
-  // Whether what is discarded of the opened packagings goes into the cost produced. Asked for at
-  // finish, after the production happened; an older client that does not say counts it.
+// Concluding an item takes what its batches add up to. Below its target it must be meant; and
+// whether what is discarded of the opened packagings goes into the cost produced is asked for at
+// the end, after the production happened.
+export const concludeItemBodySchema = z.object({
+  belowTarget: z.boolean().default(false),
   hasLeftoversInCost: z.boolean().default(true),
 });
 
@@ -52,7 +44,15 @@ export const productionSubstitutionSchema = z.object({
   available: z.string(),
 });
 
-export const reduceProductionItemBodySchema = z.object({ quantity: positiveDecimalSchema });
+// A batch the operator made now (`PRODUCED`) or found already made (`EXISTING`), and when it expires.
+export const batchBodySchema = z.object({
+  quantity: positiveDecimalSchema,
+  // A batch sent without an expiry never expires.
+  expiresAt: lotExpirySchema.default(null),
+  source: productionBatchSourceSchema,
+});
+
+export const productionBatchParamsSchema = z.object({ id: z.uuid(), itemId: z.uuid(), batchId: z.uuid() });
 
 // What went wrong with an item before it finished: why, under a loss reason, and in the operator's words.
 export const damageProductionItemBodySchema = z.object({
@@ -66,15 +66,15 @@ export const damageProductionItemBodySchema = z.object({
     .nullish(),
 });
 
-// A pre-weighing recorded inside a production, in one of two ways, never both: `itemId` is a pending
-// item a damage left waiting for a new weighing, which the new one guides; `parentId` is the
-// pre-weighing of a pending item short of an intermediate, which the complement goes under. Either
-// way, each stage of what is recorded joins the production as an item of its own.
-export const productionWeighingBodySchema = preWeighingStageBodySchema
-  .extend({ itemId: z.uuid().optional(), parentId: z.uuid().optional(), stages: preWeighingStagesSchema() })
-  .refine(({ itemId, parentId }) => (itemId === undefined) !== (parentId === undefined), {
-    message: "Send exactly one of itemId and parentId.",
-  });
+// A weighing of an item: how much of it to make and what was weighed of each ingredient of its recipe.
+// An intermediate of the recipe is taken from stock, sent without a weighed quantity.
+export const itemWeighingBodySchema = z.object({
+  quantity: positiveDecimalSchema,
+  items: z.array(z.object({ productSku: z.uuid(), weighedQuantity: positiveDecimalSchema.optional() })).min(1),
+});
+
+// An intermediate an item of the production lacks, added as an item of its own to be weighed and made.
+export const addProductionItemBodySchema = freeItemSchema;
 
 export const listProductionsQuerySchema = pageQuerySchema.extend({ status: productionStatusSchema.optional() });
 
@@ -105,6 +105,18 @@ export const productionSchema = z.object({
       dependsOn: z.array(z.uuid()),
       // A damage took its pre-weighing away, and it cannot finish until a new one is recorded.
       awaitsWeighing: z.boolean(),
+      // The batches ("levas") the item came out in, the oldest first; an expiry is a day, YYYY-MM-DD.
+      batches: z.array(
+        z.object({
+          id: z.uuid(),
+          quantity: z.string(),
+          expiresAt: z.iso.date().nullable(),
+          source: productionBatchSourceSchema,
+          createdAt: z.iso.datetime(),
+        }),
+      ),
+      // How many weighings the item took beyond the one that guides it.
+      extraWeighings: z.number().int(),
       // Each time the item went wrong, the oldest first; the pre-weighing is the one it let go of.
       damages: z.array(
         z.object({
@@ -149,8 +161,9 @@ export const productionLeftoversSchema = z.object({
   totalCost: z.string(),
 });
 
-// Why items cannot finish yet: the stock of an intermediate does not cover what they take, with the
-// most each short item could make of what there is; or they wait for other items of the production.
+// Why an item cannot be concluded yet: the stock of an intermediate does not cover what it takes, with
+// the most it could make of what there is; it waits for other items of the production; or, below its
+// target, what it made leaves an item that takes it short.
 export const finishConflictSchema = messageSchema.extend({
   shortages: z
     .array(z.object({ itemId: z.uuid(), product: productSummarySchema, needed: z.string(), available: z.string() }))
@@ -166,4 +179,6 @@ export const finishConflictSchema = messageSchema.extend({
       }),
     )
     .optional(),
+  // What an intermediate concluded below its target would leave missing for the items that take it.
+  missing: z.array(z.object({ product: productSummarySchema, quantity: z.string() })).optional(),
 });

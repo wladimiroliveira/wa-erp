@@ -57,6 +57,7 @@ model User {
   stockMovements        StockMovement[]
   stockLosses           StockLoss[]
   productionItemDamages ProductionItemDamage[]
+  productionItemBatches ProductionItemBatch[]
   preWeighings          PreWeighing[]
   productions           Production[]
   tableLayouts          TableLayout[]
@@ -321,20 +322,22 @@ model RecipeIngredient {
 }
 
 model PreWeighing {
-  id          String                @id @default(uuid(7)) @db.Uuid
-  productSku  String                @map("product_sku") @db.Uuid
-  product     Product               @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  quantity    Decimal               @db.Decimal(18, 6)
-  items       PreWeighingItem[]
-  production  ProductionItem?
-  damage      ProductionItemDamage?
+  id                 String                  @id @default(uuid(7)) @db.Uuid
+  productSku         String                  @map("product_sku") @db.Uuid
+  product            Product                 @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  quantity           Decimal                 @db.Decimal(18, 6)
+  items              PreWeighingItem[]
+  production         ProductionItem?
+  damage             ProductionItemDamage?
+  // Set when the pre-weighing was taken as an extra weighing of an item, which it does not guide.
+  productionWeighing ProductionItemWeighing?
   // The pre-weighing whose product takes this one's product as an ingredient; null for a root.
-  parentId    String?               @map("parent_id") @db.Uuid
-  parent      PreWeighing?          @relation("PreWeighingStages", fields: [parentId], references: [id], onDelete: Restrict)
-  children    PreWeighing[]         @relation("PreWeighingStages")
-  createdById String                @map("created_by_id") @db.Uuid
-  createdBy   User                  @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt   DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  parentId           String?                 @map("parent_id") @db.Uuid
+  parent             PreWeighing?            @relation("PreWeighingStages", fields: [parentId], references: [id], onDelete: Restrict)
+  children           PreWeighing[]           @relation("PreWeighingStages")
+  createdById        String                  @map("created_by_id") @db.Uuid
+  createdBy          User                    @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([parentId], map: "idx_pre_weighings_parent_id")
   @@index([productSku, createdAt(sort: Desc), id(sort: Desc)], map: "idx_pre_weighings_product_sku_created_at")
@@ -389,28 +392,67 @@ enum ProductionItemStatus {
 }
 
 model ProductionItem {
-  id                 String                 @id @default(uuid(7)) @db.Uuid
-  productionId       String                 @map("production_id") @db.Uuid
-  production         Production             @relation(fields: [productionId], references: [id], onDelete: Restrict)
-  productSku         String                 @map("product_sku") @db.Uuid
-  product            Product                @relation(fields: [productSku], references: [sku], onDelete: Restrict)
-  preWeighingId      String?                @unique @map("pre_weighing_id") @db.Uuid
-  preWeighing        PreWeighing?           @relation(fields: [preWeighingId], references: [id], onDelete: Restrict)
-  expectedQuantity   Decimal                @map("expected_quantity") @db.Decimal(18, 6)
-  producedQuantity   Decimal?               @map("produced_quantity") @db.Decimal(18, 6)
-  unitCost           Decimal?               @map("unit_cost") @db.Decimal(18, 6)
-  status             ProductionItemStatus   @default(PENDING)
-  finishedAt         DateTime?              @map("finished_at") @db.Timestamptz(3)
+  id                 String                   @id @default(uuid(7)) @db.Uuid
+  productionId       String                   @map("production_id") @db.Uuid
+  production         Production               @relation(fields: [productionId], references: [id], onDelete: Restrict)
+  productSku         String                   @map("product_sku") @db.Uuid
+  product            Product                  @relation(fields: [productSku], references: [sku], onDelete: Restrict)
+  preWeighingId      String?                  @unique @map("pre_weighing_id") @db.Uuid
+  preWeighing        PreWeighing?             @relation(fields: [preWeighingId], references: [id], onDelete: Restrict)
+  expectedQuantity   Decimal                  @map("expected_quantity") @db.Decimal(18, 6)
+  producedQuantity   Decimal?                 @map("produced_quantity") @db.Decimal(18, 6)
+  unitCost           Decimal?                 @map("unit_cost") @db.Decimal(18, 6)
+  status             ProductionItemStatus     @default(PENDING)
+  finishedAt         DateTime?                @map("finished_at") @db.Timestamptz(3)
   // When the item was substituted; null on an item that was not.
-  substitutedAt      DateTime?              @map("substituted_at") @db.Timestamptz(3)
+  substitutedAt      DateTime?                @map("substituted_at") @db.Timestamptz(3)
   // Whether the cost of the leftovers discarded when the item finished went into its cost; null until it finishes.
-  hasLeftoversInCost Boolean?               @map("has_leftovers_in_cost")
+  hasLeftoversInCost Boolean?                 @map("has_leftovers_in_cost")
   inputs             ProductionItemInput[]
   damages            ProductionItemDamage[]
+  batches            ProductionItemBatch[]
+  extraWeighings     ProductionItemWeighing[]
 
   @@index([productionId], map: "idx_production_items_production_id")
   @@index([productSku], map: "idx_production_items_product_sku")
   @@map("production_items")
+}
+
+enum ProductionBatchSource {
+  PRODUCED
+  EXISTING
+
+  @@map("production_batch_source")
+}
+
+// A batch ("leva") an item came out in: how much, when it expires and whether it was made now or
+// already existed.
+model ProductionItemBatch {
+  id               String                @id @default(uuid(7)) @db.Uuid
+  productionItemId String                @map("production_item_id") @db.Uuid
+  productionItem   ProductionItem        @relation(fields: [productionItemId], references: [id], onDelete: Restrict)
+  quantity         Decimal               @db.Decimal(18, 6)
+  expiresAt        DateTime?             @map("expires_at") @db.Timestamptz(3)
+  source           ProductionBatchSource
+  createdById      String                @map("created_by_id") @db.Uuid
+  createdBy        User                  @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([productionItemId], map: "idx_production_item_batches_production_item_id")
+  @@map("production_item_batches")
+}
+
+// Weighings an item took beyond the one that guides it (extra batches). Unique: a pre-weighing
+// belongs to one item.
+model ProductionItemWeighing {
+  productionItemId String         @map("production_item_id") @db.Uuid
+  productionItem   ProductionItem @relation(fields: [productionItemId], references: [id], onDelete: Restrict)
+  preWeighingId    String         @id @map("pre_weighing_id") @db.Uuid
+  preWeighing      PreWeighing    @relation(fields: [preWeighingId], references: [id], onDelete: Restrict)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([productionItemId], map: "idx_production_item_weighings_production_item_id")
+  @@map("production_item_weighings")
 }
 
 // An item that went wrong before it finished: its inputs left stock as losses.

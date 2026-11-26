@@ -1,24 +1,5 @@
 import { type MeasurementUnit, Prisma } from "@prisma/client";
-import { pickPlacesOf, toStoredDecimal } from "@/server/lib/decimal";
-
-// Scales every input from the quantity the recipe was planned for to the one produced. Null when
-// any scaled quantity rounds to nothing (or does not fit the column).
-export function scaleInputs<T extends { quantity: Prisma.Decimal }>(
-  inputs: T[],
-  from: Prisma.Decimal,
-  to: Prisma.Decimal,
-): T[] | null {
-  const scaled: T[] = [];
-
-  for (const input of inputs) {
-    const quantity = toStoredDecimal(input.quantity.mul(to).div(from));
-
-    if (!quantity || quantity.lte(0)) return null;
-    scaled.push({ ...input, quantity });
-  }
-
-  return scaled;
-}
+import { pickPlacesOf } from "@/server/lib/decimal";
 
 // The most that can be produced with what is in stock: the scarcest input limits it.
 export function maxQuantityFromStock(input: {

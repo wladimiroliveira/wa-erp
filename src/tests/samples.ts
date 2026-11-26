@@ -9,6 +9,7 @@ import type {
   Packaging,
   Product,
   Production,
+  ProductionBatch,
   ProductionItem,
   Recipe,
   RecipeSummary,
@@ -234,6 +235,17 @@ export function aStartCandidate(over: Partial<StartCandidate> = {}): StartCandid
   return { ...aPreWeighing(), stages: [], ...over };
 }
 
+export function aProductionBatch(over: Partial<ProductionBatch> = {}): ProductionBatch {
+  return {
+    id: "018f0000-0000-7000-8000-0000000000c1",
+    quantity: "10",
+    expiresAt: null,
+    source: "PRODUCED",
+    createdAt: "2026-10-14T12:00:00.000Z",
+    ...over,
+  };
+}
+
 export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionItem {
   return {
     id: "018f0000-0000-7000-8000-0000000000b1",
@@ -249,6 +261,8 @@ export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionI
     unitCost: null,
     dependsOn: [],
     awaitsWeighing: false,
+    batches: [],
+    extraWeighings: 0,
     damages: [],
     inputs: [
       {

@@ -203,4 +203,43 @@ describe("timelineOf", () => {
     expect(timeline.done[0]?.item).toBeNull();
     expect(timeline.done[1]?.item).toBe(item);
   });
+
+  describe("batches", () => {
+    const batch = (over = {}) => ({
+      id: "b1",
+      quantity: "48",
+      expiresAt: null,
+      source: "PRODUCED" as const,
+      createdAt: "2026-10-14T13:00:00.000Z",
+      ...over,
+    });
+
+    it("adds one event per batch at its creation, in order with the rest", () => {
+      const item = casquinha({
+        status: "FINISHED",
+        finishedAt: "2026-10-14T14:00:00.000Z",
+        producedQuantity: "50",
+        batches: [
+          batch({ id: "b2", quantity: "2", createdAt: "2026-10-14T13:30:00.000Z" }),
+          batch({ createdAt: "2026-10-14T13:00:00.000Z" }),
+        ],
+      });
+      const { done } = timelineOf(aProduction({ items: [item] }));
+
+      expect(done.map(({ at, text, ends }) => ({ at, text, ends }))).toEqual([
+        { at: "2026-10-14T12:00:00.000Z", text: "Produção iniciada", ends: false },
+        { at: "2026-10-14T13:00:00.000Z", text: "Leva de Casquinha registrada · 48 un", ends: false },
+        { at: "2026-10-14T13:30:00.000Z", text: "Leva de Casquinha registrada · 2 un", ends: false },
+        { at: "2026-10-14T14:00:00.000Z", text: "Casquinha finalizado · 50 un", ends: true },
+      ]);
+      expect(done[1]!.item).toEqual(expect.objectContaining({ id: "i-casquinha" }));
+    });
+
+    it("says an existing batch was already there", () => {
+      const item = casquinha({ batches: [batch({ source: "EXISTING", quantity: "10" })] });
+      const { done } = timelineOf(aProduction({ items: [item] }));
+
+      expect(done.map(({ text }) => text)).toContain("Leva de Casquinha registrada · 10 un · já existia");
+    });
+  });
 });

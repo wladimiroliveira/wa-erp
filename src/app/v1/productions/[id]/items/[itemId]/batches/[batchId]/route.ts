@@ -1,27 +1,22 @@
 import { Permission } from "@prisma/client";
 import { apiHandler } from "@/server/http/handler";
 import { messageSchema } from "@/server/modules/auth/auth.schemas";
-import {
-  productionItemParamsSchema,
-  productionSchema,
-  reduceProductionItemBodySchema,
-} from "@/server/modules/productions/productions.schemas";
-import { reduceProductionItem } from "@/server/modules/productions/productions.service";
+import { removeBatch } from "@/server/modules/productions/production-batches.service";
+import { productionBatchParamsSchema, productionSchema } from "@/server/modules/productions/productions.schemas";
 
-export const POST = apiHandler(
+export const DELETE = apiHandler(
   {
     auth: Permission.PRODUCTION_CREATE,
     tags: ["productions"],
-    summary: "Reduz a quantidade esperada de um item e escala os insumos na mesma proporção",
-    params: productionItemParamsSchema,
-    body: reduceProductionItemBodySchema,
+    summary: "Remove uma leva de um item pendente",
+    params: productionBatchParamsSchema,
     response: { 200: productionSchema, 404: messageSchema, 409: messageSchema },
   },
   async (request, reply) => {
-    const result = await reduceProductionItem({
+    const result = await removeBatch({
       productionId: request.params.id,
       itemId: request.params.itemId,
-      quantity: request.body.quantity,
+      batchId: request.params.batchId,
     });
 
     if (!result.ok) return reply.code(result.status).send({ message: result.message });

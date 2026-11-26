@@ -20,7 +20,7 @@ import {
   type PlannedStage,
   type PreWeighingRecord,
 } from "./pre-weighings.repository";
-import type { preWeighingStageBodySchema } from "./pre-weighings.schemas";
+import { PLAN_MISMATCHES, type preWeighingStageBodySchema } from "./pre-weighings.schemas";
 
 type ProductSummary = { sku: string; description: string; unit: MeasurementUnit };
 
@@ -233,6 +233,7 @@ export const presentPreWeighing = (preWeighing: PreWeighingRecord) => ({
   status: preWeighingStatusOf({
     damaged: preWeighing.damage !== null,
     itemStatus: preWeighing.production?.status ?? null,
+    extraItemStatus: preWeighing.productionWeighing?.productionItem.status ?? null,
   }),
   parent: preWeighing.parent,
   children: preWeighing.children.map(({ id, product, quantity }) => ({ id, product, quantity: quantity.toString() })),
@@ -356,8 +357,8 @@ export async function previewPreWeighing(
 
 export type StageBody = z.output<typeof preWeighingStageBodySchema>;
 
-const STAGE_MISMATCH = "A stage does not match the plan.";
-const ITEMS_MISMATCH = "The items do not match the ingredients of the recipe.";
+const STAGE_MISMATCH = PLAN_MISMATCHES.stage;
+const ITEMS_MISMATCH = PLAN_MISMATCHES.items;
 
 // What to produce of each intermediate, by lower-case sku, as the stages say. The same intermediate
 // asked for twice in different quantities cannot be planned.
@@ -435,10 +436,10 @@ function matchStage(plan: PreWeighingPlan, sent: StageBody): Result<PlannedStage
 /** Refused wherever a complement is recorded under a pre-weighing whose recipe does not take its product. */
 export const PARENT_DOES_NOT_TAKE = "The parent's recipe does not take this product.";
 
-// Why a complement cannot go under a parent that is no longer pending. One in production takes its
-// complement through the production, which joins it there and holds the production while it does.
+// Why a complement cannot go under a parent that is no longer pending. One in production is weighed
+// more on the production screen, as one more leva of its item.
 const PARENT_NOT_PENDING: Record<Exclude<PreWeighingStatus, "PENDING">, string> = {
-  IN_PRODUCTION: "The parent is in production; record the complement through the production.",
+  IN_PRODUCTION: "The parent is in production; weigh more on the production screen.",
   PRODUCED: "The parent has already been produced.",
   DAMAGED: "The parent was damaged.",
 };
@@ -456,6 +457,7 @@ async function checkParent(parentId: string, productSku: string): Promise<Failur
   const status = preWeighingStatusOf({
     damaged: parent.damage !== null,
     itemStatus: parent.production?.status ?? null,
+    extraItemStatus: parent.productionWeighing?.productionItem.status ?? null,
   });
 
   if (status !== "PENDING") return fail(409, PARENT_NOT_PENDING[status]);

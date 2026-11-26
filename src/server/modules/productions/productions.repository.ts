@@ -1,4 +1,10 @@
-import { Prisma, ProductionItemStatus, ProductionStatus, StockMovementType } from "@prisma/client";
+import {
+  Prisma,
+  ProductionBatchSource,
+  ProductionItemStatus,
+  ProductionStatus,
+  StockMovementType,
+} from "@prisma/client";
 import { pageArgs } from "@/server/lib/pagination";
 import { prisma } from "@/server/lib/prisma";
 import {
@@ -32,6 +38,12 @@ const productionSelect = {
       producedQuantity: true,
       unitCost: true,
       product: { select: productSelect },
+      batches: {
+        select: { id: true, quantity: true, expiresAt: true, source: true, createdAt: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
+      // The weighings the item took beyond the one that guides it, with what each planned to make.
+      extraWeighings: { select: { preWeighing: { select: { quantity: true } } } },
       // A damage that names a pre-weighing took it from the item, which waits for a new one.
       damages: {
         select: {
@@ -140,19 +152,6 @@ export async function lockProductionInProgress(tx: Prisma.TransactionClient, id:
   return rows.length === 1;
 }
 
-// Lowers what an item is expected to yield, and sets each of its inputs to the quantity that
-// yield takes.
-export async function rescaleProductionItem(
-  tx: Prisma.TransactionClient,
-  item: { id: string; expectedQuantity: Prisma.Decimal; inputs: { id: string; quantity: Prisma.Decimal }[] },
-) {
-  await tx.productionItem.update({ where: { id: item.id }, data: { expectedQuantity: item.expectedQuantity } });
-
-  for (const { id, quantity } of item.inputs) {
-    await tx.productionItemInput.update({ where: { id }, data: { quantity } });
-  }
-}
-
 export const markProductionCanceled = (tx: Prisma.TransactionClient, id: string) =>
   leaveInProgress(tx, id, { status: ProductionStatus.CANCELED, canceledAt: new Date() });
 
@@ -181,13 +180,14 @@ export function markItemSubstituted(tx: Prisma.TransactionClient, itemId: string
 }
 
 // A pre-weighing guides a single item, so the items of a production that will not happen let go
-// of theirs: what was weighed is still on the bench, waiting for another production. Only the items
-// still pending do: a finished one made its lot and keeps its pre-weighing, which stays produced.
-export function releasePreWeighings(tx: Prisma.TransactionClient, productionId: string) {
-  return tx.productionItem.updateMany({
-    where: { productionId, status: ProductionItemStatus.PENDING },
-    data: { preWeighingId: null },
-  });
+// of theirs, and of the extra weighings they took: what was weighed is still on the bench, waiting
+// for another production. Only the items still pending do: a finished one made its lot and keeps its
+// pre-weighings, which stay produced.
+export async function releasePreWeighings(tx: Prisma.TransactionClient, productionId: string) {
+  const pending = { productionId, status: ProductionItemStatus.PENDING };
+
+  await tx.productionItemWeighing.deleteMany({ where: { productionItem: pending } });
+  await tx.productionItem.updateMany({ where: pending, data: { preWeighingId: null } });
 }
 
 // Takes an input from the stock, lot by lot, and answers what all of it cost and the takes, so the
@@ -351,34 +351,87 @@ type PreviewedLeftover = {
   unitCost: Prisma.Decimal;
 };
 
-// What was produced comes in as a lot of its own, costing what its inputs cost.
-export async function outputProductionItem(
+// What an item yielded comes in as a lot, at the cost given: one per expiry of its batches, what was
+// made apart from what already existed.
+export async function enterProducedLot(
   tx: Prisma.TransactionClient,
-  item: {
-    id: string;
+  lot: {
     productSku: string;
-    quantity: string;
+    quantity: Prisma.Decimal;
     unitCost: Prisma.Decimal;
     expiresAt: string | null;
-    hasLeftoversInCost: boolean;
     createdById: string;
   },
 ) {
-  const { id, productSku, quantity, unitCost, expiresAt, hasLeftoversInCost, createdById } = item;
-  const lot = await openLot(tx, { productSku, quantity, unitCost, expiresAt });
+  const { productSku, quantity, unitCost, expiresAt, createdById } = lot;
+  const opened = await openLot(tx, { productSku, quantity, unitCost, expiresAt });
 
   await tx.stockMovement.create({
-    data: { productSku, quantity, unitCost, createdById, lotId: lot.id, type: StockMovementType.PRODUCTION_OUTPUT },
+    data: { productSku, quantity, unitCost, createdById, lotId: opened.id, type: StockMovementType.PRODUCTION_OUTPUT },
   });
-  await increaseStock(tx, { productSku, quantity, unitCost: unitCost.toString() });
-  await tx.productionItem.update({
+  await increaseStock(tx, { productSku, quantity: quantity.toString(), unitCost: unitCost.toString() });
+}
+
+// An item concluded: what its batches added up to, what a unit of it cost, and whether the leftovers
+// discarded went into that cost.
+export function markItemConcluded(
+  tx: Prisma.TransactionClient,
+  item: { id: string; producedQuantity: Prisma.Decimal; unitCost: Prisma.Decimal; hasLeftoversInCost: boolean },
+) {
+  const { id, producedQuantity, unitCost, hasLeftoversInCost } = item;
+
+  return tx.productionItem.update({
     where: { id },
     data: {
-      producedQuantity: quantity,
+      producedQuantity,
       unitCost,
       status: ProductionItemStatus.FINISHED,
       finishedAt: new Date(),
       hasLeftoversInCost,
     },
   });
+}
+
+// The day an expiry is given as is stored at midnight UTC, as the lots of the stock are.
+export function insertItemBatch(
+  tx: Prisma.TransactionClient,
+  batch: {
+    itemId: string;
+    quantity: string;
+    expiresAt: string | null;
+    source: ProductionBatchSource;
+    createdById: string;
+  },
+) {
+  return tx.productionItemBatch.create({
+    data: {
+      productionItemId: batch.itemId,
+      quantity: batch.quantity,
+      expiresAt: batch.expiresAt === null ? null : new Date(batch.expiresAt),
+      source: batch.source,
+      createdById: batch.createdById,
+    },
+  });
+}
+
+export function deleteItemBatch(tx: Prisma.TransactionClient, id: string) {
+  return tx.productionItemBatch.delete({ where: { id } });
+}
+
+// A weighing beyond the one that guides the item: it is linked to the item, and what it weighed adds
+// to what the item takes of each product.
+export async function addItemWeighing(
+  tx: Prisma.TransactionClient,
+  itemId: string,
+  { preWeighingId, inputs }: { preWeighingId: string; inputs: PlannedProductionItem["inputs"] },
+) {
+  await tx.productionItemWeighing.create({ data: { productionItemId: itemId, preWeighingId } });
+
+  for (const { productSku, quantity } of inputs) {
+    await tx.productionItemInput.upsert({
+      where: { productionItemId_productSku: { productionItemId: itemId, productSku } },
+      create: { productionItemId: itemId, productSku, quantity },
+      update: { quantity: { increment: quantity } },
+    });
+  }
 }

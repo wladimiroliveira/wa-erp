@@ -2,17 +2,14 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPreWeighing, planPreWeighing } from "@/features/pre-weighings/actions";
-import { recordProductionWeighing } from "@/features/productions/actions";
 import { PreWeighingPage } from "@/features/pre-weighings/PreWeighingPage";
 import { createBodyOf } from "@/features/pre-weighings/plan-tree";
 import type { Product } from "@/lib/api";
 import { navigation } from "@/tests/navigation";
 import { renderWithProviders } from "@/tests/render";
-import { aPreWeighing, aPreWeighingPlan, aProduct, aProduction } from "@/tests/samples";
+import { aPreWeighing, aPreWeighingPlan, aProduct } from "@/tests/samples";
 
 vi.mock("@/features/pre-weighings/actions", () => ({ planPreWeighing: vi.fn(), createPreWeighing: vi.fn() }));
-
-vi.mock("@/features/productions/actions", () => ({ recordProductionWeighing: vi.fn() }));
 
 const BREAD = aProduct({
   sku: "018f0000-0000-7000-8000-000000000090",
@@ -80,7 +77,6 @@ const record = () => userEvent.click(screen.getByRole("button", { name: "Registr
 beforeEach(() => {
   vi.mocked(planPreWeighing).mockReset();
   vi.mocked(createPreWeighing).mockReset();
-  vi.mocked(recordProductionWeighing).mockReset();
 });
 
 describe("PreWeighingPage", () => {
@@ -893,73 +889,5 @@ describe("PreWeighingPage, intermediates made in the same session", () => {
     await waitFor(() =>
       expect(createPreWeighing).toHaveBeenCalledWith(createBodyOf(FILLING_PLAN, ["300", "200"], PARENT_ID)),
     );
-  });
-  describe("for a production", () => {
-    const PRODUCTION_ID = "018f0000-0000-7000-8000-0000000000b1";
-    const OTHER_ID = "018f0000-0000-7000-8000-0000000000a5";
-    const FILLING_PRODUCT = aProduct({ ...FILLING, kind: "MANUFACTURED" });
-    const FILLING_PLAN = fillingStage("0.5", "300", "200");
-
-    async function weighFilling() {
-      planning(() => ({ ok: true, data: FILLING_PLAN }));
-      await userEvent.click(screen.getByRole("button", { name: "Calcular" }));
-      await userEvent.type(await screen.findByLabelText("Pesado de Leite condensado"), "300");
-      await userEvent.type(screen.getByLabelText("Pesado de Chocolate"), "200");
-      await record();
-    }
-
-    const openFor = (link: { itemId: string } | { parentId: string; parentDescription: string }) =>
-      renderWithProviders(
-        <PreWeighingPage
-          products={[BOMBOM, FILLING_PRODUCT]}
-          complement={{ productionId: PRODUCTION_ID, productSku: FILLING.sku, quantity: "0.5", ...link }}
-        />,
-      );
-
-    it("records a new weighing for an item and goes back to the production", async () => {
-      vi.mocked(recordProductionWeighing).mockResolvedValue({ ok: true, data: aProduction() });
-      navigation.reset("/pre-weighings/new");
-      openFor({ itemId: OTHER_ID });
-
-      expect(screen.getByRole("heading", { name: "Nova pesagem para a produção" })).toBeInTheDocument();
-      expect(screen.getByLabelText("Produto")).toBeDisabled();
-      await weighFilling();
-
-      const tree = createBodyOf(FILLING_PLAN, ["300", "200"]);
-      await waitFor(() =>
-        expect(recordProductionWeighing).toHaveBeenCalledWith(PRODUCTION_ID, { ...tree, itemId: OTHER_ID }),
-      );
-      expect(createPreWeighing).not.toHaveBeenCalled();
-      await waitFor(() => expect(navigation.url).toBe(`/productions/${PRODUCTION_ID}`));
-    });
-
-    it("records the complement of a short item under its parent", async () => {
-      vi.mocked(recordProductionWeighing).mockResolvedValue({ ok: true, data: aProduction() });
-      navigation.reset("/pre-weighings/new");
-      openFor({ parentId: OTHER_ID, parentDescription: "Bombom" });
-
-      await weighFilling();
-
-      await waitFor(() =>
-        expect(recordProductionWeighing).toHaveBeenCalledWith(
-          PRODUCTION_ID,
-          createBodyOf(FILLING_PLAN, ["300", "200"], OTHER_ID),
-        ),
-      );
-      await waitFor(() => expect(navigation.url).toBe(`/productions/${PRODUCTION_ID}`));
-    });
-
-    it("tells the production changed when the server refuses with a conflict", async () => {
-      vi.mocked(recordProductionWeighing).mockResolvedValue({ ok: false, status: 409, message: "x" });
-      navigation.reset("/pre-weighings/new");
-      openFor({ itemId: OTHER_ID });
-
-      await weighFilling();
-
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "A produção mudou enquanto isso. Volte para a produção e tente de novo.",
-      );
-      expect(navigation.pathname).not.toBe(`/productions/${PRODUCTION_ID}`);
-    });
   });
 });

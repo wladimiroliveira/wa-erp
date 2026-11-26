@@ -3,13 +3,15 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { useSession } from "@/features/auth/use-session";
 import { CancelProductionDialog } from "@/features/productions/CancelProductionDialog";
 import { DamageItemDialog } from "@/features/productions/DamageItemDialog";
 import { SubstituteItemDialog } from "@/features/productions/SubstituteItemDialog";
+import { BatchesSection } from "@/features/productions/BatchesSection";
+import { ConcludeItemForm } from "@/features/productions/ConcludeItemForm";
 import { canDamage, canSubstitute } from "@/features/productions/item-state";
-import { FinishItemForm } from "@/features/productions/FinishItemForm";
+import { ItemWeighingPanel } from "@/features/productions/ItemWeighingPanel";
 import { ItemDetailsSheet } from "@/features/productions/ItemDetailsSheet";
 import { ProductionStatusBadge } from "@/features/productions/ProductionStatusBadge";
 import { timelineOf, type TimelineEvent, type WaitingItem } from "@/features/productions/timeline";
@@ -67,14 +69,6 @@ function Done({ events, expanded }: { events: TimelineEvent[]; expanded: boolean
   );
 }
 
-const newWeighingHref = (productionId: string, item: ProductionItem) =>
-  `/pre-weighings/new?${new URLSearchParams({
-    productionId,
-    itemId: item.id,
-    productSku: item.product.sku,
-    quantity: item.expectedQuantity,
-  })}`;
-
 interface StageCardProps {
   production: Production;
   item: ProductionItem;
@@ -119,19 +113,28 @@ function StageCard({ production, item, lossReasons, canRecord }: StageCardProps)
       </div>
 
       {item.awaitsWeighing ? (
-        <div className="flex flex-col items-start gap-3">
-          <p className="text-sm font-medium text-destructive">
-            {canRecord ? "Avariado — faça uma nova pesagem" : "Avariado — aguardando nova pesagem"}
-          </p>
+        <div className="flex flex-col gap-3">
+          {/* A damage that took its pre-weighing is why it waits; an item added for a shortage just has none yet. */}
+          {item.damages.some((damage) => damage.preWeighingId !== null) ? (
+            <p className="text-sm font-medium text-destructive">
+              {canRecord ? "Avariado — faça uma nova pesagem" : "Avariado — aguardando nova pesagem"}
+            </p>
+          ) : (
+            <p className="text-sm font-medium">Aguardando pesagem</p>
+          )}
+          {/* Weighed here, open: it is what the item waits for. */}
           {canRecord ? (
-            <Link href={newWeighingHref(production.id, item)} className={buttonVariants()}>
-              Nova pesagem
-            </Link>
+            <ItemWeighingPanel key={`${production.id}-${item.id}`} production={production} item={item} />
           ) : null}
         </div>
-      ) : canRecord ? (
-        <FinishItemForm key={`${production.id}-${item.id}`} production={production} item={item} />
-      ) : null}
+      ) : (
+        <>
+          <BatchesSection production={production} item={item} canRecord={canRecord} />
+          {canRecord ? (
+            <ConcludeItemForm key={`${production.id}-${item.id}`} production={production} item={item} />
+          ) : null}
+        </>
+      )}
 
       {showDamage || showSubstitute ? (
         <div className="flex flex-wrap gap-2 border-t pt-3">

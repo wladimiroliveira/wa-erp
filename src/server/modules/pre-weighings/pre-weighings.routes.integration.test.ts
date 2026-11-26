@@ -1043,7 +1043,7 @@ describe("POST /v1/pre-weighings as a complement", () => {
     const response = await postPreWeighing(headers, complementOf(root.id, tree));
 
     expect(response.statusCode).toBe(409);
-    expect(response.json().message).toBe("The parent is in production; record the complement through the production.");
+    expect(response.json().message).toBe("The parent is in production; weigh more on the production screen.");
     expect(await testPrisma.preWeighing.count()).toBe(before);
   });
 
@@ -1212,6 +1212,36 @@ describe("GET /v1/pre-weighings", () => {
     expect(idsOf(await listPreWeighings(headers, { status: "IN_PRODUCTION" }))).toEqual([ids[1]]);
     expect(idsOf(await listPreWeighings(headers, { status: "PRODUCED" }))).toEqual([ids[2]]);
     expect(idsOf(await listPreWeighings(headers, { status: "DAMAGED" }))).toEqual([damagedId]);
+  });
+
+  // Links a pre-weighing to an item as one of its extra weighings.
+  const linkExtra = async (
+    userId: string,
+    productSku: string,
+    preWeighingId: string,
+    status: "PENDING" | "FINISHED",
+  ) => {
+    const production = await guideWith(userId, productSku, (await recordFree(userId, productSku)).id, status);
+    const item = await testPrisma.productionItem.findFirstOrThrow({ where: { productionId: production.id } });
+
+    await testPrisma.productionItemWeighing.create({ data: { productionItemId: item.id, preWeighingId } });
+  };
+
+  const recordFree = (userId: string, productSku: string) =>
+    testPrisma.preWeighing.create({ data: { productSku, quantity: "50", createdById: userId } });
+
+  it("reads a pre-weighing taken as an extra weighing like one that guides an item", async () => {
+    const { headers, userId } = await canRead();
+    const { dough, ids } = await recordThree(userId);
+    await linkExtra(userId, dough.sku, ids[0]!, "PENDING");
+    await linkExtra(userId, dough.sku, ids[1]!, "FINISHED");
+
+    expect((await getPreWeighing(headers, ids[0]!)).json()).toMatchObject({ status: "IN_PRODUCTION" });
+    expect((await getPreWeighing(headers, ids[1]!)).json()).toMatchObject({ status: "PRODUCED" });
+    expect((await getPreWeighing(headers, ids[2]!)).json()).toMatchObject({ status: "PENDING" });
+    expect(idsOf(await listPreWeighings(headers, { status: "IN_PRODUCTION" }))).toContain(ids[0]);
+    expect(idsOf(await listPreWeighings(headers, { status: "PRODUCED" }))).toContain(ids[1]);
+    expect(idsOf(await listPreWeighings(headers, { status: "PENDING" }))).not.toContain(ids[0]);
   });
 
   it("lists as stale only a pending pre-weighing older than 48 hours", async () => {

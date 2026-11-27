@@ -160,6 +160,7 @@ describe("recordEntry in the product's unit", () => {
       unitCost: "11.842105",
       expiresAt: null,
       createdById: USER,
+      afterLot: expect.any(Function),
     });
     expect(result.ok && result.data.lot.packaging).toBeNull();
   });

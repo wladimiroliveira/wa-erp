@@ -6,7 +6,7 @@ import { saveMarkup } from "@/features/pricing/actions";
 import { PricingPage } from "@/features/pricing/PricingPage";
 import type { Permission, PricingRow } from "@/lib/api";
 import { renderWithProviders } from "@/tests/render";
-import { aCurrentUser, aPricingRow } from "@/tests/samples";
+import { aCurrentUser, aPriceEntry, aPricingRow } from "@/tests/samples";
 
 vi.mock("@/features/pricing/actions", () => ({ saveMarkup: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -16,9 +16,9 @@ const saveMock = vi.mocked(saveMarkup);
 const BREAD = aPricingRow();
 const CAKE = aPricingRow({
   product: { sku: "018f0000-0000-7000-8000-000000000091", description: "Bolo de fubá", unit: "UNIT" },
-  costPerUnit: "2.000000",
+  onHandCost: "2.000000",
   markupPercent: "10.00",
-  pricePerUnit: "2.20",
+  currentPrice: aPriceEntry({ price: "2.20", averageCost: "2.000000", markupPercent: "10.00" }),
 });
 
 function renderPage(rows: PricingRow[] = [BREAD], permissions: Permission[] = ["PRICING_READ", "PRICING_UPDATE"]) {
@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe("PricingPage", () => {
-  it("shows cost, markup and price formatted", () => {
+  it("shows the on-hand cost, the markup and the current price with its date", () => {
     renderPage([BREAD], ["PRICING_READ"]);
 
     const row = within(rowOf("Pão francês"));
@@ -45,21 +45,23 @@ describe("PricingPage", () => {
     expect(row.getByText("R$ 1,50")).toBeInTheDocument();
     expect(row.getByText("35,00 %")).toBeInTheDocument();
     expect(row.getByText("R$ 2,03")).toBeInTheDocument();
+    expect(row.getByText("20/11/2026")).toBeInTheDocument();
   });
 
-  it("shows the badge and — for no-markup and incomplete-cost", () => {
+  it("shows the badges for no-markup and no-price", () => {
     renderPage([
-      aPricingRow({ status: "no-markup", markupPercent: null, pricePerUnit: null }),
+      aPricingRow({ status: "no-markup", markupPercent: null, currentPrice: null, history: [] }),
       aPricingRow({
         product: CAKE.product,
-        status: "incomplete-cost",
-        costPerUnit: null,
-        pricePerUnit: null,
+        status: "no-price",
+        onHandCost: null,
+        currentPrice: null,
+        history: [],
       }),
     ]);
 
     expect(within(rowOf("Pão francês")).getByText("Sem markup")).toBeInTheDocument();
-    expect(within(rowOf("Bolo de fubá")).getByText("Custo incompleto")).toBeInTheDocument();
+    expect(within(rowOf("Bolo de fubá")).getByText("Sem preço")).toBeInTheDocument();
     expect(within(rowOf("Bolo de fubá")).getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -69,7 +71,7 @@ describe("PricingPage", () => {
     expect(screen.queryByRole("textbox", { name: "Markup de Pão francês" })).not.toBeInTheDocument();
   });
 
-  it("recalculates the price while the markup is typed", async () => {
+  it("previews the price while the markup is typed, saying it applies from the next lot", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -77,12 +79,13 @@ describe("PricingPage", () => {
     await user.type(markupOf("Pão francês"), "50");
 
     expect(within(rowOf("Pão francês")).getByText("R$ 2,25")).toBeInTheDocument();
+    expect(within(rowOf("Pão francês")).getByText("vale a partir do próximo lote")).toBeInTheDocument();
     expect(saveMock).not.toHaveBeenCalled();
   });
 
   it("reads a comma markup", async () => {
     const user = userEvent.setup();
-    renderPage([aPricingRow({ costPerUnit: "1.000000" })]);
+    renderPage([aPricingRow({ onHandCost: "1.000000" })]);
 
     await user.clear(markupOf("Pão francês"));
     await user.type(markupOf("Pão francês"), "12,5");
@@ -167,29 +170,31 @@ describe("PricingPage", () => {
     expect(within(rowOf("Bolo de fubá")).getByText("R$ 2,20")).toBeInTheDocument();
   });
 
-  it("opens the sheet with each ingredient's quantity, cost and subtotal, flagging those without cost", async () => {
+  it("opens the sheet with the price history", async () => {
     const user = userEvent.setup();
-    const [flour, butter] = BREAD.ingredients;
-    renderPage([
-      aPricingRow({
-        status: "incomplete-cost",
-        costPerUnit: null,
-        pricePerUnit: null,
-        ingredients: [flour!, { ...butter!, averageCost: null, subtotal: null }],
-      }),
-    ]);
+    const older = aPriceEntry({
+      price: "1.80",
+      averageCost: "1.333333",
+      markupPercent: "30.00",
+      createdAt: "2026-11-10T12:00:00.000Z",
+    });
+    renderPage([aPricingRow({ history: [aPriceEntry(), older] })]);
 
     await user.click(screen.getByRole("button", { name: "Pão francês" }));
 
     const sheet = within(await screen.findByRole("dialog"));
-    expect(sheet.getByText("Farinha de trigo")).toBeInTheDocument();
-    expect(sheet.getByText("R$ 11,00")).toBeInTheDocument();
-    expect(within(sheet.getByText("Manteiga").closest("tr")!).getByText("Sem custo médio")).toBeInTheDocument();
+    for (const header of ["Data", "Custo médio", "Markup", "Preço"]) {
+      expect(sheet.getByRole("columnheader", { name: header })).toBeInTheDocument();
+    }
+    const oldRow = within(sheet.getByText("10/11/2026").closest("tr")!);
+    expect(oldRow.getByText("R$ 1,33")).toBeInTheDocument();
+    expect(oldRow.getByText("30,00 %")).toBeInTheDocument();
+    expect(oldRow.getByText("R$ 1,80")).toBeInTheDocument();
   });
 
   it("shows an empty state without rows", () => {
     renderPage([]);
 
-    expect(screen.getByText("Nenhum produto fabricado com receita.")).toBeInTheDocument();
+    expect(screen.getByText("Nenhum produto fabricado.")).toBeInTheDocument();
   });
 });

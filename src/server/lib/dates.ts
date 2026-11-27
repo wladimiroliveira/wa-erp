@@ -17,3 +17,8 @@ export function addDays(day: string, days: number): string {
 
   return toDateString(date);
 }
+
+// The span of local time that covers the days from one date to another, both included.
+export function localDayRange(from: string, to: string): { gte: Date; lt: Date } {
+  return { gte: new Date(`${from}T00:00:00`), lt: new Date(`${addDays(to, 1)}T00:00:00`) };
+}

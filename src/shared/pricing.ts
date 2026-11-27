@@ -1,41 +1,12 @@
 // Cost and price of a manufactured product, shared by the server and the live preview in the
 // browser. Decimals arrive and leave as strings and are worked as scaled BigInts.
-import { divideHalfUp, fromScaled, scale, toScaled } from "./fixed-point";
+import { fromScaled, scale, toScaled } from "./fixed-point";
 
 const COST_PLACES = 6;
 const MARKUP_PLACES = 2;
 const PRICE_PLACES = 2;
 
-export type IngredientCost = { productSku: string; quantity: string; averageCost: string | null };
-
-export type CostResult = { status: "complete"; costPerUnit: string } | { status: "incomplete"; missing: string[] };
-
 const divideUp = (dividend: bigint, divisor: bigint) => (dividend + divisor - 1n) / divisor;
-
-/** Exact quantity × cost, at twice the cost places. */
-const product = (quantity: string, averageCost: string) =>
-  toScaled(quantity, COST_PLACES) * toScaled(averageCost, COST_PLACES);
-
-export function ingredientSubtotal(quantity: string, averageCost: string): string {
-  return fromScaled(divideHalfUp(product(quantity, averageCost), scale(COST_PLACES)), COST_PLACES);
-}
-
-/** What one unit of the yield costs. A single ingredient without cost leaves the whole cost unknown. */
-export function costPerUnit(input: { yieldQuantity: string; ingredients: IngredientCost[] }): CostResult {
-  const missing = input.ingredients.filter((ingredient) => ingredient.averageCost === null);
-
-  if (missing.length > 0) return { status: "incomplete", missing: missing.map((ingredient) => ingredient.productSku) };
-
-  const total = input.ingredients.reduce(
-    (sum, ingredient) => sum + product(ingredient.quantity, ingredient.averageCost as string),
-    0n,
-  );
-
-  return {
-    status: "complete",
-    costPerUnit: fromScaled(divideHalfUp(total, toScaled(input.yieldQuantity, COST_PLACES)), COST_PLACES),
-  };
-}
 
 /** The cost plus a markup in percent, rounded up to the cent: a price never sells below its cost. */
 export function priceFor(costPerUnit: string, markupPercent: string): string {

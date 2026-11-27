@@ -1,5 +1,12 @@
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { findPricingSources, upsertMarkup } from "@/server/modules/pricing/pricing.repository";
+import {
+  findCurrentPrice,
+  findPricingInputs,
+  findPricingSources,
+  insertPrice,
+  upsertMarkup,
+} from "@/server/modules/pricing/pricing.repository";
+import { setMarkup } from "@/server/modules/pricing/pricing.service";
 import { resetDatabase, testPrisma } from "@/server/testing/database";
 
 afterEach(async () => {
@@ -17,31 +24,29 @@ async function aManufactured(description: string, isActive = true) {
 }
 
 describe("findPricingSources", () => {
-  it("lists only active manufactured products with a recipe, with ingredient costs", async () => {
-    const flour = await testPrisma.product.create({
-      data: { description: "Farinha", kind: "GOODS", unit: "KILOGRAM" },
-    });
-    await testPrisma.productStock.create({
-      data: { productSku: flour.sku, quantity: "10", averageCost: "5.5", lastEntryCost: "6" },
-    });
+  it("lists active manufactured products with markup and prices, newest first, at most 20", async () => {
+    await testPrisma.product.create({ data: { description: "Farinha", kind: "GOODS", unit: "KILOGRAM" } });
     const bread = await aManufactured("Pão francês");
-    const retired = await aManufactured("Pão antigo", false);
-    await aManufactured("Bolo sem receita");
-    for (const product of [bread, retired]) {
-      await testPrisma.recipe.create({
-        data: {
-          productSku: product.sku,
-          yieldQuantity: "10",
-          ingredients: { create: [{ productSku: flour.sku, quantity: "2" }] },
-        },
+    await aManufactured("Pão antigo", false);
+    const cake = await aManufactured("Bolo sem receita");
+    const ana = await aUser("ana");
+    await upsertMarkup({ productSku: bread.sku, markupPercent: "35", updatedById: ana.id });
+    for (let index = 0; index < 22; index += 1) {
+      await insertPrice(testPrisma, {
+        productSku: bread.sku,
+        averageCost: "1",
+        markupPercent: "35",
+        price: `${index + 2}.00`,
       });
     }
 
     const sources = await findPricingSources();
 
-    expect(sources).toHaveLength(1);
-    expect(sources[0]?.product).toMatchObject({ sku: bread.sku, markup: null });
-    expect(sources[0]?.ingredients[0]?.product.stock?.averageCost?.toString()).toBe("5.5");
+    expect(sources.map(({ sku }) => sku)).toEqual([cake.sku, bread.sku]);
+    expect(sources[0]).toMatchObject({ markup: null, prices: [] });
+    expect(sources[1]?.markup?.markupPercent.toString()).toBe("35");
+    expect(sources[1]?.prices).toHaveLength(20);
+    expect(sources[1]?.prices[0]?.price.toString()).toBe("23");
   });
 });
 
@@ -58,5 +63,71 @@ describe("upsertMarkup", () => {
 
     expect(stored.markupPercent.toString()).toBe("40.5");
     expect(stored.updatedById).toBe(bia.id);
+  });
+});
+
+describe("findPricingInputs", () => {
+  it("answers the kind and markup, null for an unknown product", async () => {
+    const bread = await aManufactured("Pão francês");
+    const ana = await aUser("ana");
+
+    expect(await findPricingInputs(testPrisma, bread.sku)).toEqual({ kind: "MANUFACTURED", markupPercent: null });
+
+    await upsertMarkup({ productSku: bread.sku, markupPercent: "35", updatedById: ana.id });
+
+    expect((await findPricingInputs(testPrisma, bread.sku))?.markupPercent?.toString()).toBe("35");
+    expect(await findPricingInputs(testPrisma, "018f0000-0000-7000-8000-0000000000ff")).toBeNull();
+  });
+});
+
+describe("insertPrice and findCurrentPrice", () => {
+  it("finds the latest price, null while there is none", async () => {
+    const bread = await aManufactured("Pão francês");
+
+    expect(await findCurrentPrice(testPrisma, bread.sku)).toBeNull();
+
+    await insertPrice(testPrisma, { productSku: bread.sku, averageCost: "1.5", markupPercent: "50.00", price: "2.25" });
+    await insertPrice(testPrisma, { productSku: bread.sku, averageCost: "2", markupPercent: "50.00", price: "3.00" });
+
+    const current = await findCurrentPrice(testPrisma, bread.sku);
+
+    expect(current?.price.toString()).toBe("3");
+    expect(current?.averageCost.toString()).toBe("2");
+  });
+});
+
+describe("setMarkup pricing", () => {
+  async function aBreadOnHand() {
+    const bread = await aManufactured("Pão francês");
+    await testPrisma.stockLot.create({
+      data: { productSku: bread.sku, quantity: "10", initialQuantity: "10", unitCost: "4" },
+    });
+
+    return bread;
+  }
+
+  it("writes the first price when the first markup is set", async () => {
+    const bread = await aBreadOnHand();
+    const ana = await aUser("ana");
+
+    await setMarkup(ana.id, { productSku: bread.sku, markupPercent: "50" });
+
+    const prices = await testPrisma.productPrice.findMany({ where: { productSku: bread.sku } });
+
+    expect(prices).toHaveLength(1);
+    expect(prices[0]?.price.toString()).toBe("6");
+  });
+
+  it("leaves the prices as they are when the markup changes after one exists", async () => {
+    const bread = await aBreadOnHand();
+    const ana = await aUser("ana");
+
+    await setMarkup(ana.id, { productSku: bread.sku, markupPercent: "50" });
+    await setMarkup(ana.id, { productSku: bread.sku, markupPercent: "80" });
+
+    const prices = await testPrisma.productPrice.findMany({ where: { productSku: bread.sku } });
+
+    expect(prices).toHaveLength(1);
+    expect(prices[0]?.markupPercent.toString()).toBe("50");
   });
 });

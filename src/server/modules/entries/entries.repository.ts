@@ -49,6 +49,7 @@ export function insertEntry(input: {
   packagingId?: string;
   packageCount?: number;
   packagePrice?: string;
+  afterLot?: (tx: Prisma.TransactionClient) => Promise<void>;
 }) {
   const { productSku, quantity, unitCost, createdById } = input;
 
@@ -87,6 +88,8 @@ export function insertEntry(input: {
       packageCount: input.packageCount,
       packagePrice: input.packagePrice,
     });
+
+    await input.afterLot?.(tx);
 
     const movement = await tx.stockMovement.create({
       data: { productSku, quantity, unitCost, createdById, lotId: lot.id, type: StockMovementType.ENTRY },

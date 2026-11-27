@@ -104,6 +104,18 @@ describe("StockMovementsPage", () => {
     expect(within(movement!).getByText("−95 kg")).toBeInTheDocument();
   });
 
+  it.each([
+    ["SALE", "Venda"],
+    ["DONATION", "Doação"],
+  ] as const)("names a %s as something that left the stock", async (type, origin) => {
+    renderPage(onePage([aStockMovement({ type, quantity: "2" })]));
+
+    const [, movement] = await screen.findAllByRole("row");
+
+    expect(within(movement!).getByText("Saída")).toBeInTheDocument();
+    expect(within(movement!).getByText(origin)).toBeInTheDocument();
+  });
+
   it("says nothing has moved instead of showing a bare table", async () => {
     renderPage(onePage([]));
 

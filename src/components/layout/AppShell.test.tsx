@@ -140,6 +140,12 @@ describe("AppShell", () => {
     expect(await screen.findByRole("link", { name: "Movimentações" })).toHaveAttribute("href", "/stock-movements");
   });
 
+  it("offers the outflows to whoever may read the sales", async () => {
+    renderWithProviders(<AppShell>{null}</AppShell>, { user: aCurrentUser({ permissions: ["SALES_READ"] }) });
+
+    expect(await screen.findByRole("link", { name: "Saídas" })).toHaveAttribute("href", "/stock-outflows");
+  });
+
   it("offers the stock analysis to whoever may read the reports", async () => {
     renderWithProviders(<AppShell>{null}</AppShell>, { user: aCurrentUser({ permissions: ["REPORTS_READ"] }) });
 

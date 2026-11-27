@@ -13,6 +13,14 @@ import type {
   updateLossReasonBodySchema,
 } from "@/server/modules/losses/losses.schemas";
 import type {
+  createOutflowBodySchema,
+  listOutflowsQuerySchema,
+  outflowPageSchema,
+  outflowQuoteSchema,
+  outflowSchema,
+  outflowSummarySchema,
+} from "@/server/modules/stock-outflows/stock-outflows.schemas";
+import type {
   createPreWeighingBodySchema,
   preWeighingPageSchema,
   preWeighingPlanSchema,
@@ -40,7 +48,11 @@ import type {
   productSchema,
   updateProductBodySchema,
 } from "@/server/modules/products/products.schemas";
-import type { pricingRowSchema, saveMarkupBodySchema } from "@/server/modules/pricing/pricing.schemas";
+import type {
+  priceEntrySchema,
+  pricingRowSchema,
+  saveMarkupBodySchema,
+} from "@/server/modules/pricing/pricing.schemas";
 import type { recipeSchema, recipeSummarySchema, saveRecipeBodySchema } from "@/server/modules/recipes/recipes.schemas";
 import type { createRoleBodySchema, roleSchema, updateRoleBodySchema } from "@/server/modules/roles/roles.schemas";
 import type {
@@ -100,6 +112,12 @@ export type CreateLossReasonBody = z.input<typeof createLossReasonBodySchema>;
 export type UpdateLossReasonBody = z.input<typeof updateLossReasonBodySchema>;
 export type CreateLossBody = z.input<typeof createLossBodySchema>;
 export type Loss = z.output<typeof lossSchema>;
+export type CreateOutflowBody = z.input<typeof createOutflowBodySchema>;
+export type Outflow = z.output<typeof outflowSchema>;
+export type ListOutflowsQuery = z.input<typeof listOutflowsQuerySchema>;
+export type OutflowPage = z.output<typeof outflowPageSchema>;
+export type OutflowQuote = z.output<typeof outflowQuoteSchema>;
+export type OutflowSummary = z.output<typeof outflowSummarySchema>;
 
 export type StockPosition = z.output<typeof stockPositionSchema>;
 export type StockItem = StockPosition["items"][number];
@@ -139,5 +157,6 @@ export type Recipe = z.output<typeof recipeSchema>;
 export type SaveRecipeBody = z.input<typeof saveRecipeBodySchema>;
 export type RecipeSummary = z.output<typeof recipeSummarySchema>;
 
+export type PriceEntry = z.output<typeof priceEntrySchema>;
 export type PricingRow = z.output<typeof pricingRowSchema>;
 export type SaveMarkupBody = z.input<typeof saveMarkupBodySchema>;

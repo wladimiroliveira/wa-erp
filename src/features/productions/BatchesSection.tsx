@@ -147,6 +147,11 @@ function BatchList({ production, item, canRecord }: BatchesSectionProps) {
 }
 
 /** One form for a leva made now or for product that already existed: the same fields, sent as either. */
+const KINDS: { value: Source; label: string }[] = [
+  { value: "PRODUCED", label: "Registrar leva" },
+  { value: "EXISTING", label: "Lançar do que já existe" },
+];
+
 function BatchForm({ production, item, onWeigh }: Omit<BatchesSectionProps, "canRecord"> & { onWeigh: () => void }) {
   const description = item.product.description;
   const [source, setSource] = useState<Source>("PRODUCED");
@@ -181,9 +186,47 @@ function BatchForm({ production, item, onWeigh }: Omit<BatchesSectionProps, "can
     <form
       onSubmit={form.handleSubmit(submit)}
       aria-label={existing ? `Lançar do que já existe de ${description}` : `Registrar leva de ${description}`}
-      className="flex flex-col gap-3"
+      data-kind={existing ? "existing" : "produced"}
+      // What already existed enters stock without taking ingredients: the form says so at a glance, so a
+      // leva made now is never launched as existing by a mode left on.
+      className={
+        existing
+          ? "flex flex-col gap-3 rounded-md border border-dashed border-amber-500 bg-amber-50 p-3 dark:bg-amber-950/30"
+          : "flex flex-col gap-3 rounded-md border bg-background/60 p-3"
+      }
       noValidate
     >
+      <div
+        role="radiogroup"
+        aria-label="Tipo de lançamento"
+        className="flex self-start rounded-md border bg-background p-0.5"
+      >
+        {KINDS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={source === value}
+            onClick={() => setSource(value)}
+            className={
+              source === value
+                ? value === "EXISTING"
+                  ? "rounded px-3 py-1 text-sm font-medium bg-amber-500 text-white"
+                  : "rounded px-3 py-1 text-sm font-medium bg-primary text-primary-foreground"
+                : "rounded px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {existing ? (
+        <p className="text-sm text-amber-800 dark:text-amber-300">
+          Produto que já estava pronto fora do estoque: entra sem gastar ingredientes.
+        </p>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
           <Label htmlFor={quantityId}>Quantidade</Label>
@@ -216,15 +259,6 @@ function BatchForm({ production, item, onWeigh }: Omit<BatchesSectionProps, "can
         <Button type="submit" disabled={pending}>
           {existing ? "Lançar" : "Registrar leva"}
         </Button>
-        {existing ? (
-          <Button type="button" variant="outline" onClick={() => setSource("PRODUCED")}>
-            Voltar
-          </Button>
-        ) : (
-          <Button type="button" variant="outline" onClick={() => setSource("EXISTING")}>
-            Lançar do que já existe
-          </Button>
-        )}
         <Button type="button" variant="outline" onClick={onWeigh}>
           Pesar mais uma leva
         </Button>

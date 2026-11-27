@@ -108,7 +108,7 @@ describe("BatchesSection, levas", () => {
     expect(screen.getByText("20 un")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Remover leva/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Registrar leva" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Lançar do que já existe" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Lançar do que já existe" })).not.toBeInTheDocument();
   });
 });
 
@@ -177,11 +177,40 @@ describe("BatchesSection, registering a leva", () => {
     expect(recordBatch).not.toHaveBeenCalled();
   });
 
+  it("offers the two kinds of launch as a choice, registering a leva by default", () => {
+    open();
+
+    const kind = within(screen.getByRole("radiogroup", { name: "Tipo de lançamento" }));
+    expect(kind.getByRole("radio", { name: "Registrar leva" })).toHaveAttribute("aria-checked", "true");
+    expect(kind.getByRole("radio", { name: "Lançar do que já existe" })).toHaveAttribute("aria-checked", "false");
+    expect(
+      screen.queryByText("Produto que já estava pronto fora do estoque: entra sem gastar ingredientes."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks the form apart while launching what already existed, and goes back to registering a leva", async () => {
+    open();
+
+    await userEvent.click(screen.getByRole("radio", { name: "Lançar do que já existe" }));
+
+    const form = screen.getByRole("form", { name: "Lançar do que já existe de Bombom" });
+    expect(form).toHaveAttribute("data-kind", "existing");
+    expect(
+      within(form).getByText("Produto que já estava pronto fora do estoque: entra sem gastar ingredientes."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Lançar do que já existe" })).toHaveAttribute("aria-checked", "true");
+
+    await userEvent.click(screen.getByRole("radio", { name: "Registrar leva" }));
+
+    expect(screen.getByRole("form", { name: "Registrar leva de Bombom" })).toHaveAttribute("data-kind", "produced");
+    expect(screen.getByRole("button", { name: "Registrar leva" })).toBeInTheDocument();
+  });
+
   it("launches what already existed as a leva of existing stock", async () => {
     open();
 
     expect(screen.queryByRole("button", { name: "Lançar" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Lançar do que já existe" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Lançar do que já existe" }));
     await userEvent.type(quantity(), "5");
     await userEvent.click(screen.getByRole("button", { name: "Lançar" }));
 

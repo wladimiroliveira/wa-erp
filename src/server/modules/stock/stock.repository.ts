@@ -201,18 +201,7 @@ export async function takeFromLots(
   const lots = await usableLots(client, { productSku, today, lock: true });
   const { takes, shortfall } = allocate(lots, quantity);
 
-  if (takes.length > 0) {
-    // One statement for every lot reached, however many they are.
-    await client.$executeRaw`
-      UPDATE stock_lots AS lot
-      SET quantity = lot.quantity - take.quantity, updated_at = now()
-      FROM (VALUES ${Prisma.join(takes.map(({ lot, quantity: taken }) => Prisma.sql`(${lot.id}::uuid, ${taken}::numeric)`))})
-        AS take (id, quantity)
-      WHERE lot.id = take.id
-    `;
-  }
-
-  await decreaseStock(client, { productSku, quantity: quantity.toString() });
+  await applyTakes(client, productSku, takes, quantity);
 
   const taken: Take[] = takes.map(({ lot, quantity: amount }) => ({
     lotId: lot.id,
@@ -233,6 +222,92 @@ export async function takeFromLots(
   }
 
   return taken;
+}
+
+type Allocated = { lot: UsableLot; quantity: Prisma.Decimal }[];
+
+// The write both takes share: the lots reached lose what was taken from them, and the balance
+// loses the whole quantity, owed part included.
+async function applyTakes(
+  client: Prisma.TransactionClient,
+  productSku: string,
+  takes: Allocated,
+  quantity: Prisma.Decimal,
+) {
+  if (takes.length > 0) {
+    // One statement for every lot reached, however many they are.
+    await client.$executeRaw`
+      UPDATE stock_lots AS lot
+      SET quantity = lot.quantity - take.quantity, updated_at = now()
+      FROM (VALUES ${Prisma.join(takes.map(({ lot, quantity: taken }) => Prisma.sql`(${lot.id}::uuid, ${taken}::numeric)`))})
+        AS take (id, quantity)
+      WHERE lot.id = take.id
+    `;
+  }
+
+  await decreaseStock(client, { productSku, quantity: quantity.toString() });
+}
+
+// The lots that are on hand: with something left and not expired. It holds nothing, so it serves a
+// screen as well as a transaction.
+async function onHandLots(client: Prisma.TransactionClient | typeof prisma, productSku: string, today: string) {
+  const lots = await client.stockLot.findMany({
+    where: { productSku, quantity: { gt: 0 } },
+    select: { quantity: true, unitCost: true, expiresAt: true },
+  });
+
+  return lots.filter((lot) => expiryOf(lot.expiresAt, today) !== LotStatus.EXPIRED);
+}
+
+// How much of a product is on hand to be sold or given away.
+export async function onHandQuantity(
+  client: Prisma.TransactionClient | typeof prisma,
+  { productSku, today }: { productSku: string; today: string },
+) {
+  const lots = await onHandLots(client, productSku, today);
+
+  return lots.reduce((sum, lot) => sum.add(lot.quantity), ZERO);
+}
+
+// What one unit of the lots on hand is worth: each lot's cost weighted by what is left of it.
+// Expired lots are not on hand, and a lot of zero cost is a cost not known: it is left out, and
+// null is answered when nothing else is on hand. What can be taken is still onHandQuantity's.
+export async function onHandUnitCost(
+  client: Prisma.TransactionClient | typeof prisma,
+  { productSku, today }: { productSku: string; today: string },
+) {
+  const onHand = (await onHandLots(client, productSku, today)).filter((lot) => lot.unitCost.gt(0));
+  const quantity = onHand.reduce((sum, lot) => sum.add(lot.quantity), ZERO);
+
+  if (quantity.lte(0)) return null;
+
+  const cost = onHand.reduce((sum, lot) => sum.add(lot.quantity.mul(lot.unitCost)), ZERO);
+
+  return cost.div(quantity).toDecimalPlaces(6, Prisma.Decimal.ROUND_HALF_UP);
+}
+
+// Takes a quantity out of the lots only if they cover all of it; otherwise nothing is touched.
+// Unlike takeFromLots, nothing is left owed.
+export async function takeCoveredFromLots(
+  client: Prisma.TransactionClient,
+  input: { productSku: string; quantity: Prisma.Decimal; today: string },
+): Promise<
+  { failure: "insufficient" } | { takes: { lotId: string; quantity: Prisma.Decimal; unitCost: Prisma.Decimal }[] }
+> {
+  const { productSku, quantity, today } = input;
+
+  await lockStockBalance(client, productSku);
+
+  const lots = await usableLots(client, { productSku, today, lock: true });
+  const { takes, shortfall } = allocate(lots, quantity);
+
+  if (shortfall.gt(0)) return { failure: "insufficient" };
+
+  await applyTakes(client, productSku, takes, quantity);
+
+  return {
+    takes: takes.map(({ lot, quantity: amount }) => ({ lotId: lot.id, quantity: amount, unitCost: lot.unitCost })),
+  };
 }
 
 // Takes a quantity out of one given lot, whatever its date: this is how what is expired or damaged

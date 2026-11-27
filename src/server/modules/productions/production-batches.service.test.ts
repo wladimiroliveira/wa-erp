@@ -17,6 +17,8 @@ const repository = vi.hoisted(() => ({
 vi.mock("./productions.repository", () => repository);
 // No intermediate in these productions, and no average cost for what already existed.
 vi.mock("@/server/modules/stock/stock.repository", () => ({ holdStockBalances: vi.fn(async () => []) }));
+// Pricing is the pricing module's own test; here the item is only concluded.
+vi.mock("@/server/modules/pricing/pricing.service", () => ({ repriceProduct: vi.fn() }));
 const preWeighingService = vi.hoisted(() => ({ preparePreWeighing: vi.fn() }));
 
 vi.mock("@/server/modules/pre-weighings/pre-weighings.service", () => preWeighingService);

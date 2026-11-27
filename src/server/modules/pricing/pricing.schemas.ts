@@ -11,23 +11,23 @@ export const markupPercentSchema = z
 
 export const saveMarkupBodySchema = z.object({ productSku: z.uuid(), markupPercent: markupPercentSchema });
 
-export const pricingStatusSchema = z.enum(["priced", "no-markup", "incomplete-cost"]);
+export const pricingStatusSchema = z.enum(["priced", "no-markup", "no-price"]);
+
+export const priceEntrySchema = z.object({
+  price: z.string(),
+  averageCost: z.string(),
+  markupPercent: z.string(),
+  createdAt: z.string(),
+});
 
 export const pricingRowSchema = z.object({
   product: productSummarySchema,
-  yieldQuantity: z.string(),
   status: pricingStatusSchema,
-  costPerUnit: z.string().nullable(),
   markupPercent: z.string().nullable(),
-  pricePerUnit: z.string().nullable(),
-  ingredients: z.array(
-    z.object({
-      product: productSummarySchema,
-      quantity: z.string(),
-      averageCost: z.string().nullable(),
-      subtotal: z.string().nullable(),
-    }),
-  ),
+  onHandCost: z.string().nullable(),
+  currentPrice: priceEntrySchema.nullable(),
+  history: z.array(priceEntrySchema),
 });
 
+export type PriceEntry = z.infer<typeof priceEntrySchema>;
 export type PricingRow = z.infer<typeof pricingRowSchema>;

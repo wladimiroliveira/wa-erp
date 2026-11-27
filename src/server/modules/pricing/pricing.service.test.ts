@@ -1,39 +1,42 @@
 import { Prisma, ProductKind } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { markupPercentSchema } from "./pricing.schemas";
-import { listPricing, setMarkup } from "./pricing.service";
+import { listPricing, repriceProduct, setMarkup } from "./pricing.service";
 
 const repository = vi.hoisted(() => ({
   findPricingSources: vi.fn(),
   findProductKind: vi.fn(),
   upsertMarkup: vi.fn(),
+  findPricingInputs: vi.fn(),
+  insertPrice: vi.fn(),
+  findCurrentPrice: vi.fn(),
 }));
+const stock = vi.hoisted(() => ({ onHandUnitCost: vi.fn(), lockStockBalance: vi.fn() }));
+const db = vi.hoisted(() => {
+  const tx = {};
 
-vi.mock("./pricing.repository", () => repository);
-
-const BREAD = { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "UNIT" as const };
-const FLOUR = { sku: "018f0000-0000-7000-8000-000000000010", description: "Farinha", unit: "KILOGRAM" as const };
-const BUTTER = { sku: "018f0000-0000-7000-8000-000000000011", description: "Manteiga", unit: "KILOGRAM" as const };
-const DOUGH = { sku: "018f0000-0000-7000-8000-000000000012", description: "Massa base", unit: "KILOGRAM" as const };
-
-const ingredient = (product: typeof FLOUR, quantity: string, averageCost: string | null | undefined) => ({
-  quantity: new Prisma.Decimal(quantity),
-  product: {
-    ...product,
-    stock:
-      averageCost === undefined ? null : { averageCost: averageCost === null ? null : new Prisma.Decimal(averageCost) },
-  },
+  return { tx, prisma: { $transaction: vi.fn((run: (client: unknown) => unknown) => run(tx)) } };
 });
 
-function aSource(
-  over: { markup?: string | null; ingredients?: ReturnType<typeof ingredient>[]; yieldQuantity?: string } = {},
-) {
+vi.mock("./pricing.repository", () => repository);
+vi.mock("@/server/modules/stock/stock.repository", () => stock);
+vi.mock("@/server/lib/prisma", () => ({ prisma: db.prisma }));
+
+const BREAD = { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "UNIT" as const };
+const aPrice = (price: string, averageCost: string, markupPercent: string, createdAt: string) => ({
+  price: new Prisma.Decimal(price),
+  averageCost: new Prisma.Decimal(averageCost),
+  markupPercent: new Prisma.Decimal(markupPercent),
+  createdAt: new Date(createdAt),
+});
+
+function aSource(over: { markup?: string | null; prices?: ReturnType<typeof aPrice>[] } = {}) {
   const markup = over.markup === undefined ? "35.00" : over.markup;
 
   return {
-    yieldQuantity: new Prisma.Decimal(over.yieldQuantity ?? "10"),
-    product: { ...BREAD, markup: markup === null ? null : { markupPercent: new Prisma.Decimal(markup) } },
-    ingredients: over.ingredients ?? [ingredient(FLOUR, "2", "5.5"), ingredient(BUTTER, "0.5", "8")],
+    ...BREAD,
+    markup: markup === null ? null : { markupPercent: new Prisma.Decimal(markup) },
+    prices: over.prices ?? [aPrice("2.03", "1.5", "35", "2026-11-20T12:00:00.000Z")],
   };
 }
 
@@ -42,66 +45,59 @@ beforeEach(() => {
 });
 
 describe("listPricing", () => {
-  it("marks a row priced when cost is complete and a markup exists", async () => {
-    repository.findPricingSources.mockResolvedValue([aSource()]);
+  it("marks a row priced with its current price, on-hand cost and history", async () => {
+    repository.findPricingSources.mockResolvedValue([
+      aSource({
+        prices: [
+          aPrice("2.03", "1.5", "35", "2026-11-20T12:00:00.000Z"),
+          aPrice("1.80", "1.333333", "35", "2026-11-10T12:00:00.000Z"),
+        ],
+      }),
+    ]);
+    stock.onHandUnitCost.mockResolvedValue(new Prisma.Decimal("1.6"));
 
     const [row] = await listPricing();
 
-    expect(row).toMatchObject({
-      product: BREAD,
-      yieldQuantity: "10",
-      status: "priced",
-      costPerUnit: "1.500000",
-      markupPercent: "35.00",
-      pricePerUnit: "2.03",
+    expect(stock.onHandUnitCost).toHaveBeenCalledWith(expect.anything(), {
+      productSku: BREAD.sku,
+      today: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
-    expect(row?.ingredients).toEqual([
-      { product: FLOUR, quantity: "2", averageCost: "5.5", subtotal: "11.000000" },
-      { product: BUTTER, quantity: "0.5", averageCost: "8", subtotal: "4.000000" },
-    ]);
+    expect(row).toEqual({
+      product: BREAD,
+      status: "priced",
+      markupPercent: "35.00",
+      onHandCost: "1.6",
+      currentPrice: {
+        price: "2.03",
+        averageCost: "1.5",
+        markupPercent: "35.00",
+        createdAt: "2026-11-20T12:00:00.000Z",
+      },
+      history: [
+        { price: "2.03", averageCost: "1.5", markupPercent: "35.00", createdAt: "2026-11-20T12:00:00.000Z" },
+        { price: "1.80", averageCost: "1.333333", markupPercent: "35.00", createdAt: "2026-11-10T12:00:00.000Z" },
+      ],
+    });
   });
 
-  it("marks a row no-markup with cost and a null price", async () => {
+  it("marks a row no-markup when there is no markup, even with a price", async () => {
     repository.findPricingSources.mockResolvedValue([aSource({ markup: null })]);
+    stock.onHandUnitCost.mockResolvedValue(null);
+
+    expect((await listPricing())[0]).toMatchObject({ status: "no-markup", markupPercent: null, onHandCost: null });
+  });
+
+  it("marks a row no-price when there is a markup but no price", async () => {
+    repository.findPricingSources.mockResolvedValue([aSource({ prices: [] })]);
+    stock.onHandUnitCost.mockResolvedValue(new Prisma.Decimal("2"));
 
     expect((await listPricing())[0]).toMatchObject({
-      status: "no-markup",
-      costPerUnit: "1.500000",
-      markupPercent: null,
-      pricePerUnit: null,
-    });
-  });
-
-  it("marks a row incomplete-cost with null cost and price, and null subtotal on the missing ingredient", async () => {
-    repository.findPricingSources.mockResolvedValue([
-      aSource({ ingredients: [ingredient(FLOUR, "2", "5.5"), ingredient(BUTTER, "0.5", null)] }),
-    ]);
-
-    const [row] = await listPricing();
-
-    expect(row).toMatchObject({
-      status: "incomplete-cost",
-      costPerUnit: null,
+      status: "no-price",
       markupPercent: "35.00",
-      pricePerUnit: null,
+      onHandCost: "2",
+      currentPrice: null,
+      history: [],
     });
-    expect(row?.ingredients[1]).toEqual({ product: BUTTER, quantity: "0.5", averageCost: null, subtotal: null });
-  });
-
-  it("treats a missing stock row as missing cost", async () => {
-    repository.findPricingSources.mockResolvedValue([
-      aSource({ ingredients: [ingredient(FLOUR, "2", "5.5"), ingredient(BUTTER, "0.5", undefined)] }),
-    ]);
-
-    expect((await listPricing())[0]?.status).toBe("incomplete-cost");
-  });
-
-  it("costs a manufactured ingredient by its stock average cost", async () => {
-    repository.findPricingSources.mockResolvedValue([
-      aSource({ yieldQuantity: "1", markup: "0", ingredients: [ingredient(DOUGH, "1", "3")] }),
-    ]);
-
-    expect((await listPricing())[0]).toMatchObject({ costPerUnit: "3.000000", pricePerUnit: "3.00" });
   });
 });
 
@@ -141,6 +137,99 @@ describe("setMarkup", () => {
       markupPercent: "35.5",
       updatedById: USER_ID,
     });
+  });
+});
+
+describe("setMarkup pricing", () => {
+  const USER_ID = "018f0000-0000-7000-8000-000000000001";
+
+  beforeEach(() => {
+    repository.findProductKind.mockResolvedValue(ProductKind.MANUFACTURED);
+    repository.upsertMarkup.mockResolvedValue({ markupPercent: new Prisma.Decimal("50") });
+    repository.findPricingInputs.mockResolvedValue({
+      kind: ProductKind.MANUFACTURED,
+      markupPercent: new Prisma.Decimal("50"),
+    });
+    stock.onHandUnitCost.mockResolvedValue(new Prisma.Decimal("9.2"));
+  });
+
+  it("writes no price when one exists already", async () => {
+    repository.findCurrentPrice.mockResolvedValue({ price: new Prisma.Decimal("1") });
+
+    await setMarkup(USER_ID, { productSku: BREAD.sku, markupPercent: "50" });
+
+    expect(repository.insertPrice).not.toHaveBeenCalled();
+  });
+
+  it("holds the product balance before it looks for a price, inside the transaction", async () => {
+    repository.findCurrentPrice.mockResolvedValue(null);
+
+    await setMarkup(USER_ID, { productSku: BREAD.sku, markupPercent: "50" });
+
+    expect(stock.lockStockBalance).toHaveBeenCalledWith(db.tx, BREAD.sku);
+    expect(repository.findCurrentPrice).toHaveBeenCalledWith(db.tx, BREAD.sku);
+    expect(stock.lockStockBalance.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.findCurrentPrice.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it("writes the first price when there is none", async () => {
+    repository.findCurrentPrice.mockResolvedValue(null);
+
+    await setMarkup(USER_ID, { productSku: BREAD.sku, markupPercent: "50" });
+
+    expect(repository.insertPrice).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("repriceProduct", () => {
+  const tx = db.tx as never;
+  const today = "2026-11-27";
+
+  const priced = (kind: ProductKind, markup: string | null, basis: string | null) => {
+    repository.findPricingInputs.mockResolvedValue({
+      kind,
+      markupPercent: markup === null ? null : new Prisma.Decimal(markup),
+    });
+    stock.onHandUnitCost.mockResolvedValue(basis === null ? null : new Prisma.Decimal(basis));
+  };
+
+  it("inserts the price on the cost of what is on hand", async () => {
+    priced(ProductKind.MANUFACTURED, "50.00", "9.2");
+
+    await repriceProduct(tx, { productSku: BREAD.sku, today });
+
+    expect(stock.onHandUnitCost).toHaveBeenCalledWith(tx, { productSku: BREAD.sku, today });
+    expect(repository.insertPrice).toHaveBeenCalledWith(tx, {
+      productSku: BREAD.sku,
+      averageCost: "9.2",
+      markupPercent: "50.00",
+      price: "13.80",
+    });
+  });
+
+  it("does nothing for a resale product", async () => {
+    priced(ProductKind.GOODS, "50.00", "9.2");
+
+    await repriceProduct(tx, { productSku: BREAD.sku, today });
+
+    expect(repository.insertPrice).not.toHaveBeenCalled();
+  });
+
+  it("does nothing without a markup", async () => {
+    priced(ProductKind.MANUFACTURED, null, "9.2");
+
+    await repriceProduct(tx, { productSku: BREAD.sku, today });
+
+    expect(repository.insertPrice).not.toHaveBeenCalled();
+  });
+
+  it("does nothing without a cost on hand", async () => {
+    priced(ProductKind.MANUFACTURED, "50.00", null);
+
+    await repriceProduct(tx, { productSku: BREAD.sku, today });
+
+    expect(repository.insertPrice).not.toHaveBeenCalled();
   });
 });
 

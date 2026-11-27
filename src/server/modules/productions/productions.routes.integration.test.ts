@@ -720,6 +720,34 @@ describe("POST /v1/productions/:id/items/:itemId/conclude", () => {
     );
   });
 
+  it("writes a price for a manufactured product with a markup, on the cost of the lots on hand", async () => {
+    const { headers, userId } = await canDoBoth();
+    const { dough, production } = await startDough(headers);
+    await testPrisma.productMarkup.create({
+      data: { productSku: dough.sku, markupPercent: "50", updatedById: userId },
+    });
+
+    const response = await makeItem(headers, production.id, production.items[0].id, "46");
+
+    expect(response.statusCode).toBe(200);
+
+    const prices = await testPrisma.productPrice.findMany({ where: { productSku: dough.sku } });
+
+    expect(prices).toHaveLength(1);
+    expect(prices[0]?.averageCost.toString()).toBe("1.5");
+    expect(prices[0]?.markupPercent.toString()).toBe("50");
+    expect(prices[0]?.price.toString()).toBe("2.25");
+  });
+
+  it("writes no price for a product without a markup", async () => {
+    const { headers } = await canDoBoth();
+    const { dough, production } = await startDough(headers);
+
+    await makeItem(headers, production.id, production.items[0].id, "46");
+
+    expect(await testPrisma.productPrice.count({ where: { productSku: dough.sku } })).toBe(0);
+  });
+
   it("writes off what was weighed when a pre-weighing guided the item", async () => {
     const { headers, userId } = await canDoBoth();
     const { flour, water, preWeighing } = await createDoughPreWeighing(userId);
@@ -1061,6 +1089,21 @@ describe("POST /v1/productions/:id/items/:itemId/conclude", () => {
         { supplierId: null, expiresAt: null, initialQuantity: "50", quantity: "50", unitCost: "0" },
       ]);
     });
+  });
+
+  it("writes no price when every batch already existed and the product has no known cost", async () => {
+    const { headers, userId } = await canDoBoth();
+    const { dough, production } = await startDough(headers);
+    await testPrisma.productMarkup.create({
+      data: { productSku: dough.sku, markupPercent: "50", updatedById: userId },
+    });
+    const itemId = production.items[0].id;
+    await postBatch(headers, production.id, itemId, { quantity: "50", expiresAt: null, source: "EXISTING" });
+
+    const response = await postConclude(headers, production.id, itemId);
+
+    expect(response.statusCode).toBe(200);
+    expect(await testPrisma.productPrice.count({ where: { productSku: dough.sku } })).toBe(0);
   });
 
   it("weights what it produced into the average cost of the product already in stock", async () => {

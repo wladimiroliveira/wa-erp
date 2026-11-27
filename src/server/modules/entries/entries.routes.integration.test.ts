@@ -548,3 +548,34 @@ describe("POST /v1/entries in packagings", () => {
     expect(response.statusCode).toBe(400);
   });
 });
+
+describe("POST /v1/entries pricing", () => {
+  it("writes a price when a manufactured product with a markup has a lot entered", async () => {
+    const { headers, userId } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const product = await testPrisma.product.create({
+      data: { description: "Bread", kind: "MANUFACTURED", unit: "UNIT" },
+    });
+    await testPrisma.productMarkup.create({
+      data: { productSku: product.sku, markupPercent: "50", updatedById: userId },
+    });
+
+    const response = await postEntry(headers, { productSku: product.sku, quantity: "10", unitCost: "4" });
+
+    expect(response.statusCode).toBe(201);
+
+    const prices = await testPrisma.productPrice.findMany({ where: { productSku: product.sku } });
+
+    expect(prices).toHaveLength(1);
+    expect(prices[0]?.averageCost.toString()).toBe("4");
+    expect(prices[0]?.price.toString()).toBe("6");
+  });
+
+  it("writes no price for a resale product", async () => {
+    const { headers } = await authenticateAs([Permission.ENTRIES_CREATE]);
+    const product = await createProduct();
+
+    await postEntry(headers, { productSku: product.sku, quantity: "10", unitCost: "4" });
+
+    expect(await testPrisma.productPrice.count()).toBe(0);
+  });
+});

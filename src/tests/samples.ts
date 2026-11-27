@@ -2,9 +2,12 @@ import type {
   CurrentUser,
   Entry,
   Loss,
+  Outflow,
+  OutflowSummary,
   LossReason,
   PreWeighing,
   PreWeighingPlan,
+  PriceEntry,
   PricingRow,
   Packaging,
   Product,
@@ -325,28 +328,57 @@ export function aRecipeSummary(over: Partial<RecipeSummary> = {}): RecipeSummary
   };
 }
 
+export function aPriceEntry(over: Partial<PriceEntry> = {}): PriceEntry {
+  return {
+    price: "2.03",
+    averageCost: "1.500000",
+    markupPercent: "35.00",
+    createdAt: "2026-11-20T12:00:00.000Z",
+    ...over,
+  };
+}
+
 export function aPricingRow(over: Partial<PricingRow> = {}): PricingRow {
+  const entry = aPriceEntry();
+
   return {
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "UNIT" },
-    yieldQuantity: "10",
     status: "priced",
-    costPerUnit: "1.500000",
     markupPercent: "35.00",
-    pricePerUnit: "2.03",
-    ingredients: [
-      {
-        product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM" },
-        quantity: "2",
-        averageCost: "5.5",
-        subtotal: "11.000000",
-      },
-      {
-        product: { sku: "018f0000-0000-7000-8000-000000000021", description: "Manteiga", unit: "KILOGRAM" },
-        quantity: "0.5",
-        averageCost: "8",
-        subtotal: "4.000000",
-      },
-    ],
+    onHandCost: "1.500000",
+    currentPrice: entry,
+    history: [entry],
+    ...over,
+  };
+}
+
+export function anOutflow(over: Partial<Outflow> = {}): Outflow {
+  return {
+    id: "018f0000-0000-7000-8000-000000000080",
+    kind: "SALE",
+    product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Pão francês", unit: "UNIT" },
+    quantity: "3",
+    listPrice: "13.80",
+    unitPrice: "13.80",
+    cost: "27.60",
+    revenue: "41.40",
+    profit: "13.80",
+    note: null,
+    createdAt: "2026-11-10T12:00:00.000Z",
+    createdBy: { id: "018f0000-0000-7000-8000-000000000001", name: "Operador" },
+    ...over,
+  };
+}
+
+export function anOutflowSummary(over: Partial<OutflowSummary> = {}): OutflowSummary {
+  return {
+    revenue: "120.00",
+    saleCost: "80.00",
+    profit: "40.00",
+    donated: "15.00",
+    result: "25.00",
+    saleCount: 4,
+    donationCount: 1,
     ...over,
   };
 }

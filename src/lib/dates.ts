@@ -8,6 +8,11 @@ export function formatDateTime(iso: string): string {
   return `${DATE.format(moment)} ${TIME.format(moment)}`;
 }
 
+/** Writes an API timestamp's day in the operator's own timezone: `02/10/2026`. */
+export function formatDateOf(iso: string): string {
+  return DATE.format(new Date(iso));
+}
+
 /**
  * Writes an API calendar day (`2099-12-31`) as `31/12/2099`. It is rearranged as text on
  * purpose: parsing it into a `Date` would shift it a day back west of Greenwich.

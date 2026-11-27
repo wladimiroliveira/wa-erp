@@ -1,6 +1,7 @@
-import { toOptionalDateString } from "@/server/lib/dates";
+import { localToday, toOptionalDateString } from "@/server/lib/dates";
 import { isForeignKeyViolation } from "@/server/lib/prisma-errors";
 import { fail, succeed, type Failure, type Result } from "@/server/lib/result";
+import { repriceProduct } from "@/server/modules/pricing/pricing.service";
 import { lotPackagingOf } from "@/server/modules/stock/stock.lot-packaging";
 import { findSupplierById } from "@/server/modules/suppliers/suppliers.repository";
 import { decimalSchema } from "@/shared/decimal";
@@ -77,6 +78,7 @@ export async function recordEntry(body: CreateEntryBody, createdById: string): P
     ...(deficit === undefined ? {} : { deficit }),
     ...converted.data,
     createdById,
+    afterLot: (tx) => repriceProduct(tx, { productSku, today: localToday() }),
   }).catch((error: unknown) => {
     if (error instanceof NegativeBalancePendingError) return error;
     // Checked above, but removed from the product between the check and the write.

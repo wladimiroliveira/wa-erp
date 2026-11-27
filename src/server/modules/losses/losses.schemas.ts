@@ -1,14 +1,7 @@
 import { z } from "zod";
 import { positiveDecimalSchema } from "@/shared/decimal";
+import { optionalText } from "@/shared/text";
 import { productSummarySchema } from "@/server/modules/products/products.schemas";
-
-// Text that is optional: one left blank is the same as none.
-const optionalText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max)
-    .transform((text) => (text === "" ? null : text));
 
 // Why a loss reason cannot be written off under. Plain strings, so the screens can tell these refusals
 // apart from others under the same status.

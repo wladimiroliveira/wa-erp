@@ -1,18 +1,19 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { moneyOf, quantityOf } from "@/features/stock/stock-format";
+import { moneyOf } from "@/features/stock/stock-format";
 import type { PricingRow } from "@/lib/api";
+import { formatDateOf } from "@/lib/dates";
+import { formatDecimal } from "@/lib/decimal";
 
 interface PricingSheetProps {
-  /** The product whose cost to break down, or `null` while none is open. */
+  /** The product whose price history to show, or `null` while none is open. */
   row: PricingRow | null;
   onClose: () => void;
 }
 
-/** What one unit of a product costs, ingredient by ingredient, as the recipe and the stock say. */
+/** The prices written for one product, newest first, each with the cost and markup it came from. */
 export function PricingSheet({ row, onClose }: PricingSheetProps) {
   if (row === null) return null;
 
@@ -24,46 +25,26 @@ export function PricingSheet({ row, onClose }: PricingSheetProps) {
         </SheetHeader>
 
         <div className="flex flex-col gap-4 overflow-y-auto px-4 pb-4">
-          <dl className="grid grid-cols-2 gap-2">
-            <div>
-              <dt className="text-sm text-muted-foreground">Rendimento</dt>
-              <dd className="font-semibold">{quantityOf(row.yieldQuantity, row.product.unit)}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">Custo por unidade</dt>
-              <dd className="font-semibold">{moneyOf(row.costPerUnit)}</dd>
-            </div>
-          </dl>
-
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Ingrediente</TableHead>
-                <TableHead className="text-right">Quantidade</TableHead>
+                <TableHead>Data</TableHead>
                 <TableHead className="text-right">Custo médio</TableHead>
-                <TableHead className="text-right">Subtotal</TableHead>
+                <TableHead className="text-right">Markup</TableHead>
+                <TableHead className="text-right">Preço</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {row.ingredients.map(({ product, quantity, averageCost, subtotal }) => (
-                <TableRow key={product.sku}>
-                  <TableCell>{product.description}</TableCell>
-                  <TableCell className="text-right tabular-nums">{quantityOf(quantity, product.unit)}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {averageCost === null ? <Badge variant="destructive">Sem custo médio</Badge> : moneyOf(averageCost)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{moneyOf(subtotal)}</TableCell>
+              {row.history.map((entry) => (
+                <TableRow key={entry.createdAt}>
+                  <TableCell>{formatDateOf(entry.createdAt)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{moneyOf(entry.averageCost)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatDecimal(entry.markupPercent, 2)} %</TableCell>
+                  <TableCell className="text-right tabular-nums">{moneyOf(entry.price)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-
-          {row.status === "incomplete-cost" ? (
-            <p className="text-sm text-muted-foreground">
-              O custo só é calculado quando todos os ingredientes têm custo médio, que nasce na primeira entrada ou
-              produção.
-            </p>
-          ) : null}
         </div>
       </SheetContent>
     </Sheet>

@@ -38,7 +38,7 @@ describe("stock schema", () => {
     );
   });
 
-  it("knows the entry, the two movements of a production, the adjustment of a balance and the loss", () => {
+  it("knows the entry, the two movements of a production, the adjustment of a balance, the loss and the two ways of selling off", () => {
     const block = /enum StockMovementType \{([\s\S]*?)\n\}/.exec(SCHEMA);
     expect(block).not.toBeNull();
 
@@ -54,6 +54,8 @@ describe("stock schema", () => {
       "BALANCE_ADJUSTMENT",
       "LOSS",
       "OPENED_LEFTOVER",
+      "SALE",
+      "DONATION",
     ]);
     expect(SCHEMA).toMatch(/enum StockMovementType \{[\s\S]*?@@map\("stock_movement_type"\)/);
   });

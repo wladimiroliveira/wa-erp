@@ -7,6 +7,7 @@ import {
   insertPreWeighingTree,
 } from "@/server/modules/pre-weighings/pre-weighings.repository";
 import { preparePreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
+import { repriceProduct } from "@/server/modules/pricing/pricing.service";
 import { holdStockBalances } from "@/server/modules/stock/stock.repository";
 import type { ProductionBatchSource } from "@/shared/enums";
 import { asConcluded, lotsOf, madeOf, producedOf } from "./production-batches";
@@ -409,6 +410,7 @@ async function concludeHeld(
     expiresAt: toOptionalDateString(expiresAt),
   }));
   const productSku = item.product.sku;
+  let entered = false;
 
   for (const { expiresAt, produced, existing } of lotsOf(batches)) {
     if (produced.gt(0)) {
@@ -417,7 +419,10 @@ async function concludeHeld(
     if (existing.gt(0)) {
       await enterProducedLot(tx, { productSku, quantity: existing, unitCost: averageCost, expiresAt, createdById });
     }
+    entered = true;
   }
+
+  if (entered) await repriceProduct(tx, { productSku, today: options.today });
 
   await markItemConcluded(tx, {
     id: item.id,

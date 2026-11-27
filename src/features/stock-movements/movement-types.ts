@@ -15,6 +15,8 @@ const MOVEMENT_TYPES: Record<StockMovementType, { origin: string; direction: Dir
   BALANCE_ADJUSTMENT: { origin: "Ajuste de saldo", direction: IN },
   LOSS: { origin: "Avaria", direction: OUT },
   OPENED_LEFTOVER: { origin: "Sobra de embalagem aberta", direction: OUT },
+  SALE: { origin: "Venda", direction: OUT },
+  DONATION: { origin: "Doação", direction: OUT },
 };
 
 /** What made the stock move: an entry, a production, a loss. */

@@ -6,6 +6,7 @@ import type {
   ProductionItemStatus as PrismaProductionItemStatus,
   ProductionStatus as PrismaProductionStatus,
   StockMovementType as PrismaStockMovementType,
+  StockOutflowKind as PrismaStockOutflowKind,
 } from "@prisma/client";
 import { z } from "zod";
 
@@ -58,10 +59,17 @@ export const STOCK_MOVEMENT_TYPES = [
   "BALANCE_ADJUSTMENT",
   "LOSS",
   "OPENED_LEFTOVER",
+  "SALE",
+  "DONATION",
 ] as const satisfies readonly PrismaStockMovementType[];
 
 export const stockMovementTypeSchema = z.enum(STOCK_MOVEMENT_TYPES);
 export type StockMovementType = (typeof STOCK_MOVEMENT_TYPES)[number];
+
+export const STOCK_OUTFLOW_KINDS = ["SALE", "DONATION"] as const satisfies readonly PrismaStockOutflowKind[];
+
+export const stockOutflowKindSchema = z.enum(STOCK_OUTFLOW_KINDS);
+export type StockOutflowKind = (typeof STOCK_OUTFLOW_KINDS)[number];
 
 export const PRODUCTION_STATUSES = [
   "IN_PROGRESS",

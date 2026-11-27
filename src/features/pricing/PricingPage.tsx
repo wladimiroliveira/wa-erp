@@ -19,10 +19,11 @@ import {
   withoutPricingFilters,
 } from "@/features/pricing/pricing-filters";
 import { PricingSheet } from "@/features/pricing/PricingSheet";
-import { moneyOf, NOTHING, quantityOf } from "@/features/stock/stock-format";
+import { moneyOf, NOTHING } from "@/features/stock/stock-format";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import { useUrlSearchParams } from "@/hooks/use-url-search-params";
 import type { PricingRow } from "@/lib/api";
+import { formatDateOf } from "@/lib/dates";
 import { formatDecimal, isDecimalInput, toApiDecimal, toDecimalInput } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
 import { unitLabel } from "@/lib/units";
@@ -33,7 +34,7 @@ import { priceFor } from "@/shared/pricing";
 const STATUS_LABELS: Record<PricingRow["status"], string | null> = {
   priced: null,
   "no-markup": "Sem markup",
-  "incomplete-cost": "Custo incompleto",
+  "no-price": "Sem preço",
 };
 
 const INVALID_MARKUP = "Markup entre 0 e 1000, até 2 casas.";
@@ -54,7 +55,7 @@ function typedMarkup(typed: string): string | null {
 }
 
 interface PricingPageProps {
-  /** Every active manufactured product with a recipe, as the server priced it. */
+  /** Every active manufactured product, as the server priced it. */
   rows: PricingRow[];
 }
 
@@ -158,14 +159,32 @@ export function PricingPage({ rows }: PricingPageProps) {
     );
   }
 
-  function priceCell(row: PricingRow): string {
+  function priceCell(row: PricingRow) {
     const sku = row.product.sku;
 
-    if (!(sku in typed)) return moneyOf(row.pricePerUnit);
+    if (sku in typed) {
+      const markup = typedMarkup(typed[sku] ?? "");
 
-    const markup = typedMarkup(typed[sku] ?? "");
+      return (
+        <div className="flex flex-col">
+          <span>
+            {row.onHandCost === null || markup === null ? NOTHING : moneyOf(priceFor(row.onHandCost, markup))}
+          </span>
+          {row.currentPrice === null ? null : (
+            <span className="text-xs text-muted-foreground">vale a partir do próximo lote</span>
+          )}
+        </div>
+      );
+    }
 
-    return row.costPerUnit === null || markup === null ? NOTHING : moneyOf(priceFor(row.costPerUnit, markup));
+    if (row.currentPrice === null) return NOTHING;
+
+    return (
+      <div className="flex flex-col">
+        <span>{moneyOf(row.currentPrice.price)}</span>
+        <span className="text-xs text-muted-foreground">{formatDateOf(row.currentPrice.createdAt)}</span>
+      </div>
+    );
   }
 
   return (
@@ -195,7 +214,7 @@ export function PricingPage({ rows }: PricingPageProps) {
             ) : null
           }
         >
-          {filtered ? "Nenhum produto encontrado para estes filtros." : "Nenhum produto fabricado com receita."}
+          {filtered ? "Nenhum produto encontrado para estes filtros." : "Nenhum produto fabricado."}
         </EmptyState>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2" aria-busy={loading}>
@@ -220,19 +239,16 @@ export function PricingPage({ rows }: PricingPageProps) {
                 ),
               },
               { key: "unit", header: "Unidade", cell: (row) => unitLabel(row.product.unit) },
-              { key: "yield", header: "Rendimento", cell: (row) => quantityOf(row.yieldQuantity, row.product.unit) },
-              { key: "cost", header: "Custo/un", cell: (row) => moneyOf(row.costPerUnit) },
+              { key: "cost", header: "Custo médio", cell: (row) => moneyOf(row.onHandCost) },
               { key: "markup", header: "Markup", cell: markupCell },
-              { key: "price", header: "Preço/un", cell: priceCell },
+              { key: "price", header: "Preço", cell: priceCell },
               {
                 key: "status",
                 header: "Situação",
                 cell: (row) => {
                   const label = STATUS_LABELS[row.status];
 
-                  return label === null ? null : (
-                    <Badge variant={row.status === "incomplete-cost" ? "destructive" : "outline"}>{label}</Badge>
-                  );
+                  return label === null ? null : <Badge variant="outline">{label}</Badge>;
                 },
               },
             ]}

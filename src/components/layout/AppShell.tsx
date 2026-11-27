@@ -4,8 +4,9 @@ import { useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
-import { NAV_ITEMS } from "@/components/layout/nav-items";
-import { TitleSlotProvider } from "@/components/layout/PageTitle";
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
+import { isCurrent, NAV_ITEMS } from "@/components/layout/nav-items";
+import { AsideSlotProvider, CrumbSlotProvider, TitleSlotProvider } from "@/components/layout/PageTitle";
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +27,8 @@ import { useSession } from "@/features/auth/use-session";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
+  const [crumbSlot, setCrumbSlot] = useState<HTMLElement | null>(null);
+  const [asideSlot, setAsideSlot] = useState<HTMLElement | null>(null);
 
   return (
     <TooltipProvider>
@@ -34,8 +37,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Held to the window, so a screen scrolls under the top bar and a table can fill what is left. */}
         <SidebarInset className="h-svh min-w-0">
           <TopBar titleSlotRef={setTitleSlot} />
+          <Breadcrumbs currentSlotRef={setCrumbSlot} asideSlotRef={setAsideSlot} />
           <div data-slot="page-content" className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
-            <TitleSlotProvider value={titleSlot}>{children}</TitleSlotProvider>
+            <TitleSlotProvider value={titleSlot}>
+              <CrumbSlotProvider value={crumbSlot}>
+                <AsideSlotProvider value={asideSlot}>{children}</AsideSlotProvider>
+              </CrumbSlotProvider>
+            </TitleSlotProvider>
           </div>
         </SidebarInset>
       </SidebarProvider>
@@ -122,9 +130,4 @@ function TopBar({ titleSlotRef }: { titleSlotRef: (element: HTMLElement | null) 
       <div ref={titleSlotRef} className="min-w-0 flex-1" />
     </header>
   );
-}
-
-/** Whether the address is the destination itself or a screen under it, as `/stock/:sku` is under `/stock`. */
-function isCurrent(pathname: string, destination: string): boolean {
-  return pathname === destination || pathname.startsWith(`${destination}/`);
 }

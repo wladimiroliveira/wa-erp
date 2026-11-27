@@ -13,12 +13,12 @@ export const POST = apiHandler(
   {
     auth: Permission.PRODUCTION_CREATE,
     tags: ["productions"],
-    summary: "Inicia uma produção, guiada por pré-pesagens ou livre pelas receitas",
+    summary: "Inicia uma produção, guiada por uma pré-pesagem raiz ou livre pelas receitas",
     body: startProductionBodySchema,
     response: { 201: productionSchema, 404: messageSchema, 409: messageSchema },
   },
   async (request, reply) => {
-    const result = await startProduction({ createdById: request.currentUser!.id, items: request.body.items });
+    const result = await startProduction({ createdById: request.currentUser!.id, ...request.body });
 
     if (!result.ok) return reply.code(result.status).send({ message: result.message });
 

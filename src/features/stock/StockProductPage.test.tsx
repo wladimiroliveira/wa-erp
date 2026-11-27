@@ -135,13 +135,11 @@ describe("StockProductPage", () => {
     expect(await screen.findByText("Nenhum lote registrado.")).toBeInTheDocument();
   });
 
-  it("leads back to the analysis of the whole stock", async () => {
+  it("leaves the way back to the breadcrumbs", async () => {
     renderPage();
 
-    expect(await screen.findByRole("link", { name: "Voltar para a análise de estoque" })).toHaveAttribute(
-      "href",
-      "/stock",
-    );
+    await screen.findByText("Mostrar lotes esgotados");
+    expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
   });
 
   describe("writing a lot off", () => {
@@ -186,13 +184,12 @@ describe("StockProductPage columns", () => {
 });
 
 describe("StockProductPage sizing", () => {
-  it("keeps the way back and the depleted-lots filter as tall as a control", async () => {
+  it("keeps the depleted-lots filter as tall as a control", async () => {
     renderPage();
     const label = await screen.findByText("Mostrar lotes esgotados");
 
     expect(label).toHaveClass("py-1.5");
     expect(label.parentElement).toHaveClass("min-h-8");
-    expect(screen.getByRole("link", { name: "Voltar para a análise de estoque" })).toHaveClass("min-h-8");
   });
 });
 

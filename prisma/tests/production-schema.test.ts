@@ -28,7 +28,7 @@ describe("production schema", () => {
   it("writes off what is left of an opened packaging as a movement of its own, tied to the input", () => {
     expect(SCHEMA).toMatch(/enum StockMovementType \{[^}]*\n\s+OPENED_LEFTOVER\n/);
     expect(SCHEMA).toMatch(
-      fieldOf("Production", String.raw`hasLeftoversInCost\s+Boolean\?\s+@map\("has_leftovers_in_cost"\)`),
+      fieldOf("ProductionItem", String.raw`hasLeftoversInCost\s+Boolean\?\s+@map\("has_leftovers_in_cost"\)`),
     );
     expect(SCHEMA).toMatch(/model ProductionLeftover \{[\s\S]*?@@map\("production_leftovers"\)/);
     expect(SCHEMA).toMatch(

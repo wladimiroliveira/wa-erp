@@ -10,6 +10,11 @@ const optionalText = (max: number) =>
     .max(max)
     .transform((text) => (text === "" ? null : text));
 
+// Why a loss reason cannot be written off under. Plain strings, so the screens can tell these refusals
+// apart from others under the same status.
+export const LOSS_REASON_MISSING = "Loss reason not found.";
+export const LOSS_REASON_INACTIVE = "Loss reason is inactive.";
+
 const reasonName = z.string().trim().min(1).max(60);
 
 export const lossReasonSchema = z.object({

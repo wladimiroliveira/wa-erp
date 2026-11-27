@@ -2,12 +2,93 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/layout/AppShell";
-import { PageTitle } from "@/components/layout/PageTitle";
+import { PageAside, PageTitle } from "@/components/layout/PageTitle";
 import { signOut } from "@/features/auth/actions";
 import { renderWithProviders } from "@/tests/render";
 import { aCurrentUser } from "@/tests/samples";
 
 vi.mock("@/features/auth/actions", () => ({ signOut: vi.fn(async () => {}) }));
+
+describe("AppShell, breadcrumbs", () => {
+  const trail = () => within(screen.getByRole("navigation", { name: "Trilha de navegação" }));
+
+  it("leads from the start through the section to the screen under it", () => {
+    renderWithProviders(
+      <AppShell>
+        <PageTitle>Produção de 12/10/2026 10:00</PageTitle>
+      </AppShell>,
+      { route: "/productions/abc", user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) },
+    );
+
+    expect(trail().getByRole("link", { name: "Início" })).toHaveAttribute("href", "/");
+    expect(trail().getByRole("link", { name: "Produções" })).toHaveAttribute("href", "/productions");
+    expect(trail().getByText("Produção de 12/10/2026 10:00")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("names the screen in the trail by its own words when the title is a general one", () => {
+    renderWithProviders(
+      <AppShell>
+        <PageTitle crumb="Produção de 12/10/2026 10:00">Produção</PageTitle>
+      </AppShell>,
+      { route: "/productions/abc", user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) },
+    );
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Produção$/);
+    expect(trail().getByText("Produção de 12/10/2026 10:00")).toHaveAttribute("aria-current", "page");
+    expect(trail().queryByText(/^Produção$/)).not.toBeInTheDocument();
+  });
+
+  it("puts what the screen sets aside on the breadcrumbs' line", () => {
+    renderWithProviders(
+      <AppShell>
+        <PageTitle>Produção</PageTitle>
+        <PageAside>
+          <span>Em andamento</span>
+        </PageAside>
+      </AppShell>,
+      { route: "/productions/abc", user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) },
+    );
+
+    const line = screen.getByRole("navigation", { name: "Trilha de navegação" }).parentElement!.parentElement!;
+    expect(within(line).getByText("Em andamento")).toBeInTheDocument();
+    expect(screen.getAllByText("Em andamento")).toHaveLength(1);
+  });
+
+  it("ends at the section itself on the section's own screen", () => {
+    renderWithProviders(
+      <AppShell>
+        <PageTitle>Produções</PageTitle>
+      </AppShell>,
+      { route: "/productions", user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) },
+    );
+
+    expect(trail().getAllByRole("link")).toHaveLength(1);
+    expect(trail().getByText("Produções")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("names a screen outside the menu by its title", () => {
+    renderWithProviders(
+      <AppShell>
+        <PageTitle>Trocar a senha</PageTitle>
+      </AppShell>,
+      { route: "/change-password" },
+    );
+
+    expect(trail().getAllByRole("link")).toHaveLength(1);
+    expect(trail().getByText("Trocar a senha")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows no trail on the start screen", () => {
+    renderWithProviders(
+      <AppShell>
+        <PageTitle>Bem-vindo, Ana</PageTitle>
+      </AppShell>,
+      { route: "/" },
+    );
+
+    expect(screen.queryByRole("navigation", { name: "Trilha de navegação" })).not.toBeInTheDocument();
+  });
+});
 
 describe("AppShell", () => {
   it("shows who is signed in", async () => {

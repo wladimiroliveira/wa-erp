@@ -1,9 +1,17 @@
-import { MeasurementUnit, Permission, ProductionStatus, ProductKind, StockMovementType } from "@prisma/client";
+import {
+  MeasurementUnit,
+  Permission,
+  ProductionItemStatus,
+  ProductionStatus,
+  ProductKind,
+  StockMovementType,
+} from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   MEASUREMENT_UNITS,
   PERMISSIONS,
   PRODUCT_KINDS,
+  PRODUCTION_ITEM_STATUSES,
   PRODUCTION_STATUSES,
   STOCK_MOVEMENT_TYPES,
 } from "@/shared/enums";
@@ -15,6 +23,7 @@ describe("shared enums", () => {
     ["measurement units", MEASUREMENT_UNITS, MeasurementUnit],
     ["stock movement types", STOCK_MOVEMENT_TYPES, StockMovementType],
     ["production statuses", PRODUCTION_STATUSES, ProductionStatus],
+    ["production item statuses", PRODUCTION_ITEM_STATUSES, ProductionItemStatus],
   ])("lists exactly the %s the database knows", (_label, shared, prisma) => {
     expect([...shared].sort()).toEqual(Object.values(prisma).sort());
   });

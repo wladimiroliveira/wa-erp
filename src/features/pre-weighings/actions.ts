@@ -16,7 +16,13 @@ import {
   recordPreWeighing,
   removePreWeighing,
 } from "@/server/modules/pre-weighings/pre-weighings.service";
-import type { CreatePreWeighingBody, PreWeighing, PreWeighingPage, PreWeighingPlan } from "@/lib/api";
+import type {
+  CreatePreWeighingBody,
+  PreWeighing,
+  PreWeighingPage,
+  PreWeighingPlan,
+  PreWeighingStatus,
+} from "@/lib/api";
 
 /** What is to be produced: the quantity is in the unit of the product, as the server takes it. */
 export interface PreWeighingTarget {
@@ -91,13 +97,20 @@ export async function deletePreWeighing(id: string): Promise<DeletePreWeighingRe
   return result;
 }
 
-/** The page of older pre-weighings after `cursor`, for the list to append. */
-export async function loadMorePreWeighings(cursor: string): Promise<PreWeighingPageResult> {
+/** The page of older pre-weighings after `cursor`, under the same filters the list is showing. */
+export async function loadMorePreWeighings(
+  cursor: string,
+  filters: { status?: PreWeighingStatus; staleOnly?: boolean } = {},
+): Promise<PreWeighingPageResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
 
-  const parsed = listPreWeighingsQuerySchema.safeParse({ cursor });
+  const parsed = listPreWeighingsQuerySchema.safeParse({
+    cursor,
+    status: filters.status,
+    staleOnly: filters.staleOnly ? "true" : undefined,
+  });
 
   if (!parsed.success) return fail(400, INVALID_INPUT);
 

@@ -22,7 +22,48 @@ const CANCEL_MESSAGES = {
   409: "A produção já foi finalizada ou cancelada. A página foi atualizada.",
 };
 
-export function CancelProductionDialog({ productionId }: { productionId: string }) {
+interface CancelProductionDialogProps {
+  productionId: string;
+  // Items finished stay: their stock and lots are not undone by canceling.
+  hasFinishedItems: boolean;
+  // A pending item with batches is concluded with them by canceling: its inputs leave and its lots come in.
+  concludesBatches: boolean;
+  // A pending item without batches lets its pre-weighing go, back to pending.
+  releasesPreWeighings: boolean;
+}
+
+// What canceling does to the stock, as the production stands.
+// Each fact of the production adds what canceling does to it: finished items stay, items with levas are
+// concluded with what was made, and the pre-weighings of the rest are let go.
+function consequenceOf({
+  hasFinishedItems,
+  concludesBatches,
+  releasesPreWeighings,
+}: Omit<CancelProductionDialogProps, "productionId">) {
+  const movesStock = hasFinishedItems || concludesBatches;
+
+  return [
+    hasFinishedItems ? "Os itens já finalizados continuam no estoque." : null,
+    concludesBatches
+      ? "Os itens com levas registradas são concluídos com o que foi feito: os ingredientes saem do estoque e os lotes entram."
+      : null,
+    releasesPreWeighings
+      ? movesStock
+        ? "As pré-pesagens dos demais voltam a ficar pendentes."
+        : "As pré-pesagens usadas voltam a ficar disponíveis."
+      : null,
+    movesStock ? null : "O estoque não é alterado.",
+  ]
+    .filter((sentence) => sentence !== null)
+    .join(" ");
+}
+
+export function CancelProductionDialog({
+  productionId,
+  hasFinishedItems,
+  concludesBatches,
+  releasesPreWeighings,
+}: CancelProductionDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -73,7 +114,7 @@ export function CancelProductionDialog({ productionId }: { productionId: string 
           <AlertDialogHeader>
             <AlertDialogTitle>Cancelar esta produção?</AlertDialogTitle>
             <AlertDialogDescription>
-              As pré-pesagens usadas voltam a ficar disponíveis. O estoque não é alterado.
+              {consequenceOf({ hasFinishedItems, concludesBatches, releasesPreWeighings })}
             </AlertDialogDescription>
           </AlertDialogHeader>
 

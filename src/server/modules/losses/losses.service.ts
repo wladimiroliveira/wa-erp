@@ -8,15 +8,28 @@ import {
   listLossReasons,
   updateLossReason,
 } from "./losses.repository";
-import type { CreateLossBody, CreateLossReasonBody, Loss, LossReason, UpdateLossReasonBody } from "./losses.schemas";
+import {
+  LOSS_REASON_INACTIVE,
+  LOSS_REASON_MISSING,
+  type CreateLossBody,
+  type CreateLossReasonBody,
+  type Loss,
+  type LossReason,
+  type UpdateLossReasonBody,
+} from "./losses.schemas";
 
 const NAME_TAKEN = "A loss reason with this name already exists.";
+
+/** Why a loss reason cannot be written off under, wherever stock leaves as a loss. */
+export const REASON_FAILURES = {
+  "reason-missing": { status: 404, message: LOSS_REASON_MISSING },
+  "reason-inactive": { status: 409, message: LOSS_REASON_INACTIVE },
+} as const;
 
 const LOSS_FAILURES = {
   missing: { status: 404, message: "Lot not found." },
   insufficient: { status: 409, message: "The lot does not hold that much." },
-  "reason-missing": { status: 404, message: "Loss reason not found." },
-  "reason-inactive": { status: 409, message: "Loss reason is inactive." },
+  ...REASON_FAILURES,
 } as const;
 
 export { listLossReasons };
@@ -28,7 +41,7 @@ export async function createLossReason(body: CreateLossReasonBody): Promise<Resu
 }
 
 export async function editLossReason(id: string, body: UpdateLossReasonBody): Promise<Result<LossReason, 404 | 409>> {
-  if ((await findLossReasonById(id)) === null) return fail(404, "Loss reason not found.");
+  if ((await findLossReasonById(id)) === null) return fail(404, LOSS_REASON_MISSING);
 
   if (body.name !== undefined) {
     const sameName = await findLossReasonByName(body.name);

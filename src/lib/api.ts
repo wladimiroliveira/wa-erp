@@ -18,13 +18,19 @@ import type {
   preWeighingPlanSchema,
   preWeighingSchema,
   preWeighingStageBodySchema,
+  startCandidateSchema,
 } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import type {
+  addProductionItemBodySchema,
+  batchBodySchema,
+  concludeItemBodySchema,
+  damageProductionItemBodySchema,
   finishConflictSchema,
-  finishProductionBodySchema,
+  itemWeighingBodySchema,
   productionPageSchema,
   productionLeftoversSchema,
   productionSchema,
+  productionSubstitutionSchema,
   startProductionBodySchema,
 } from "@/server/modules/productions/productions.schemas";
 import type {
@@ -111,13 +117,21 @@ export type CreatePreWeighingBody = z.input<typeof createPreWeighingBodySchema>;
 /** One stage of a pre-weighing body: the product, its items and, under it, the stages of the intermediates. */
 export type PreWeighingStageBody = z.input<typeof preWeighingStageBodySchema>;
 export type PreWeighing = z.output<typeof preWeighingSchema>;
+export type PreWeighingStatus = PreWeighing["status"];
+export type StartCandidate = z.output<typeof startCandidateSchema>;
 export type PreWeighingPage = z.output<typeof preWeighingPageSchema>;
 
 export type Production = z.output<typeof productionSchema>;
+export type ProductionSubstitution = z.output<typeof productionSubstitutionSchema>;
 export type ProductionItem = Production["items"][number];
 export type ProductionPage = z.output<typeof productionPageSchema>;
 export type StartProductionBody = z.input<typeof startProductionBodySchema>;
-export type FinishProductionBody = z.input<typeof finishProductionBodySchema>;
+export type ProductionBatch = ProductionItem["batches"][number];
+export type BatchBody = z.input<typeof batchBodySchema>;
+export type ItemWeighingBody = z.input<typeof itemWeighingBodySchema>;
+export type AddProductionItemBody = z.input<typeof addProductionItemBodySchema>;
+export type ConcludeItemBody = z.input<typeof concludeItemBodySchema>;
+export type DamageProductionItemBody = z.input<typeof damageProductionItemBodySchema>;
 export type FinishConflict = z.output<typeof finishConflictSchema>;
 export type LeftoversPreview = z.output<typeof productionLeftoversSchema>;
 

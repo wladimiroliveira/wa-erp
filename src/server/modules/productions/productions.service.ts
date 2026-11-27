@@ -1,227 +1,267 @@
-import { MeasurementUnit, Prisma, ProductionStatus, ProductKind } from "@prisma/client";
-import { localToday } from "@/server/lib/dates";
-import { fitsPlacesOf, TOO_MANY_PLACES, toStoredDecimal } from "@/server/lib/decimal";
+import type { z } from "zod";
+import { MeasurementUnit, Prisma, ProductionItemStatus, ProductionStatus } from "@prisma/client";
+import { localToday, toOptionalDateString } from "@/server/lib/dates";
 import { toPage } from "@/server/lib/pagination";
 import { isUniqueViolation } from "@/server/lib/prisma-errors";
 import { fail, failWith, succeed, type Failure, type Result } from "@/server/lib/result";
-import { findAncestorIds, findPreWeighingById } from "@/server/modules/pre-weighings/pre-weighings.repository";
-import { planPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
-import { holdStockBalances } from "@/server/modules/stock/stock.repository";
+import { findPreWeighingTree, isPendingStartRoot } from "@/server/modules/pre-weighings/pre-weighings.repository";
+import type { PreWeighingRecord } from "@/server/modules/pre-weighings/pre-weighings.repository";
+import { preWeighingStatusOf } from "@/server/modules/pre-weighings/pre-weighing-status";
+import { planPreWeighing, type PreWeighingPlan } from "@/server/modules/pre-weighings/pre-weighings.service";
+import { holdReasonInUse, RefusedReason } from "@/server/modules/losses/losses.repository";
+import { REASON_FAILURES } from "@/server/modules/losses/losses.service";
+import { holdStockBalances, readStockBalance } from "@/server/modules/stock/stock.repository";
 import {
-  consumeProductionInput,
-  discardLeftover,
+  closeIfResolved,
   findProductionById,
   inProductionTransaction,
+  insertItemDamage,
   insertProduction,
   listProductions,
   lockProductionInProgress,
-  markProductionCanceled,
-  markProductionFinished,
-  outputProductionItem,
+  markItemSubstituted,
   previewProductionLeftovers,
-  releasePreWeighings,
-  rescaleProductionItem,
+  writeOffForDamage,
 } from "./productions.repository";
 import type { PlannedProductionItem, ProductionRecord } from "./productions.repository";
-import type { ProductionItemRequest } from "./productions.schemas";
-import { leftoverOf, splitLeftover } from "./production-leftovers";
-import { maxQuantityFromStock, scaleInputs } from "./production-reduction";
+import type { startProductionBodySchema } from "./productions.schemas";
+import { asConcluded, isTakenByAnother } from "./production-batches";
+import { dependenciesOf, waitingFor, type DependencyItem } from "./production-dependencies";
+import { addReserved, reservedBy, type Reserved } from "@/shared/plan-reservation";
 
-type ProductionFailure = Failure<404 | 409>;
-type ProductionResult = Result<PresentedProduction, 404 | 409>;
+export type ProductionFailure = Failure<404 | 409>;
+export type ProductionResult = Result<PresentedProduction, 404 | 409>;
 
-const notFound = fail(404, "Production not found.");
+export const productionNotFound = fail(404, "Production not found.");
 const notInProgress = fail(409, "Production is not in progress.");
+export const notPending = fail(409, "The item is not pending.");
+export const itemNotFound = fail(404, "Production item not found.");
+export const awaitsNewWeighing = fail(409, "The item waits for a new weighing.");
 
-const summaryOf = ({ sku, description, unit }: { sku: string; description: string; unit: MeasurementUnit }) => ({
+export type ProductionItemRecord = ProductionRecord["items"][number];
+
+export const summaryOf = ({ sku, description, unit }: { sku: string; description: string; unit: MeasurementUnit }) => ({
   sku,
   description,
   unit,
 });
 
-/** A production as the screens and the mobile app read it: every amount as a decimal string. */
-export const presentProduction = (production: ProductionRecord) => ({
-  id: production.id,
-  status: production.status,
-  createdAt: production.createdAt.toISOString(),
-  finishedAt: production.finishedAt?.toISOString() ?? null,
-  canceledAt: production.canceledAt?.toISOString() ?? null,
-  hasLeftoversInCost: production.hasLeftoversInCost,
-  items: production.items.map((item) => ({
+const dependencyItemsOf = (items: ProductionItemRecord[]): DependencyItem[] =>
+  items.map((item) => ({
     id: item.id,
-    product: item.product,
-    preWeighingId: item.preWeighingId,
-    expectedQuantity: item.expectedQuantity.toString(),
-    producedQuantity: item.producedQuantity?.toString() ?? null,
-    unitCost: item.unitCost?.toString() ?? null,
-    inputs: item.inputs.map(({ product, quantity, unitCost, leftovers }) => ({
-      product: summaryOf(product),
-      quantity: quantity.toString(),
-      unitCost: unitCost?.toString() ?? null,
-      leftovers: leftovers.map((leftover) => ({
-        lotId: leftover.lotId,
-        quantity: leftover.quantity.toString(),
-        unitCost: leftover.unitCost.toString(),
+    productSku: item.product.sku,
+    status: item.status,
+    inputSkus: item.inputs.map(({ product }) => product.sku),
+  }));
+
+// A damage that named the pre-weighing of a guided item took it away, and an item added for a shortage
+// has nothing to be made from: neither can be made until a weighing is recorded for it. A free item
+// damaged keeps its inputs, ready to be made again.
+export const awaitsWeighing = (item: ProductionItemRecord) =>
+  item.preWeighingId === null &&
+  (item.damages.some((damage) => damage.preWeighingId !== null) || item.inputs.length === 0);
+
+/** A production as the screens and the mobile app read it: every amount as a decimal string. */
+export const presentProduction = (production: ProductionRecord) => {
+  const dependencies = dependenciesOf(dependencyItemsOf(production.items));
+
+  return {
+    id: production.id,
+    status: production.status,
+    createdAt: production.createdAt.toISOString(),
+    finishedAt: production.finishedAt?.toISOString() ?? null,
+    canceledAt: production.canceledAt?.toISOString() ?? null,
+    items: production.items.map((item) => ({
+      id: item.id,
+      status: item.status,
+      finishedAt: item.finishedAt?.toISOString() ?? null,
+      hasLeftoversInCost: item.hasLeftoversInCost,
+      product: item.product,
+      substitutedAt: item.substitutedAt?.toISOString() ?? null,
+      weighedAt: item.preWeighing?.createdAt.toISOString() ?? null,
+      preWeighingId: item.preWeighingId,
+      expectedQuantity: item.expectedQuantity.toString(),
+      producedQuantity: item.producedQuantity?.toString() ?? null,
+      unitCost: item.unitCost?.toString() ?? null,
+      dependsOn: dependencies.get(item.id) ?? [],
+      awaitsWeighing: awaitsWeighing(item),
+      batches: item.batches.map(({ id, quantity, expiresAt, source, createdAt }) => ({
+        id,
+        quantity: quantity.toString(),
+        expiresAt: toOptionalDateString(expiresAt),
+        source,
+        createdAt: createdAt.toISOString(),
+      })),
+      extraWeighings: item.extraWeighings.length,
+      extraWeighedAt: item.extraWeighings.map(({ createdAt }) => createdAt.toISOString()),
+      damages: item.damages.map(({ id, reason, note, createdAt, preWeighingId }) => ({
+        id,
+        reason,
+        note,
+        createdAt: createdAt.toISOString(),
+        preWeighingId,
+      })),
+      inputs: item.inputs.map(({ product, quantity, unitCost, leftovers }) => ({
+        product: summaryOf(product),
+        quantity: quantity.toString(),
+        unitCost: unitCost?.toString() ?? null,
+        leftovers: leftovers.map((leftover) => ({
+          lotId: leftover.lotId,
+          quantity: leftover.quantity.toString(),
+          unitCost: leftover.unitCost.toString(),
+        })),
       })),
     })),
-  })),
-});
+  };
+};
 
 export type PresentedProduction = ReturnType<typeof presentProduction>;
 
-// A lot with a packaging that inputs which cannot be kept once opened took from, as it stood before
-// the first of them: what is left of the packagings opened is worked out from it once all have taken.
-type OpenedLot = {
-  lotId: string;
-  productSku: string;
-  lotQuantity: Prisma.Decimal;
-  content: Prisma.Decimal;
-  unitCost: Prisma.Decimal;
-  takes: { itemId: string; inputId: string; taken: Prisma.Decimal }[];
-};
-
-function openedBy(
-  opened: Map<string, OpenedLot>,
-  input: { itemId: string; inputId: string; productSku: string },
-  takes: Awaited<ReturnType<typeof consumeProductionInput>>["takes"],
-) {
-  for (const { lotId, quantity, unitCost, lotQuantity, packageContent } of takes) {
-    if (lotId === null || lotQuantity === null || packageContent === null) continue;
-
-    const lot = opened.get(lotId) ?? {
-      lotId,
-      productSku: input.productSku,
-      lotQuantity,
-      content: packageContent,
-      unitCost,
-      takes: [],
-    };
-
-    lot.takes.push({ itemId: input.itemId, inputId: input.inputId, taken: quantity });
-    opened.set(lotId, lot);
-  }
-}
-
 // Thrown inside the transaction to undo what it already moved, and turned back into an answer
 // outside of it.
-class ProductionAborted extends Error {
+export class ProductionAborted extends Error {
   constructor(readonly result: ProductionFailure) {
     super(result.message);
   }
 }
 
-// Nothing holds an intermediate for the product that takes it, so the stock of each one is checked
-// against what all the items take of it together, with the balances already held. Bought products
-// keep letting the balance go negative.
-function intermediateShortage(
-  production: ProductionRecord,
-  balances: { productSku: string; quantity: Prisma.Decimal }[],
-) {
-  const available = new Map(balances.map(({ productSku, quantity }) => [productSku.toLowerCase(), quantity]));
-  const needed = new Map<string, Prisma.Decimal>();
-
-  for (const item of production.items) {
-    for (const { product, quantity } of item.inputs) {
-      if (product.kind !== ProductKind.MANUFACTURED) continue;
-
-      needed.set(product.sku, (needed.get(product.sku) ?? new Prisma.Decimal(0)).add(quantity));
-    }
+// Holds the production row, as everything that changes its items does, and reads it as it stands
+// once held: whatever held it before, such as a reduction of an item, has written by then.
+export async function holdProduction(tx: Prisma.TransactionClient, id: string) {
+  if (!(await lockProductionInProgress(tx, id))) {
+    throw new ProductionAborted((await findProductionById(id, tx)) === null ? productionNotFound : notInProgress);
   }
 
-  const availableOf = (sku: string) => available.get(sku.toLowerCase()) ?? new Prisma.Decimal(0);
-  const isShort = (sku: string) => needed.has(sku) && needed.get(sku)!.gt(availableOf(sku));
-  const shortages = [];
-  const items = [];
-
-  for (const item of production.items) {
-    const short = item.inputs.filter(
-      ({ product }) => product.kind === ProductKind.MANUFACTURED && isShort(product.sku),
-    );
-
-    if (short.length === 0) continue;
-
-    for (const { product, quantity } of short) {
-      shortages.push({
-        itemId: item.id,
-        product: summaryOf(product),
-        needed: quantity.toString(),
-        available: availableOf(product.sku).toString(),
-      });
-    }
-
-    const maxQuantity = maxQuantityFromStock({
-      expected: item.expectedQuantity,
-      unit: item.product.unit,
-      // Items that share a short product share its stock, each by the part of the need it takes.
-      needs: short.map(({ product, quantity }) => ({
-        needed: quantity,
-        available: availableOf(product.sku).mul(quantity).div(needed.get(product.sku)!),
-      })),
-    });
-
-    items.push({ itemId: item.id, maxQuantity: maxQuantity.toString() });
-  }
-
-  if (shortages.length === 0) return null;
-
-  return failWith(409, "Not enough of an intermediate in stock.", { shortages, items });
+  return (await findProductionById(id, tx))!;
 }
 
-// The inputs of an item are settled when the production starts, so what the operator is guided by
-// is what leaves the stock when it finishes, whatever happens to the recipe in between.
-async function planItem(request: ProductionItemRequest): Promise<Result<PlannedProductionItem, 404 | 409>> {
-  if ("preWeighingId" in request) {
-    const preWeighing = await findPreWeighingById(request.preWeighingId);
+// The items asked for, in the order of the production, when each is a pending item of it.
+function chosenItems(production: ProductionRecord, ids: string[]): Result<ProductionItemRecord[], 409> {
+  const wanted = new Set(ids.map((id) => id.toLowerCase()));
+  const chosen = production.items.filter((item) => wanted.has(item.id));
 
-    if (preWeighing === null) return fail(404, "Pre-weighing not found.");
+  if (chosen.length !== wanted.size) return fail(409, "The items do not match the items of the production.");
+  if (chosen.some((item) => item.status !== ProductionItemStatus.PENDING)) return notPending;
 
-    return succeed({
-      productSku: preWeighing.product.sku,
-      preWeighingId: preWeighing.id,
-      expectedQuantity: preWeighing.quantity,
-      inputs: preWeighing.items.map(({ product, plannedQuantity, weighedQuantity }) => ({
-        productSku: product.sku,
-        // A line that was not weighed is guided by what was planned.
-        quantity: weighedQuantity ?? plannedQuantity,
-      })),
-    });
-  }
+  return succeed(chosen);
+}
 
-  const result = await planPreWeighing(request.productSku, request.quantity, undefined, { stages: false });
+// An item is made after the items of the production that make what it takes, so it cannot finish
+// while one of them is pending, not even in the same call.
+export function pendingDependencies(production: ProductionRecord, finishing: ProductionItemRecord[]) {
+  const dependencies = dependencyItemsOf(production.items);
+  const byId = new Map(production.items.map((item) => [item.id, item]));
+  const waiting = finishing
+    .map((item) => ({ item, waitsFor: waitingFor(item.id, dependencies) }))
+    .filter(({ waitsFor }) => waitsFor.length > 0);
 
-  if (!result.ok) return result;
+  if (waiting.length === 0) return null;
 
-  return succeed({
-    productSku: result.data.product.sku,
-    preWeighingId: null,
-    expectedQuantity: result.data.quantity,
-    inputs: result.data.items.map(({ product, plannedQuantity }) => ({
-      productSku: product.sku,
-      quantity: plannedQuantity,
+  return failWith(409, "An item waits for another item of the production.", {
+    waitingFor: waiting.map(({ item, waitsFor }) => ({
+      itemId: item.id,
+      product: summaryOf(item.product),
+      waitsFor: waitsFor.map((itemId) => ({ itemId, product: summaryOf(byId.get(itemId)!.product) })),
     })),
   });
 }
 
-export async function startProduction(input: {
-  createdById: string;
-  items: ProductionItemRequest[];
-}): Promise<ProductionResult> {
-  const items: PlannedProductionItem[] = [];
+// The inputs of an item are settled when the production starts, so what the operator is guided by
+// is what leaves the stock when it finishes, whatever happens to the recipe in between.
+export function itemFromPreWeighing(preWeighing: PreWeighingRecord): PlannedProductionItem {
+  return {
+    productSku: preWeighing.product.sku,
+    preWeighingId: preWeighing.id,
+    expectedQuantity: preWeighing.quantity,
+    inputs: preWeighing.items.map(({ product, plannedQuantity, weighedQuantity }) => ({
+      productSku: product.sku,
+      // A line that was not weighed is guided by what was planned.
+      quantity: weighedQuantity ?? plannedQuantity,
+    })),
+  };
+}
 
-  for (const request of input.items) {
-    const result = await planItem(request);
+const isPending = (preWeighing: PreWeighingRecord) =>
+  preWeighingStatusOf({
+    damaged: preWeighing.damage !== null,
+    itemStatus: preWeighing.production?.status ?? null,
+    extraItemStatus: preWeighing.productionWeighing?.productionItem.status ?? null,
+  }) === "PENDING";
 
-    if (!result.ok) return result;
+// The root and the pending pre-weighings under it. The tree comes depth-first, so a parent is seen
+// before its children: one that is not pending cuts its branch.
+async function guidedItems(rootId: string): Promise<Result<PlannedProductionItem[], 404 | 409>> {
+  const [root, ...descendants] = await findPreWeighingTree(rootId);
 
-    items.push(result.data);
+  if (root === undefined) return fail(404, "Pre-weighing not found.");
+  if (!(await isPendingStartRoot(rootId))) return fail(409, "The pre-weighing is not a pending root.");
+
+  const kept = new Set([root.id]);
+
+  for (const preWeighing of descendants) {
+    if (isPending(preWeighing) && kept.has(preWeighing.parent!.id)) kept.add(preWeighing.id);
   }
 
-  // An intermediate is produced inside its parent's session, so starting both would count it twice.
-  const guidedIds = new Set(items.flatMap((item) => (item.preWeighingId === null ? [] : [item.preWeighingId])));
+  return succeed([root, ...descendants].filter(({ id }) => kept.has(id)).map(itemFromPreWeighing));
+}
 
-  for (const id of guidedIds) {
-    if ((await findAncestorIds(id)).some((ancestorId) => guidedIds.has(ancestorId))) {
-      return fail(409, "A pre-weighing cannot be produced together with one of its intermediates.");
+// A free item brings in, as items of its own, the intermediates its plan makes: the root first, then
+// every stage depth-first, each with the inputs its recipe plans. It is planned against the stock that
+// the items before it leave, `reserved`, and answers what it takes of it too.
+async function freeItems(
+  request: { productSku: string; quantity: string; produce?: { productSku: string; quantity: string }[] },
+  reserved: Reserved,
+): Promise<Result<{ items: PlannedProductionItem[]; reserved: Reserved }, 404 | 409>> {
+  const decimals = (entries: [string, string][]) =>
+    new Map(entries.map(([productSku, quantity]) => [productSku.toLowerCase(), new Prisma.Decimal(quantity)]));
+  const produce = decimals((request.produce ?? []).map(({ productSku, quantity }) => [productSku, quantity]));
+  const result = await planPreWeighing(request.productSku, request.quantity, produce, {
+    reserved: decimals(Object.entries(reserved)),
+  });
+
+  if (!result.ok) return result;
+
+  const items: PlannedProductionItem[] = [];
+  const visit = (plan: PreWeighingPlan) => {
+    items.push({
+      productSku: plan.product.sku,
+      preWeighingId: null,
+      expectedQuantity: plan.quantity,
+      inputs: plan.items.map(({ product, plannedQuantity }) => ({
+        productSku: product.sku,
+        quantity: plannedQuantity,
+      })),
+    });
+
+    for (const { manufactured } of plan.items) if (manufactured?.stage) visit(manufactured.stage);
+  };
+
+  visit(result.data);
+
+  return succeed({ items, reserved: addReserved(reserved, reservedBy(result.data)) });
+}
+
+export async function startProduction(
+  input: { createdById: string } & z.infer<typeof startProductionBodySchema>,
+): Promise<ProductionResult> {
+  const items: PlannedProductionItem[] = [];
+
+  if ("preWeighingId" in input) {
+    const guided = await guidedItems(input.preWeighingId);
+
+    if (!guided.ok) return guided;
+
+    items.push(...guided.data);
+  } else {
+    let reserved: Reserved = {};
+
+    for (const request of input.items) {
+      const result = await freeItems(request, reserved);
+
+      if (!result.ok) return result;
+
+      items.push(...result.data.items);
+      reserved = result.data.reserved;
     }
   }
 
@@ -236,126 +276,25 @@ export async function startProduction(input: {
   }
 }
 
-// Finishing is where the stock moves: every input leaves the lots that expire first, at what each
-// of them cost, and each product comes in as a lot costing what its inputs cost, spread over what
-// was really produced.
-export async function finishProduction(input: {
-  id: string;
-  createdById: string;
-  items: { id: string; producedQuantity: string; expiresAt: string | null }[];
-  hasLeftoversInCost?: boolean;
-}): Promise<ProductionResult> {
-  const { id, createdById, hasLeftoversInCost = true } = input;
-  // Only for the early answers: what the finish works on is read again once the production is held.
-  const early = await findProductionById(id);
-
-  if (early === null) return notFound;
-  if (early.status !== ProductionStatus.IN_PROGRESS) return notInProgress;
-
-  const producedById = new Map(input.items.map((item) => [item.id.toLowerCase(), item]));
-
-  try {
-    const today = localToday();
-
-    await inProductionTransaction(async (tx) => {
-      if (!(await markProductionFinished(tx, id, hasLeftoversInCost))) throw new ProductionAborted(notInProgress);
-
-      // The conditional update waited for whatever held the production, such as a reduction of an
-      // item, so only now are its items and inputs the ones that leave the stock.
-      const production = (await findProductionById(id, tx))!;
-
-      if (
-        production.items.length !== producedById.size ||
-        production.items.some((item) => !producedById.has(item.id))
-      ) {
-        throw new ProductionAborted(fail(409, "The items do not match the items of the production."));
-      }
-
-      const balances = await holdStockBalances(
-        tx,
-        production.items.flatMap((item) => [item.product.sku, ...item.inputs.map((input) => input.product.sku)]),
-      );
-      const refusal = intermediateShortage(production, balances);
-
-      if (refusal !== null) throw new ProductionAborted(refusal);
-
-      // Every item takes its inputs first: the items of a production are made together, so they
-      // share the packagings they open, and what is left of them is only known once all have taken.
-      const costs = new Map(production.items.map((item) => [item.id, new Prisma.Decimal(0)]));
-      const opened = new Map<string, OpenedLot>();
-
-      for (const item of production.items) {
-        for (const { id: inputId, product, quantity } of item.inputs) {
-          const { cost, takes } = await consumeProductionInput(tx, {
-            id: inputId,
-            productSku: product.sku,
-            quantity,
-            createdById,
-            today,
-          });
-
-          costs.set(item.id, costs.get(item.id)!.add(cost));
-
-          if (!product.isStorableOnceOpened)
-            openedBy(opened, { itemId: item.id, inputId, productSku: product.sku }, takes);
-        }
-      }
-
-      for (const lot of opened.values()) {
-        const taken = Prisma.Decimal.sum(0, ...lot.takes.map((take) => take.taken));
-        const left = leftoverOf(lot.lotQuantity, taken, lot.content);
-
-        for (const share of splitLeftover(left, lot.takes)) {
-          const { itemId } = lot.takes.find((take) => take.inputId === share.inputId)!;
-
-          await discardLeftover(tx, {
-            inputId: share.inputId,
-            lotId: lot.lotId,
-            productSku: lot.productSku,
-            quantity: share.quantity,
-            unitCost: lot.unitCost,
-            createdById,
-          });
-
-          if (hasLeftoversInCost) costs.set(itemId, costs.get(itemId)!.add(share.quantity.mul(lot.unitCost)));
-        }
-      }
-
-      for (const item of production.items) {
-        const { producedQuantity, expiresAt } = producedById.get(item.id)!;
-        const unitCost = toStoredDecimal(costs.get(item.id)!.div(producedQuantity));
-
-        if (unitCost === null) {
-          throw new ProductionAborted(fail(409, "Produced quantity is out of range for the cost of the inputs."));
-        }
-
-        await outputProductionItem(tx, {
-          id: item.id,
-          productSku: item.product.sku,
-          quantity: producedQuantity,
-          unitCost,
-          expiresAt,
-          createdById,
-        });
-      }
-    });
-  } catch (error) {
-    if (error instanceof ProductionAborted) return error.result;
-
-    throw error;
-  }
-
-  return succeed(presentProduction((await findProductionById(id))!));
-}
-
-/** What finishing the production would discard of the opened packagings, priced at each lot's cost. */
-export async function previewLeftovers(id: string) {
+/**
+ * What concluding these items together would discard of the opened packagings, each taking what its
+ * conclusion would, priced at each lot's cost. With no items, every pending one.
+ */
+export async function previewLeftovers(id: string, itemIds?: string[]) {
   const production = await findProductionById(id);
 
-  if (production === null) return notFound;
+  if (production === null) return productionNotFound;
   if (production.status !== ProductionStatus.IN_PROGRESS) return notInProgress;
 
-  const items = (await previewProductionLeftovers(production, localToday())).map(({ itemId, leftovers }) => ({
+  const chosen =
+    itemIds === undefined
+      ? succeed(production.items.filter((item) => item.status === ProductionItemStatus.PENDING))
+      : chosenItems(production, itemIds);
+
+  if (!chosen.ok) return chosen;
+
+  const concluding = chosen.data.map((item) => asConcluded(production.items, item));
+  const items = (await previewProductionLeftovers(concluding, localToday())).map(({ itemId, leftovers }) => ({
     itemId,
     leftovers: leftovers.map(({ product, lotId, quantity, unitCost }) => ({
       product: summaryOf(product),
@@ -375,58 +314,141 @@ export async function previewLeftovers(id: string) {
   return succeed({ items, totalCost: total.toFixed(2) });
 }
 
-// A production moves the stock only when it finishes, so giving one up has nothing to put back.
-export async function cancelProduction(id: string): Promise<ProductionResult> {
-  if ((await findProductionById(id)) === null) return notFound;
-
-  const canceled = await inProductionTransaction(async (tx) => {
-    if (!(await markProductionCanceled(tx, id))) return false;
-
-    await releasePreWeighings(tx, id);
-
-    return true;
-  });
-
-  if (!canceled) return notInProgress;
-
-  return succeed(presentProduction((await findProductionById(id))!));
-}
-
-// The yield an item is expected to have came out lower than planned: its inputs follow it in the
-// same proportion. The pre-weighing that guided it stays as it was weighed. The production is held
-// from the check that it is in progress until the item is written, so it cannot finish or be
-// canceled in between.
-export async function reduceProductionItem(input: {
+// An item went wrong before it finished, such as a filling that burnt: what it took leaves the
+// stock as losses under the reason given, and nothing comes in. It is refused where a finish would
+// be, since it uses up the same inputs: the production is held as a finish holds it, so one of them
+// sees what the other wrote.
+export async function damageProductionItem(input: {
   productionId: string;
   itemId: string;
-  quantity: string;
+  reasonId: string;
+  note?: string | null;
+  createdById: string;
+}): Promise<ProductionResult> {
+  const { productionId, itemId, reasonId, createdById } = input;
+  const note = input.note ?? null;
+
+  try {
+    const today = localToday();
+
+    await inProductionTransaction(async (tx) => {
+      const production = await holdProduction(tx, productionId);
+      const item = production.items.find((found) => found.id === itemId.toLowerCase());
+
+      if (item === undefined) throw new ProductionAborted(itemNotFound);
+      if (item.status !== ProductionItemStatus.PENDING) throw new ProductionAborted(notPending);
+      if (hasBatches(item)) throw new ProductionAborted(itemHasBatches);
+      if (awaitsWeighing(item)) throw new ProductionAborted(awaitsNewWeighing);
+
+      const waiting = pendingDependencies(production, [item]);
+
+      if (waiting !== null) throw new ProductionAborted(waiting);
+
+      // Every balance the write-off moves is held before any moves, in the order a finish holds them.
+      await holdStockBalances(
+        tx,
+        item.inputs.map(({ product }) => product.sku),
+      );
+      await holdReasonInUse(tx, reasonId);
+
+      const damage = await insertItemDamage(tx, {
+        itemId: item.id,
+        preWeighingId: item.preWeighingId,
+        reasonId,
+        note,
+        createdById,
+      });
+
+      for (const { product, quantity } of item.inputs) {
+        await writeOffForDamage(tx, {
+          productSku: product.sku,
+          quantity,
+          damageId: damage.id,
+          reasonId,
+          note,
+          createdById,
+          today,
+        });
+      }
+    });
+  } catch (error) {
+    if (error instanceof ProductionAborted) return error.result;
+    if (error instanceof RefusedReason) {
+      const { status, message } = REASON_FAILURES[error.failure];
+
+      return fail(status, message);
+    }
+
+    throw error;
+  }
+
+  return succeed(presentProduction((await findProductionById(productionId))!));
+}
+
+// Batches and extra weighings are what the operator really made: a damage or a substitution would
+// throw them away.
+const hasBatches = (item: ProductionItemRecord) => item.batches.length > 0 || item.extraWeighings.length > 0;
+
+const itemHasBatches = fail(409, "The item already has batches.");
+
+const notIntermediate = fail(409, "Only an intermediate can be substituted.");
+
+// An intermediate is an item another item of the production takes, in any state; the item must still
+// be pending to be resolved from stock.
+function substitutable(production: ProductionRecord, itemId: string): Result<ProductionItemRecord, 404 | 409> {
+  const item = production.items.find((found) => found.id === itemId.toLowerCase());
+
+  if (item === undefined) return itemNotFound;
+  if (item.status !== ProductionItemStatus.PENDING) return notPending;
+  if (hasBatches(item)) return itemHasBatches;
+
+  return isTakenByAnother(production.items, item) ? succeed(item) : notIntermediate;
+}
+
+/** The stock of an intermediate against what the pending items of the production take of it. */
+export async function previewSubstitution(input: { productionId: string; itemId: string }) {
+  const production = await findProductionById(input.productionId);
+
+  if (production === null) return productionNotFound;
+  if (production.status !== ProductionStatus.IN_PROGRESS) return notInProgress;
+
+  const item = substitutable(production, input.itemId);
+
+  if (!item.ok) return item;
+
+  const { product } = item.data;
+  const needed = Prisma.Decimal.sum(
+    0,
+    ...production.items
+      .filter(({ status }) => status === ProductionItemStatus.PENDING)
+      .flatMap(({ inputs }) =>
+        inputs.filter((line) => line.product.sku === product.sku).map(({ quantity }) => quantity),
+      ),
+  );
+
+  return succeed({
+    product: summaryOf(product),
+    needed: needed.toString(),
+    available: (await readStockBalance(product.sku)).toString(),
+  });
+}
+
+// The operator resolves an intermediate with stock of the same product instead of making it: nothing
+// moves, and the item that takes it consumes from stock at its own finish, under the shortage check.
+export async function substituteProductionItem(input: {
+  productionId: string;
+  itemId: string;
 }): Promise<ProductionResult> {
   const { productionId, itemId } = input;
-  const quantity = new Prisma.Decimal(input.quantity);
 
   try {
     await inProductionTransaction(async (tx) => {
-      if (!(await lockProductionInProgress(tx, productionId))) {
-        throw new ProductionAborted((await findProductionById(productionId, tx)) === null ? notFound : notInProgress);
-      }
+      const item = substitutable(await holdProduction(tx, productionId), itemId);
 
-      const item = (await findProductionById(productionId, tx))!.items.find(
-        (found) => found.id === itemId.toLowerCase(),
-      );
+      if (!item.ok) throw new ProductionAborted(item);
 
-      if (item === undefined) throw new ProductionAborted(fail(404, "Production item not found."));
-      if (quantity.gte(item.expectedQuantity)) {
-        throw new ProductionAborted(fail(409, "The quantity must be less than the expected quantity."));
-      }
-      if (!fitsPlacesOf(quantity, item.product.unit)) {
-        throw new ProductionAborted(fail(409, TOO_MANY_PLACES));
-      }
-
-      const inputs = scaleInputs(item.inputs, item.expectedQuantity, quantity);
-
-      if (inputs === null) throw new ProductionAborted(fail(409, "Quantity is out of range for this recipe."));
-
-      await rescaleProductionItem(tx, { id: itemId, expectedQuantity: quantity, inputs });
+      await markItemSubstituted(tx, item.data.id);
+      await closeIfResolved(tx, productionId);
     });
   } catch (error) {
     if (error instanceof ProductionAborted) return error.result;
@@ -440,7 +462,7 @@ export async function reduceProductionItem(input: {
 export async function getProduction(id: string): Promise<Result<PresentedProduction, 404>> {
   const production = await findProductionById(id);
 
-  if (production === null) return notFound;
+  if (production === null) return productionNotFound;
 
   return succeed(presentProduction(production));
 }

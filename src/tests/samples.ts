@@ -9,10 +9,12 @@ import type {
   Packaging,
   Product,
   Production,
+  ProductionBatch,
   ProductionItem,
   Recipe,
   RecipeSummary,
   Role,
+  StartCandidate,
   PackagingCost,
   ProductStock,
   StockItem,
@@ -191,6 +193,17 @@ export function aLoss(over: Partial<Loss> = {}): Loss {
   };
 }
 
+type PlanIngredient = PreWeighingPlan["items"][number];
+
+export function aProductSummary(over: Partial<PlanIngredient["product"]> = {}): PlanIngredient["product"] {
+  return { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM", ...over };
+}
+
+/** A line of a plan: a bought ingredient with no lot to weigh it from, unless told otherwise. */
+export function aPlanIngredient(over: Partial<PlanIngredient> = {}): PlanIngredient {
+  return { product: aProductSummary(), plannedQuantity: "6", lots: [], shortfall: "0", manufactured: null, ...over };
+}
+
 export function aPreWeighingPlan(over: Partial<PreWeighingPlan> = {}): PreWeighingPlan {
   return {
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
@@ -215,7 +228,7 @@ export function aPreWeighing(over: Partial<PreWeighing> = {}): PreWeighing {
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
     quantity: "10",
     createdAt: "2026-10-13T12:00:00.000Z",
-    isAvailable: true,
+    status: "PENDING",
     parent: null,
     children: [],
     items: [
@@ -229,14 +242,40 @@ export function aPreWeighing(over: Partial<PreWeighing> = {}): PreWeighing {
   };
 }
 
+export function aStartCandidate(over: Partial<StartCandidate> = {}): StartCandidate {
+  return { ...aPreWeighing(), stages: [], ...over };
+}
+
+export function aProductionBatch(over: Partial<ProductionBatch> = {}): ProductionBatch {
+  return {
+    id: "018f0000-0000-7000-8000-0000000000c1",
+    quantity: "10",
+    expiresAt: null,
+    source: "PRODUCED",
+    createdAt: "2026-10-14T12:00:00.000Z",
+    ...over,
+  };
+}
+
 export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionItem {
   return {
     id: "018f0000-0000-7000-8000-0000000000b1",
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
+    status: "PENDING",
+    finishedAt: null,
+    hasLeftoversInCost: null,
+    substitutedAt: null,
+    weighedAt: null,
     preWeighingId: null,
     expectedQuantity: "10",
     producedQuantity: null,
     unitCost: null,
+    dependsOn: [],
+    awaitsWeighing: false,
+    batches: [],
+    extraWeighings: 0,
+    extraWeighedAt: [],
+    damages: [],
     inputs: [
       {
         product: { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM" },
@@ -256,7 +295,6 @@ export function aProduction(over: Partial<Production> = {}): Production {
     createdAt: "2026-10-14T12:00:00.000Z",
     finishedAt: null,
     canceledAt: null,
-    hasLeftoversInCost: null,
     items: [aProductionItem()],
     ...over,
   };

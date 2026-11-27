@@ -2,8 +2,10 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadMorePreWeighings } from "@/features/pre-weighings/actions";
+import type { PreWeighingFilter } from "@/features/pre-weighings/status-filter";
 import { PreWeighingsListPage } from "@/features/pre-weighings/PreWeighingsListPage";
 import type { Permission, PreWeighing, PreWeighingPage } from "@/lib/api";
+import { navigation } from "@/tests/navigation";
 import { renderWithProviders, type RenderOptions } from "@/tests/render";
 import { columnHeaders } from "@/tests/table-layouts";
 import { aCurrentUser, aPreWeighing } from "@/tests/samples";
@@ -19,11 +21,20 @@ function open(
   listing: PreWeighingPage = page(),
   permissions: Permission[] = ["PRODUCTION_READ"],
   options: RenderOptions = {},
+  view: { filter?: PreWeighingFilter; staleOnly?: boolean; staleCount?: number } = {},
 ) {
-  return renderWithProviders(<PreWeighingsListPage page={listing} />, {
-    user: aCurrentUser({ permissions }),
-    ...options,
-  });
+  return renderWithProviders(
+    <PreWeighingsListPage
+      page={listing}
+      filter={view.filter ?? "all"}
+      staleOnly={view.staleOnly ?? false}
+      staleCount={view.staleCount ?? 0}
+    />,
+    {
+      user: aCurrentUser({ permissions }),
+      ...options,
+    },
+  );
 }
 
 beforeEach(() => {
@@ -82,7 +93,7 @@ describe("PreWeighingsListPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
 
     expect(await screen.findByRole("link", { name: "Pão de queijo" })).toBeInTheDocument();
-    expect(loadMorePreWeighings).toHaveBeenCalledWith("pre-weighing-2");
+    expect(loadMorePreWeighings).toHaveBeenCalledWith("pre-weighing-2", { status: undefined, staleOnly: false });
     expect(screen.getByRole("link", { name: "Pão francês" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Carregar mais" })).not.toBeInTheDocument();
   });
@@ -139,5 +150,76 @@ describe("PreWeighingsListPage sizing", () => {
     open();
 
     expect(screen.getByRole("link", { name: "Pão francês" })).toHaveClass("min-h-8");
+  });
+});
+
+describe("PreWeighingsListPage status", () => {
+  it.each([
+    ["PENDING", "Pendente"],
+    ["IN_PRODUCTION", "Em produção"],
+    ["PRODUCED", "Produzida"],
+    ["DAMAGED", "Avariada"],
+  ] as const)("shows %s as %s in the status column", (status, label) => {
+    open(page([aPreWeighing({ status })]));
+
+    const [, row] = screen.getAllByRole("row");
+
+    expect(within(row!).getByText(label)).toBeInTheDocument();
+  });
+
+  it("filters by status through the address and drops the cursor", async () => {
+    open(page(), ["PRODUCTION_READ"], { route: "/pre-weighings?cursor=abc" });
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "DAMAGED");
+    expect(navigation.url).toBe("/pre-weighings?status=DAMAGED");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "all");
+    expect(navigation.url).toBe("/pre-weighings");
+  });
+
+  it("keeps the filter when loading more", async () => {
+    vi.mocked(loadMorePreWeighings).mockResolvedValue({ ok: true, data: page([], null) });
+    open(page([aPreWeighing()], "cursor-1"), ["PRODUCTION_READ"], {}, { filter: "PENDING" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
+
+    expect(loadMorePreWeighings).toHaveBeenCalledWith("cursor-1", { status: "PENDING", staleOnly: false });
+  });
+});
+
+describe("PreWeighingsListPage stale warning", () => {
+  it("warns of one pending pre-weighing in the singular, with a link to the stale ones", () => {
+    open(page(), ["PRODUCTION_READ"], {}, { staleCount: 1 });
+
+    const warning = screen.getByRole("status");
+
+    expect(warning).toHaveTextContent("1 pré-pesagem pendente há mais de 2 dias");
+    expect(within(warning).getByRole("link", { name: "Ver" })).toHaveAttribute("href", "/pre-weighings?staleOnly=true");
+  });
+
+  it("warns in the plural", () => {
+    open(page(), ["PRODUCTION_READ"], {}, { staleCount: 3 });
+
+    expect(screen.getByRole("status")).toHaveTextContent("3 pré-pesagens pendentes há mais de 2 dias");
+  });
+
+  it("says the list is narrowed to the stale ones, with a link to clear it", () => {
+    open(page(), ["PRODUCTION_READ"], {}, { staleOnly: true, staleCount: 3 });
+
+    const narrowed = screen.getByText("Mostrando pendentes há mais de 2 dias.").parentElement!;
+
+    expect(within(narrowed).getByRole("link", { name: "Limpar" })).toHaveAttribute("href", "/pre-weighings");
+  });
+
+  it("does not say the list is narrowed when it is not", () => {
+    open(page(), ["PRODUCTION_READ"], {}, { staleCount: 3 });
+
+    expect(screen.queryByText("Mostrando pendentes há mais de 2 dias.")).not.toBeInTheDocument();
+  });
+
+  it("shows no warning when none is stale", () => {
+    open();
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

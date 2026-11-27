@@ -43,3 +43,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/roles", label: "Papéis", icon: ShieldCheck, permission: "ACCESS_READ" },
   { to: "/permissions", label: "Permissões", icon: KeyRound, permission: "ACCESS_READ" },
 ];
+
+/** Whether the address is the destination itself or a screen under it, as `/stock/:sku` is under `/stock`. */
+export function isCurrent(pathname: string, destination: string): boolean {
+  return pathname === destination || pathname.startsWith(`${destination}/`);
+}

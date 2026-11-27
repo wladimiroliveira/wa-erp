@@ -13,9 +13,15 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { createPreWeighing, planPreWeighing, type PreWeighingTarget } from "@/features/pre-weighings/actions";
 import { quantityOf } from "@/features/stock/stock-format";
-import { WEIGHING_PLACES } from "@/features/pre-weighings/weighing-units";
+import {
+  hasWeighingPlaces,
+  toProductUnit,
+  WEIGHED_MESSAGE,
+  weighingUnitOf,
+} from "@/features/pre-weighings/weighing-units";
 import { WasteSection } from "@/features/pre-weighings/WasteSection";
 import { createBodyOf, weighingRowsOf } from "@/features/pre-weighings/plan-tree";
+import { PLAN_MESSAGES, produceOf, produceProblem, REPLAN_DELAY_MS } from "@/features/pre-weighings/produce";
 import {
   PreWeighingStage,
   rowKeyOf,
@@ -25,10 +31,9 @@ import {
 import type { CreatePreWeighingBody, MeasurementUnit, PreWeighing, PreWeighingPlan, Product } from "@/lib/api";
 import { formatDecimal, isDecimalInput, toApiDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
-import { fitsPlacesOf, positiveDecimal } from "@/lib/form-schemas";
+import { positiveDecimal } from "@/lib/form-schemas";
 import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
-import { convert, pickPlacesOf, readableQuantity } from "@/shared/units";
 
 const targetFormSchema = z.object({
   productSku: z.string().min(1, "Escolha o produto."),
@@ -43,15 +48,10 @@ type TargetForm = z.infer<typeof targetFormSchema>;
 
 const EMPTY_TARGET: TargetForm = { productSku: "", quantity: "", tolerance: "20" };
 
-const WEIGHED_MESSAGE = `Informe o pesado, com até ${WEIGHING_PLACES} casas decimais.`;
-
 // Typed in the unit the row shows, with the places a scale shows. A line a re-plan brought in has no value yet.
 const weighedSchema = z.preprocess(
   (typed) => typed ?? "",
-  positiveDecimal(WEIGHED_MESSAGE, "O pesado deve ser maior que zero.").refine(
-    (typed) => (typed.split(",")[1]?.length ?? 0) <= WEIGHING_PLACES,
-    WEIGHED_MESSAGE,
-  ),
+  positiveDecimal(WEIGHED_MESSAGE, "O pesado deve ser maior que zero.").refine(hasWeighingPlaces, WEIGHED_MESSAGE),
 );
 
 // One per line to weigh of the plan, by its key in the tree: only the lines of the plan on screen count.
@@ -59,24 +59,6 @@ const weighingSchemaOf = (keys: string[]) =>
   z.object({ weighed: z.object(Object.fromEntries(keys.map((key) => [key, weighedSchema]))) });
 
 type WeighingFormValues = { weighed: Record<string, string> };
-
-// How long the operator may pause in the quantity to make before the plan is asked again.
-const REPLAN_DELAY_MS = 500;
-
-/** Why a quantity to make cannot be asked for: zero is fine, it takes it all from stock. */
-function produceProblem(typed: string, unit: MeasurementUnit): string | undefined {
-  const places = pickPlacesOf(unit);
-  const message =
-    places === 0 ? "Informe uma quantidade inteira." : `Informe a quantidade, com até ${places} casas decimais.`;
-
-  return fitsPlacesOf(typed, unit) ? undefined : message;
-}
-
-// Every refusal of the plan is the server having decided, so none of them is worth trying again as it is.
-const PLAN_MESSAGES = {
-  404: "Esse produto não existe mais. Atualize a página.",
-  409: "Não foi possível calcular: o produto não tem receita, a receita usa um produto inativo ou a quantidade está fora do que a receita alcança.",
-};
 
 const SAVE_MESSAGES = {
   404: "Esse produto não existe mais. Atualize a página.",
@@ -122,7 +104,7 @@ function WeighingForm({ target, plan, parentId, produce, outdated, onRecorded }:
   const [units, setUnits] = useState<Record<string, MeasurementUnit>>({});
 
   const unitOf = (key: string, product: { unit: MeasurementUnit }, plannedQuantity: string): MeasurementUnit =>
-    units[key] ?? readableQuantity(plannedQuantity, product.unit).unit;
+    units[key] ?? weighingUnitOf(product.unit, plannedQuantity);
 
   // What was already weighed is carried into the new unit, so the number on screen keeps meaning the same amount.
   function chooseUnit(key: string, unit: MeasurementUnit): void {
@@ -131,7 +113,7 @@ function WeighingForm({ target, plan, parentId, produce, outdated, onRecorded }:
     const typed = form.getValues(field) ?? "";
     const shown = unitOf(key, row.product, row.plannedQuantity);
 
-    if (isDecimalInput(typed)) form.setValue(field, formatDecimal(convert(toApiDecimal(typed), shown, unit)));
+    if (isDecimalInput(typed)) form.setValue(field, formatDecimal(toProductUnit(typed, shown, unit)));
 
     setUnits((current) => ({ ...current, [key]: unit }));
   }
@@ -182,8 +164,8 @@ function WeighingForm({ target, plan, parentId, produce, outdated, onRecorded }:
       onSubmit={form.handleSubmit((values) => {
         setFailure(null);
         const weighed = rows.map((row, index) =>
-          convert(
-            toApiDecimal(values.weighed[keys[index]!]!),
+          toProductUnit(
+            values.weighed[keys[index]!]!,
             unitOf(keys[index]!, row.product, row.plannedQuantity),
             row.product.unit,
           ),
@@ -214,8 +196,8 @@ type Planned = { target: PreWeighingTarget; tolerance: number; plan: PreWeighing
 /** A pre-weighing recorded under one that exists: what a shortage at the finish of a production asks for. */
 export interface PreWeighingComplement {
   parentId: string;
-  /** The product of the pre-weighing complemented. */
-  parentDescription: string;
+  /** The product of the pre-weighing complemented, when there is one. */
+  parentDescription?: string;
   productSku: string;
   /** In the unit of the product, as the API writes it. */
   quantity: string;
@@ -234,13 +216,6 @@ const targetOf = (complement?: PreWeighingComplement): TargetForm =>
     : EMPTY_TARGET;
 
 /** The quantities to make the operator typed, as the API takes them; those not yet a quantity are left to the server. */
-const produceOf = (typed: Record<string, string>): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(typed)
-      .filter(([, quantity]) => isDecimalInput(quantity))
-      .map(([sku, quantity]) => [sku, toApiDecimal(quantity)]),
-  );
-
 /**
  * The active products that are manufactured: only those have a recipe to pre-weigh. The server page narrows the
  * catalog to them. With `complement`, the target is the one asked for and the record goes under the parent.
@@ -360,13 +335,11 @@ export function PreWeighingPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <Link href="/pre-weighings" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
-        Voltar para as pré-pesagens
-      </Link>
-
       <PageTitle>Nova pré-pesagem</PageTitle>
 
-      {complement ? <p className="font-medium">Complemento da pré-pesagem de {complement.parentDescription}</p> : null}
+      {complement?.parentDescription !== undefined ? (
+        <p className="font-medium">Complemento da pré-pesagem de {complement.parentDescription}</p>
+      ) : null}
 
       {offered.length === 0 ? <p>Nenhum produto fabricado ativo cadastrado.</p> : null}
 

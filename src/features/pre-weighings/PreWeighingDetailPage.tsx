@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSession } from "@/features/auth/use-session";
 import { DeletePreWeighingDialog } from "@/features/pre-weighings/DeletePreWeighingDialog";
+import { PreWeighingStatusBadge } from "@/features/pre-weighings/PreWeighingStatusBadge";
 import { ArrangeableTable } from "@/features/table-layouts/ArrangeableTable";
 import { weighedOf } from "@/features/pre-weighings/weighing-units";
 import { quantityOf } from "@/features/stock/stock-format";
@@ -20,15 +21,15 @@ const shownOf = ({ product, plannedQuantity }: Item, quantity: string) =>
 export function PreWeighingDetailPage({ preWeighing }: { preWeighing: PreWeighing }) {
   const { can } = useSession();
   // One a production is using goes when that production is canceled, or stays as its record.
-  const canDelete = preWeighing.isAvailable && can("PRODUCTION_CREATE");
+  const canDelete = preWeighing.status === "PENDING" && can("PRODUCTION_CREATE");
 
   return (
     <div className="flex flex-col gap-4">
-      <Link href="/pre-weighings" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
-        Voltar para as pré-pesagens
-      </Link>
-
       <PageTitle>Pré-pesagem de {preWeighing.product.description}</PageTitle>
+
+      <div className="self-start">
+        <PreWeighingStatusBadge status={preWeighing.status} />
+      </div>
 
       {preWeighing.parent === null ? null : (
         <Link

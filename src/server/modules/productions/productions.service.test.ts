@@ -1,40 +1,38 @@
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { finishProductionBodySchema } from "./productions.schemas";
-import { finishProduction, previewLeftovers } from "./productions.service";
+import { itemFromPreWeighing, previewLeftovers, startProduction } from "./productions.service";
 
 const repository = vi.hoisted(() => ({
-  consumeProductionInput: vi.fn(),
-  discardLeftover: vi.fn(),
   findProductionById: vi.fn(),
   inProductionTransaction: vi.fn(),
   insertProduction: vi.fn(),
   listProductions: vi.fn(),
-  markProductionCanceled: vi.fn(),
-  markProductionFinished: vi.fn(),
-  outputProductionItem: vi.fn(),
+  lockProductionInProgress: vi.fn(),
   previewProductionLeftovers: vi.fn(),
-  releasePreWeighings: vi.fn(),
 }));
 
 vi.mock("./productions.repository", () => repository);
-// No intermediate in these productions: no balance is checked.
-vi.mock("@/server/modules/stock/stock.repository", () => ({ holdStockBalances: vi.fn(async () => []) }));
-vi.mock("@/server/modules/pre-weighings/pre-weighings.repository", () => ({
-  findPreWeighingById: vi.fn(),
-}));
-vi.mock("@/server/modules/pre-weighings/pre-weighings.service", () => ({ planPreWeighing: vi.fn() }));
+const preWeighings = vi.hoisted(() => ({ findPreWeighingTree: vi.fn(), isPendingStartRoot: vi.fn() }));
+
+vi.mock("@/server/modules/pre-weighings/pre-weighings.repository", () => preWeighings);
+const preWeighingService = vi.hoisted(() => ({ planPreWeighing: vi.fn(), preparePreWeighing: vi.fn() }));
+
+vi.mock("@/server/modules/pre-weighings/pre-weighings.service", () => preWeighingService);
 
 const D = (value: string) => new Prisma.Decimal(value);
 const ITEM = "018f0000-0000-7000-8000-0000000000b1";
 const MILK = { sku: "sku-milk", description: "Leite condensado", unit: "GRAM", isStorableOnceOpened: false };
 
-const FLAN_ITEM = "018f0000-0000-7000-8000-0000000000b2";
-
 const itemOf = (id: string, description: string, inputId: string, storable = false) => ({
   id,
+  status: "PENDING" as "PENDING" | "FINISHED" | "SUBSTITUTED",
+  finishedAt: null,
+  hasLeftoversInCost: null,
+  damages: [] as { preWeighingId: string | null }[],
+  batches: [],
+  extraWeighings: [],
   product: { sku: `sku-${description}`, description, unit: "KILOGRAM" },
-  preWeighingId: null,
+  preWeighingId: null as string | null,
   expectedQuantity: D("1"),
   producedQuantity: null,
   unitCost: null,
@@ -58,122 +56,14 @@ const production = (
   createdAt: new Date("2026-11-09T12:00:00Z"),
   finishedAt: null,
   canceledAt: null,
-  hasLeftoversInCost: null,
   items,
 });
-
-// What taking `taken` from the can lot leaves, the lot holding `lotQuantity` before the take.
-const consumed = (taken: string, lotQuantity: string) => ({
-  cost: D(taken).mul("0.02"),
-  takes: [
-    { lotId: "lot-1", quantity: D(taken), unitCost: D("0.02"), lotQuantity: D(lotQuantity), packageContent: D("395") },
-  ],
-});
-
-const finish = (hasLeftoversInCost?: boolean, items = [{ id: ITEM, producedQuantity: "1", expiresAt: null }]) =>
-  finishProduction({
-    id: "production-1",
-    createdById: "user-1",
-    items,
-    ...(hasLeftoversInCost === undefined ? {} : { hasLeftoversInCost }),
-  });
-
-const discarded = () =>
-  repository.discardLeftover.mock.calls.map(([, call]) => [call.inputId, call.lotId, call.quantity.toString()]);
-
-const unitCostOf = (itemId: string) =>
-  repository.outputProductionItem.mock.calls.find(([, call]) => call.id === itemId)![1].unitCost.toString();
 
 beforeEach(() => {
   vi.clearAllMocks();
   repository.findProductionById.mockResolvedValue(production());
   repository.inProductionTransaction.mockImplementation((work: (tx: object) => unknown) => work({}));
-  repository.markProductionFinished.mockResolvedValue(true);
-  repository.consumeProductionInput.mockResolvedValue(consumed("300", "3950"));
-});
-
-describe("finishProduction, leftovers of opened packagings", () => {
-  it("discards what is left of the opened can, and adds its cost when asked", async () => {
-    await finish(true);
-
-    expect(discarded()).toEqual([["input-1", "lot-1", "95"]]);
-    expect(unitCostOf(ITEM)).toBe("7.9");
-    expect(repository.markProductionFinished).toHaveBeenCalledWith({}, "production-1", true);
-  });
-
-  it("keeps the leftover out of the cost when asked to", async () => {
-    await finish(false);
-
-    expect(discarded()).toEqual([["input-1", "lot-1", "95"]]);
-    expect(unitCostOf(ITEM)).toBe("6");
-    expect(repository.markProductionFinished).toHaveBeenCalledWith({}, "production-1", false);
-  });
-
-  it("does not discard what can be kept once opened", async () => {
-    repository.findProductionById.mockResolvedValue(
-      production("IN_PROGRESS", [itemOf(ITEM, "Pudim", "input-1", true)]),
-    );
-
-    await finish(true);
-
-    expect(repository.discardLeftover).not.toHaveBeenCalled();
-  });
-
-  it("lets the items of a production share an opened can, splitting what is left by what each took", async () => {
-    repository.findProductionById.mockResolvedValue(
-      production("IN_PROGRESS", [itemOf(ITEM, "Pudim", "input-1"), itemOf(FLAN_ITEM, "Flan", "input-2")]),
-    );
-    repository.consumeProductionInput
-      .mockResolvedValueOnce(consumed("100", "3950"))
-      .mockResolvedValueOnce(consumed("100", "3850"));
-
-    await finish(true, [
-      { id: ITEM, producedQuantity: "1", expiresAt: null },
-      { id: FLAN_ITEM, producedQuantity: "1", expiresAt: null },
-    ]);
-
-    // One can opened for 200 g: 195 g left, half for each.
-    expect(discarded()).toEqual([
-      ["input-1", "lot-1", "97.5"],
-      ["input-2", "lot-1", "97.5"],
-    ]);
-    expect(unitCostOf(ITEM)).toBe("3.95");
-    expect(unitCostOf(FLAN_ITEM)).toBe("3.95");
-  });
-
-  it("discards nothing of what was taken beyond the lots, and still counts what it cost", async () => {
-    repository.consumeProductionInput.mockResolvedValue({
-      cost: D("6"),
-      takes: [{ lotId: null, quantity: D("300"), unitCost: D("0.02"), lotQuantity: null, packageContent: null }],
-    });
-
-    await finish(true);
-
-    expect(repository.discardLeftover).not.toHaveBeenCalled();
-    expect(unitCostOf(ITEM)).toBe("6");
-  });
-
-  it("counts the leftover in the cost when the body does not say", () => {
-    expect(
-      finishProductionBodySchema.parse({ items: [{ id: ITEM, producedQuantity: "1", expiresAt: null }] }),
-    ).toMatchObject({ hasLeftoversInCost: true });
-  });
-});
-
-describe("finishProduction, a production changed while it waited", () => {
-  it("takes what the production holds once it is held, not what it held when asked for", async () => {
-    const reduced = itemOf(ITEM, "Pudim", "input-1");
-    reduced.expectedQuantity = D("0.8");
-    reduced.inputs[0]!.quantity = D("240");
-    repository.findProductionById.mockImplementation(async (_id: string, tx?: object) =>
-      tx === undefined ? production() : production("IN_PROGRESS", [reduced]),
-    );
-    repository.consumeProductionInput.mockResolvedValue(consumed("240", "3950"));
-
-    await finish(true);
-
-    expect(repository.consumeProductionInput.mock.calls[0]![1]).toMatchObject({ quantity: D("240") });
-  });
+  repository.lockProductionInProgress.mockResolvedValue(true);
 });
 
 describe("previewLeftovers", () => {
@@ -196,6 +86,10 @@ describe("previewLeftovers", () => {
 
     const result = await previewLeftovers("production-1");
 
+    expect(repository.previewProductionLeftovers).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: ITEM })],
+      expect.any(String),
+    );
     expect(result).toEqual({
       ok: true,
       data: {
@@ -216,5 +110,85 @@ describe("previewLeftovers", () => {
         totalCost: "1.90",
       },
     });
+  });
+});
+
+const node = (id: string, parentId: string | null, status: "PENDING" | "PRODUCED" | "DAMAGED" = "PENDING") => ({
+  id,
+  quantity: D("2"),
+  product: { sku: `sku-${id}`, description: id, unit: "KILOGRAM" },
+  parent: parentId === null ? null : { id: parentId },
+  damage: status === "DAMAGED" ? { id: "damage-1" } : null,
+  production: status === "PRODUCED" ? { status: "FINISHED" } : null,
+  items: [
+    { product: MILK, plannedQuantity: D("10"), weighedQuantity: D("9.5") },
+    { product: { ...MILK, sku: "sku-sugar" }, plannedQuantity: D("4"), weighedQuantity: null },
+  ],
+});
+
+describe("itemFromPreWeighing", () => {
+  it("guides by what was weighed, and by what was planned for a line that was not weighed", () => {
+    // @ts-expect-error a partial record is enough here
+    const item = itemFromPreWeighing(node("root", null));
+
+    expect(item).toEqual({
+      productSku: "sku-root",
+      preWeighingId: "root",
+      expectedQuantity: D("2"),
+      inputs: [
+        { productSku: "sku-milk", quantity: D("9.5") },
+        { productSku: "sku-sugar", quantity: D("4") },
+      ],
+    });
+  });
+});
+
+describe("startProduction guided", () => {
+  beforeEach(() => {
+    preWeighings.findPreWeighingTree.mockReset();
+    preWeighings.isPendingStartRoot.mockReset();
+    repository.insertProduction.mockReset();
+    repository.insertProduction.mockResolvedValue(production());
+  });
+
+  it("makes an item of the root and of each pending descendant, cutting a branch at a produced one", async () => {
+    preWeighings.isPendingStartRoot.mockResolvedValue(true);
+    preWeighings.findPreWeighingTree.mockResolvedValue([
+      node("root", null),
+      node("filling", "root"),
+      node("filling-child", "filling", "PRODUCED"),
+      node("under-produced", "filling-child"),
+      node("shell", "root"),
+      node("damaged", "root", "DAMAGED"),
+    ]);
+
+    const result = await startProduction({ createdById: "user-1", preWeighingId: "root" });
+
+    expect(result.ok).toBe(true);
+    expect(
+      repository.insertProduction.mock.calls[0]![0].items.map((item: { preWeighingId: string }) => item.preWeighingId),
+    ).toEqual(["root", "filling", "shell"]);
+  });
+
+  it("answers 404 for a pre-weighing that does not exist", async () => {
+    preWeighings.findPreWeighingTree.mockResolvedValue([]);
+
+    expect(await startProduction({ createdById: "user-1", preWeighingId: "x" })).toMatchObject({
+      ok: false,
+      status: 404,
+      message: "Pre-weighing not found.",
+    });
+  });
+
+  it("answers 409 for a pre-weighing that is not a pending root", async () => {
+    preWeighings.findPreWeighingTree.mockResolvedValue([node("child", "root")]);
+    preWeighings.isPendingStartRoot.mockResolvedValue(false);
+
+    expect(await startProduction({ createdById: "user-1", preWeighingId: "child" })).toMatchObject({
+      ok: false,
+      status: 409,
+      message: "The pre-weighing is not a pending root.",
+    });
+    expect(repository.insertProduction).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,9 @@ import { createBodyOf, weighingRowsOf } from "@/features/pre-weighings/plan-tree
 import * as preWeighingById from "@/app/v1/pre-weighings/[id]/route";
 import * as preWeighingPlan from "@/app/v1/pre-weighings/plan/route";
 import * as preWeighings from "@/app/v1/pre-weighings/route";
+import * as staleCount from "@/app/v1/pre-weighings/stale-count/route";
+import * as startCandidates from "@/app/v1/pre-weighings/start-candidates/route";
+import { findPreWeighingTree } from "./pre-weighings.repository";
 import { rateLimiter } from "@/server/http/rate-limit";
 import { authenticateAs } from "@/server/testing/authenticate";
 import { resetDatabase, testPrisma } from "@/server/testing/database";
@@ -1002,21 +1005,89 @@ describe("POST /v1/pre-weighings as a complement", () => {
     expect(response.json().message).toBe("The parent's recipe does not take this product.");
   });
 
-  it("refuses a complement whose parent's production has finished", async () => {
-    const { headers, userId, tree, root } = await recordRoot();
-    await testPrisma.production.create({
+  // The parent guides an item of a production: `item` is that item's status, `production` the production's.
+  async function guide(
+    userId: string,
+    tree: Awaited<ReturnType<typeof bonbonTree>>,
+    rootId: string,
+    state: { production: "IN_PROGRESS" | "FINISHED"; item: "PENDING" | "FINISHED" },
+  ) {
+    const finishedAt = state.item === "FINISHED" ? new Date() : null;
+
+    return testPrisma.production.create({
       data: {
-        status: "FINISHED",
-        finishedAt: new Date(),
+        status: state.production,
+        finishedAt: state.production === "FINISHED" ? new Date() : null,
         createdById: userId,
-        items: { create: [{ productSku: tree.bonbon.sku, preWeighingId: root.id, expectedQuantity: "50" }] },
+        items: {
+          create: [
+            {
+              productSku: tree.bonbon.sku,
+              preWeighingId: rootId,
+              expectedQuantity: "50",
+              status: state.item,
+              finishedAt,
+            },
+          ],
+        },
       },
+      include: { items: true },
+    });
+  }
+
+  it("refuses a complement whose parent is in production, and records nothing", async () => {
+    const { headers, userId, tree, root } = await recordRoot();
+    await guide(userId, tree, root.id, { production: "IN_PROGRESS", item: "PENDING" });
+    const before = await testPrisma.preWeighing.count();
+
+    const response = await postPreWeighing(headers, complementOf(root.id, tree));
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The parent is in production; weigh more on the production screen.");
+    expect(await testPrisma.preWeighing.count()).toBe(before);
+  });
+
+  it.each([
+    ["of a production still in progress", "IN_PROGRESS"],
+    ["of a finished production", "FINISHED"],
+  ] as const)("refuses a complement whose parent was produced, %s", async (_label, production) => {
+    const { headers, userId, tree, root } = await recordRoot();
+    await guide(userId, tree, root.id, { production, item: "FINISHED" });
+
+    const response = await postPreWeighing(headers, complementOf(root.id, tree));
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The parent has already been produced.");
+  });
+
+  it("refuses a complement whose parent was damaged", async () => {
+    const { headers, userId, tree, root } = await recordRoot();
+    const { items } = await guide(userId, tree, root.id, { production: "IN_PROGRESS", item: "PENDING" });
+    const reason = await testPrisma.lossReason.create({ data: { name: "Queimou" } });
+    // A damage lets go of the pre-weighing and keeps it, as the damage of a guided item does.
+    await testPrisma.productionItem.update({ where: { id: items[0]!.id }, data: { preWeighingId: null } });
+    await testPrisma.productionItemDamage.create({
+      data: { productionItemId: items[0]!.id, preWeighingId: root.id, reasonId: reason.id, createdById: userId },
     });
 
     const response = await postPreWeighing(headers, complementOf(root.id, tree));
 
     expect(response.statusCode).toBe(409);
-    expect(response.json().message).toBe("The parent's production has already finished.");
+    expect(response.json().message).toBe("The parent was damaged.");
+  });
+
+  it("records a complement under a parent a substituted item let go of", async () => {
+    const { headers, userId, tree, root } = await recordRoot();
+    const { items } = await guide(userId, tree, root.id, { production: "IN_PROGRESS", item: "PENDING" });
+    // A substitute releases the pre-weighing: the item no longer points to it.
+    await testPrisma.productionItem.update({
+      where: { id: items[0]!.id },
+      data: { status: "SUBSTITUTED", preWeighingId: null },
+    });
+
+    const response = await postPreWeighing(headers, complementOf(root.id, tree));
+
+    expect(response.statusCode).toBe(201);
   });
 
   it("refuses a complement under a missing pre-weighing", async () => {
@@ -1106,18 +1177,115 @@ describe("GET /v1/pre-weighings", () => {
     expect(response.json().items[0]).toEqual((await getPreWeighing(headers, ids[2]!)).json());
   });
 
-  it("lists only the pre-weighings no production is using when asked for the available ones", async () => {
-    const { headers, userId } = await canRead();
-    const { dough, ids } = await recordThree(userId);
-    await testPrisma.production.create({
+  // A production in progress (or finished) whose one item the pre-weighing guides.
+  const guideWith = (userId: string, productSku: string, preWeighingId: string, status: "PENDING" | "FINISHED") =>
+    testPrisma.production.create({
       data: {
         createdById: userId,
-        items: { create: [{ productSku: dough.sku, preWeighingId: ids[1], expectedQuantity: "50" }] },
+        items: { create: [{ productSku, preWeighingId, expectedQuantity: "50", status }] },
       },
     });
 
-    expect(idsOf(await listPreWeighings(headers, { available: "true" }))).toEqual([ids[2], ids[0]]);
-    expect(idsOf(await listPreWeighings(headers, { available: "false" }))).toEqual([ids[1]]);
+  const damage = async (userId: string, productSku: string, preWeighingId: string) => {
+    const production = await testPrisma.production.create({
+      data: { createdById: userId, items: { create: [{ productSku, expectedQuantity: "50" }] } },
+      include: { items: true },
+    });
+    const reason = await testPrisma.lossReason.create({ data: { name: "Burnt" } });
+
+    return testPrisma.productionItemDamage.create({
+      data: { productionItemId: production.items[0]!.id, preWeighingId, reasonId: reason.id, createdById: userId },
+    });
+  };
+
+  it("lists only the pre-weighings of the status asked for", async () => {
+    const { headers, userId } = await canRead();
+    const { dough, ids } = await recordThree(userId);
+    const { id: damagedId } = await testPrisma.preWeighing.create({
+      data: { productSku: dough.sku, quantity: "50", createdById: userId, createdAt: new Date("2026-10-04T12:00:00Z") },
+    });
+    await guideWith(userId, dough.sku, ids[1]!, "PENDING");
+    await guideWith(userId, dough.sku, ids[2]!, "FINISHED");
+    await damage(userId, dough.sku, damagedId);
+
+    expect(idsOf(await listPreWeighings(headers, { status: "PENDING" }))).toEqual([ids[0]]);
+    expect(idsOf(await listPreWeighings(headers, { status: "IN_PRODUCTION" }))).toEqual([ids[1]]);
+    expect(idsOf(await listPreWeighings(headers, { status: "PRODUCED" }))).toEqual([ids[2]]);
+    expect(idsOf(await listPreWeighings(headers, { status: "DAMAGED" }))).toEqual([damagedId]);
+  });
+
+  // Links a pre-weighing to an item as one of its extra weighings.
+  const linkExtra = async (
+    userId: string,
+    productSku: string,
+    preWeighingId: string,
+    status: "PENDING" | "FINISHED",
+  ) => {
+    const production = await guideWith(userId, productSku, (await recordFree(userId, productSku)).id, status);
+    const item = await testPrisma.productionItem.findFirstOrThrow({ where: { productionId: production.id } });
+
+    await testPrisma.productionItemWeighing.create({ data: { productionItemId: item.id, preWeighingId } });
+  };
+
+  const recordFree = (userId: string, productSku: string) =>
+    testPrisma.preWeighing.create({ data: { productSku, quantity: "50", createdById: userId } });
+
+  it("reads a pre-weighing taken as an extra weighing like one that guides an item", async () => {
+    const { headers, userId } = await canRead();
+    const { dough, ids } = await recordThree(userId);
+    await linkExtra(userId, dough.sku, ids[0]!, "PENDING");
+    await linkExtra(userId, dough.sku, ids[1]!, "FINISHED");
+
+    expect((await getPreWeighing(headers, ids[0]!)).json()).toMatchObject({ status: "IN_PRODUCTION" });
+    expect((await getPreWeighing(headers, ids[1]!)).json()).toMatchObject({ status: "PRODUCED" });
+    expect((await getPreWeighing(headers, ids[2]!)).json()).toMatchObject({ status: "PENDING" });
+    expect(idsOf(await listPreWeighings(headers, { status: "IN_PRODUCTION" }))).toContain(ids[0]);
+    expect(idsOf(await listPreWeighings(headers, { status: "PRODUCED" }))).toContain(ids[1]);
+    expect(idsOf(await listPreWeighings(headers, { status: "PENDING" }))).not.toContain(ids[0]);
+  });
+
+  it("lists as stale only a pending pre-weighing older than 48 hours", async () => {
+    const { headers, userId } = await canRead();
+    const { dough, ids } = await recordThree(userId);
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+    await testPrisma.preWeighing.update({ where: { id: ids[0]! }, data: { createdAt: threeDaysAgo } });
+    await testPrisma.preWeighing.update({ where: { id: ids[1]! }, data: { createdAt: threeDaysAgo } });
+    await testPrisma.preWeighing.update({ where: { id: ids[2]! }, data: { createdAt: new Date() } });
+    await guideWith(userId, dough.sku, ids[1]!, "FINISHED");
+
+    expect(idsOf(await listPreWeighings(headers, { staleOnly: "true" }))).toEqual([ids[0]]);
+  });
+
+  it("counts the stale pending pre-weighings", async () => {
+    const { headers, userId } = await canRead();
+    const { dough, ids } = await recordThree(userId);
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+    await testPrisma.preWeighing.update({ where: { id: ids[0]! }, data: { createdAt: threeDaysAgo } });
+    await testPrisma.preWeighing.update({ where: { id: ids[1]! }, data: { createdAt: threeDaysAgo } });
+    await testPrisma.preWeighing.update({ where: { id: ids[2]! }, data: { createdAt: new Date() } });
+    await guideWith(userId, dough.sku, ids[1]!, "FINISHED");
+
+    const response = await inject(staleCount, { method: "GET", url: "/v1/pre-weighings/stale-count", headers });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ count: 1 });
+  });
+
+  it("answers 403 to the stale count without PRODUCTION_READ", async () => {
+    const { headers } = await canCreate();
+
+    expect(
+      (await inject(staleCount, { method: "GET", url: "/v1/pre-weighings/stale-count", headers })).statusCode,
+    ).toBe(403);
+  });
+
+  it("answers 401 to the stale count without a token", async () => {
+    expect(
+      (await inject(staleCount, { method: "GET", url: "/v1/pre-weighings/stale-count", headers: undefined }))
+        .statusCode,
+    ).toBe(401);
   });
 
   it("hands the list out in pages, each pointing to the next", async () => {
@@ -1139,7 +1307,9 @@ describe("GET /v1/pre-weighings", () => {
     ["a zero limit", { limit: "0" }],
     ["a limit above a hundred", { limit: "101" }],
     ["a cursor that is not an id", { cursor: "next" }],
-    ["an availability that is neither true nor false", { available: "maybe" }],
+    ["a status that does not exist", { status: "MAYBE" }],
+    ["the removed availability filter", { available: "true" }],
+    ["a stale filter that is not true", { staleOnly: "false" }],
   ])("answers 400 for %s", async (_label, query: Record<string, string>) => {
     const { headers } = await canRead();
 
@@ -1192,7 +1362,7 @@ describe("DELETE /v1/pre-weighings/:id", () => {
 
   const canDelete = () => authenticateAs([Permission.PRODUCTION_READ, Permission.PRODUCTION_CREATE]);
 
-  it("deletes an available pre-weighing with the ones recorded under it", async () => {
+  it("deletes a pending pre-weighing with the ones recorded under it", async () => {
     const { headers, userId } = await canDelete();
     const { root } = await doughTree(userId);
 
@@ -1221,7 +1391,26 @@ describe("DELETE /v1/pre-weighings/:id", () => {
     const response = await deletePreWeighing(headers, root.id);
 
     expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ message: "The pre-weighing guides a production." });
+    expect(response.json()).toEqual({ message: "The pre-weighing is not pending." });
+    expect(await testPrisma.preWeighing.count()).toBe(2);
+  });
+
+  it("refuses to delete a damaged pre-weighing, and deletes nothing", async () => {
+    const { headers, userId } = await canDelete();
+    const { dough, root } = await doughTree(userId);
+    const free = await testPrisma.production.create({
+      data: { createdById: userId, items: { create: [{ productSku: dough.sku, expectedQuantity: "1" }] } },
+      include: { items: true },
+    });
+    const reason = await testPrisma.lossReason.create({ data: { name: "Burnt" } });
+    await testPrisma.productionItemDamage.create({
+      data: { productionItemId: free.items[0]!.id, preWeighingId: root.id, reasonId: reason.id, createdById: userId },
+    });
+
+    const response = await deletePreWeighing(headers, root.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ message: "The pre-weighing is not pending." });
     expect(await testPrisma.preWeighing.count()).toBe(2);
   });
 
@@ -1245,13 +1434,41 @@ describe("DELETE /v1/pre-weighings/:id", () => {
     expect((await deletePreWeighing(headers, child.id)).statusCode).toBe(204);
   });
 
-  it("says whether a pre-weighing is available to be produced", async () => {
+  it("presents each status of a pre-weighing", async () => {
     const { headers, userId } = await canDelete();
     const { dough, root, child } = await doughTree(userId);
+    const [finished, damaged] = await Promise.all(
+      ["finished", "damaged"].map(() =>
+        testPrisma.preWeighing.create({ data: { productSku: dough.sku, quantity: "5", createdById: userId } }),
+      ),
+    );
     await guide(userId, dough.sku, child.id);
+    await testPrisma.production.create({
+      data: {
+        createdById: userId,
+        items: {
+          create: [{ productSku: dough.sku, preWeighingId: finished!.id, expectedQuantity: "1", status: "FINISHED" }],
+        },
+      },
+    });
+    const free = await testPrisma.production.create({
+      data: { createdById: userId, items: { create: [{ productSku: dough.sku, expectedQuantity: "1" }] } },
+      include: { items: true },
+    });
+    const reason = await testPrisma.lossReason.create({ data: { name: "Burnt" } });
+    await testPrisma.productionItemDamage.create({
+      data: {
+        productionItemId: free.items[0]!.id,
+        preWeighingId: damaged!.id,
+        reasonId: reason.id,
+        createdById: userId,
+      },
+    });
 
-    expect((await getPreWeighing(headers, root.id)).json()).toMatchObject({ isAvailable: true });
-    expect((await getPreWeighing(headers, child.id)).json()).toMatchObject({ isAvailable: false });
+    expect((await getPreWeighing(headers, root.id)).json()).toMatchObject({ status: "PENDING" });
+    expect((await getPreWeighing(headers, child.id)).json()).toMatchObject({ status: "IN_PRODUCTION" });
+    expect((await getPreWeighing(headers, finished!.id)).json()).toMatchObject({ status: "PRODUCED" });
+    expect((await getPreWeighing(headers, damaged!.id)).json()).toMatchObject({ status: "DAMAGED" });
   });
 
   it("answers 404 for a pre-weighing that does not exist", async () => {
@@ -1268,5 +1485,130 @@ describe("DELETE /v1/pre-weighings/:id", () => {
 
   it("answers 401 without a token", async () => {
     expect((await deletePreWeighing(undefined, MISSING_ID)).statusCode).toBe(401);
+  });
+});
+
+describe("GET /v1/pre-weighings/start-candidates", () => {
+  type Candidate = { id: string; status: string; product: { sku: string }; stages: Candidate[] };
+
+  const getCandidates = (headers: Headers) =>
+    inject(startCandidates, { method: "GET", url: "/v1/pre-weighings/start-candidates", headers });
+
+  // A bonbon weighed with its filling and its shell recorded under it.
+  async function recordBonbon(userId: string) {
+    const { bonbon, filling, shell, chocolate } = await createBonbon();
+    const record = (productSku: string, quantity: string, parentId: string | null, createdAt: string) =>
+      testPrisma.preWeighing.create({
+        data: {
+          productSku,
+          quantity,
+          createdById: userId,
+          parentId,
+          createdAt: new Date(createdAt),
+          items: { create: [{ productSku: chocolate.sku, plannedQuantity: "1", weighedQuantity: "1" }] },
+        },
+      });
+    const root = await record(bonbon.sku, "50", null, "2026-10-01T12:00:00Z");
+    const fillingStage = await record(filling.sku, "0.7", root.id, "2026-10-01T12:01:00Z");
+    const shellStage = await record(shell.sku, "50", root.id, "2026-10-01T12:02:00Z");
+
+    return { bonbon, filling, shell, root, fillingStage, shellStage, record };
+  }
+
+  const guide = (userId: string, productSku: string, preWeighingId: string, status: "PENDING" | "FINISHED") =>
+    testPrisma.production.create({
+      data: {
+        createdById: userId,
+        items: { create: [{ productSku, preWeighingId, expectedQuantity: "1", status }] },
+      },
+    });
+
+  it("offers the pending root once, with its stages nested", async () => {
+    const { headers, userId } = await canRead();
+    const { root, filling, shell } = await recordBonbon(userId);
+
+    const response = await getCandidates(headers);
+
+    expect(response.statusCode).toBe(200);
+    const candidates = response.json<Candidate[]>();
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.id).toBe(root.id);
+    expect(candidates[0]!.status).toBe("PENDING");
+    expect(candidates[0]!.stages.map((stage) => stage.product.sku).sort()).toEqual([filling.sku, shell.sku].sort());
+    expect(candidates[0]!.stages.every((stage) => stage.stages.length === 0)).toBe(true);
+  });
+
+  it("leaves out a stage that a production already guides", async () => {
+    const { headers, userId } = await canRead();
+    const { filling, shell, fillingStage } = await recordBonbon(userId);
+    await guide(userId, filling.sku, fillingStage.id, "PENDING");
+
+    const candidates = (await getCandidates(headers)).json<Candidate[]>();
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.stages.map((stage) => stage.product.sku)).toEqual([shell.sku]);
+  });
+
+  it("offers a pending complement of a produced root as a candidate of its own", async () => {
+    const { headers, userId } = await canRead();
+    const { bonbon, root, record } = await recordBonbon(userId);
+    await guide(userId, bonbon.sku, root.id, "FINISHED");
+    const complement = await record(bonbon.sku, "5", root.id, "2026-10-02T12:00:00Z");
+
+    const candidates = (await getCandidates(headers)).json<Candidate[]>();
+
+    expect(candidates.map(({ id }) => id)).toContain(complement.id);
+    expect(candidates.map(({ id }) => id)).not.toContain(root.id);
+  });
+
+  it("lists the newest candidate first", async () => {
+    const { headers, userId } = await canRead();
+    const { dough, flour } = await createDough();
+    const ids: string[] = [];
+
+    for (const day of ["01", "02"]) {
+      const { id } = await testPrisma.preWeighing.create({
+        data: {
+          productSku: dough.sku,
+          quantity: "10",
+          createdById: userId,
+          createdAt: new Date(`2026-10-${day}T12:00:00Z`),
+          items: { create: [{ productSku: flour.sku, plannedQuantity: "1", weighedQuantity: "1" }] },
+        },
+      });
+      ids.push(id);
+    }
+
+    expect((await getCandidates(headers)).json<Candidate[]>().map(({ id }) => id)).toEqual([ids[1], ids[0]]);
+  });
+
+  it("answers an empty list when nothing is pending", async () => {
+    const { headers, userId } = await canRead();
+    const { bonbon, root, filling, fillingStage, shell, shellStage } = await recordBonbon(userId);
+    await guide(userId, bonbon.sku, root.id, "FINISHED");
+    await guide(userId, filling.sku, fillingStage.id, "FINISHED");
+    await guide(userId, shell.sku, shellStage.id, "FINISHED");
+
+    expect((await getCandidates(headers)).json()).toEqual([]);
+  });
+
+  it("answers 403 without PRODUCTION_READ and 401 without a token", async () => {
+    const { headers } = await authenticateAs([Permission.PRODUCTION_CREATE]);
+
+    expect((await getCandidates(headers)).statusCode).toBe(403);
+    expect((await getCandidates(undefined)).statusCode).toBe(401);
+  });
+
+  it("reads a whole tree, the root first and each branch depth-first", async () => {
+    const { userId } = await canRead();
+    const { root, fillingStage, shellStage, record, bonbon } = await recordBonbon(userId);
+    const grandchild = await record(bonbon.sku, "1", fillingStage.id, "2026-10-01T12:03:00Z");
+
+    const tree = await findPreWeighingTree(root.id);
+    const filling = [fillingStage.id, grandchild.id];
+    const expected = fillingStage.id < shellStage.id ? [...filling, shellStage.id] : [shellStage.id, ...filling];
+
+    expect(tree.map(({ id }) => id)).toEqual([root.id, ...expected]);
   });
 });

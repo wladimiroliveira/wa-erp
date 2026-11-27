@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { RowActions, RowActionsItem } from "@/components/common/RowActions";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -51,10 +50,6 @@ export function StockProductPage({ stock, reasons, depleted }: StockProductPageP
 
   return (
     <div className="flex flex-col gap-4" aria-busy={loading}>
-      <Link href="/stock" className="flex min-h-8 items-center self-start text-sm underline underline-offset-4">
-        Voltar para a análise de estoque
-      </Link>
-
       <PageTitle>{stock.product.description}</PageTitle>
 
       <dl role="group" aria-label="Resumo do produto" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

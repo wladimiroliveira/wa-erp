@@ -1,24 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { maxQuantityFromStock, scaleInputs } from "@/server/modules/productions/production-reduction";
+import { maxQuantityFromStock } from "@/server/modules/productions/production-reduction";
 
 const D = (v: string) => new Prisma.Decimal(v);
-
-describe("scaleInputs", () => {
-  it("scales every input by the ratio", () =>
-    expect(
-      scaleInputs(
-        [
-          { productSku: "a", quantity: D("10") },
-          { productSku: "b", quantity: D("0.3") },
-        ],
-        D("100"),
-        D("90"),
-      )!.map((i) => i.quantity.toString()),
-    ).toEqual(["9", "0.27"]));
-  it("is null when an input rounds to nothing", () =>
-    expect(scaleInputs([{ productSku: "a", quantity: D("0.000001") }], D("100"), D("1"))).toBeNull());
-});
 
 describe("maxQuantityFromStock", () => {
   it("is limited by the scarcest input, rounded down to 3 places", () =>

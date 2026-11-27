@@ -110,10 +110,10 @@ describe("PreWeighingDetailPage", () => {
     expect(link).toHaveTextContent("2,5 kg");
   });
 
-  it("leads back to the list", () => {
+  it("leaves the way back to the breadcrumbs", () => {
     open();
 
-    expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveAttribute("href", "/pre-weighings");
+    expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
   });
 });
 
@@ -127,32 +127,37 @@ describe("PreWeighingDetailPage columns", () => {
   });
 });
 
-describe("PreWeighingDetailPage sizing", () => {
-  it("keeps the way back as tall as a control", () => {
-    open();
-
-    expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveClass("min-h-8");
-  });
-});
-
 describe("PreWeighingDetailPage, deleting", () => {
   const CAN_CREATE = aCurrentUser({ permissions: ["PRODUCTION_READ", "PRODUCTION_CREATE"] });
 
   it("offers to delete a pre-weighing no production is using", () => {
-    open(aPreWeighing({ isAvailable: true }), { user: CAN_CREATE });
+    open(aPreWeighing({ status: "PENDING" }), { user: CAN_CREATE });
 
     expect(screen.getByRole("button", { name: "Excluir pré-pesagem" })).toBeInTheDocument();
   });
 
   it("does not offer to delete a pre-weighing a production is using", () => {
-    open(aPreWeighing({ isAvailable: false }), { user: CAN_CREATE });
+    open(aPreWeighing({ status: "IN_PRODUCTION" }), { user: CAN_CREATE });
 
     expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
   });
 
   it("does not offer to delete to someone who cannot record productions", () => {
-    open(aPreWeighing({ isAvailable: true }), { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
+    open(aPreWeighing({ status: "PENDING" }), { user: aCurrentUser({ permissions: ["PRODUCTION_READ"] }) });
 
     expect(screen.queryByRole("button", { name: "Excluir pré-pesagem" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PreWeighingDetailPage, status", () => {
+  it.each([
+    ["PENDING", "Pendente"],
+    ["IN_PRODUCTION", "Em produção"],
+    ["PRODUCED", "Produzida"],
+    ["DAMAGED", "Avariada"],
+  ] as const)("shows %s as %s under the title", (status, label) => {
+    open(aPreWeighing({ status }));
+
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 });

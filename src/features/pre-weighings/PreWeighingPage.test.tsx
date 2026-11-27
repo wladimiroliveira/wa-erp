@@ -285,11 +285,11 @@ describe("PreWeighingPage", () => {
 });
 
 describe("PreWeighingPage sizing", () => {
-  it("keeps the way back and the link to the record as tall as a control", async () => {
+  it("keeps the link to the record as tall as a control, leaving the way back to the breadcrumbs", async () => {
     planning();
     recording(() => ({ ok: true, data: aPreWeighing({ id: "pre-weighing-1", quantity: "10" }) }));
     open();
-    expect(screen.getByRole("link", { name: "Voltar para as pré-pesagens" })).toHaveClass("min-h-8");
+    expect(screen.queryByRole("link", { name: /^Voltar/ })).not.toBeInTheDocument();
 
     await calculate();
     await weigh("6", "120");

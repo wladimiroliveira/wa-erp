@@ -118,6 +118,18 @@ describe("ConcludeItemForm, at the target", () => {
     );
   });
 
+  it("says inline that a leva's expiry has passed, keeping the form as it is", async () => {
+    vi.mocked(concludeItem).mockResolvedValue({ ok: false, status: 409, message: "A batch's expiry has passed." });
+    open();
+
+    await conclude();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Uma leva está com a validade vencida. Remova e registre de novo com a validade certa.",
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("opens the shortage dialog with what is missing", async () => {
     const dough = { sku: "018f0000-0000-7000-8000-0000000000d1", description: "Massa base", unit: "KILOGRAM" as const };
     vi.mocked(concludeItem).mockResolvedValue({

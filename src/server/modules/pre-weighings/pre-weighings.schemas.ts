@@ -39,6 +39,10 @@ const produceSchema = z
   })
   .optional();
 
+// What earlier items of a free production take of each intermediate's stock, by sku: negative for what
+// they make beyond their need. Planned on the start screen, never sent on the REST plan.
+export const planReservedSchema = z.record(z.uuid(), z.string().regex(/^-?\d{1,12}(\.\d{1,6})?$/));
+
 // How much more than asked for, in percent, a production may be to leave less behind of what cannot be kept.
 export const preWeighingPlanQuerySchema = z.object({
   ...targetSchema,

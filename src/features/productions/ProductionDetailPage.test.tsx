@@ -547,6 +547,17 @@ describe("ProductionDetailPage, timeline", () => {
     expect(await screen.findByRole("alertdialog")).toHaveTextContent("Os itens já finalizados continuam no estoque.");
   });
 
+  it("tells the cancel dialog whether pending items with levas will be concluded", async () => {
+    const user = userEvent.setup();
+    open(aProduction({ items: [aProductionItem({ batches: [aProductionBatch()] })] }));
+
+    await user.click(screen.getByRole("button", { name: "Cancelar produção" }));
+
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "Os itens com levas registradas são concluídos com o que foi feito",
+    );
+  });
+
   it("keeps the cancel at the end of the page", async () => {
     open(BOMBOM);
 

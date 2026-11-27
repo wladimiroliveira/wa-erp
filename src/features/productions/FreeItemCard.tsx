@@ -1,29 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumericInput } from "@/components/ui/numeric-input";
-import { produceOf, produceProblem, REPLAN_DELAY_MS } from "@/features/pre-weighings/produce";
+import { PLAN_MESSAGES, produceOf, produceProblem, REPLAN_DELAY_MS } from "@/features/pre-weighings/produce";
 import { planProductionItem } from "@/features/productions/actions";
 import { quantityOf } from "@/features/stock/stock-format";
 import type { MeasurementUnit, PreWeighingPlan } from "@/lib/api";
 import { formatDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
 import { unitLabel } from "@/lib/units";
+import type { Reserved } from "@/shared/plan-reservation";
 
 type PlanItem = PreWeighingPlan["items"][number];
-
-// Every refusal of the plan is the server having decided, so none of them is worth trying again as it is.
-export const PLAN_MESSAGES = {
-  404: "Esse produto não existe mais. Atualize a página.",
-  409: "Não foi possível calcular: o produto não tem receita, a receita usa um produto inativo ou a quantidade está fora do que a receita alcança.",
-};
 
 /** An item produced without a pre-weighing: what was asked, and the plan of it now on screen. */
 export interface FreeItem {
   key: number;
   quantity: string;
   plan: PreWeighingPlan;
+  /** What the items above took of the stock when the item was added, the plan made against it. */
+  plannedAgainst: Reserved;
   /** A quantity to make waits to be planned, cannot be asked for, or its plan was refused: the item cannot start. */
   busy: boolean;
 }
@@ -114,29 +111,38 @@ function PlanStage({ plan, produce, nested }: { plan: PreWeighingPlan; produce: 
 
 interface FreeItemCardProps {
   item: FreeItem;
+  /** What the items above take of the stock of each intermediate, as their plans on screen stand. */
+  reserved: Reserved;
   onChange: (key: number, change: { plan?: PreWeighingPlan; busy: boolean }) => void;
   onRemove: (key: number) => void;
 }
 
-/** An added item and its tree of intermediates: a quantity to make typed plans the item again once the operator pauses. */
-export function FreeItemCard({ item, onChange, onRemove }: FreeItemCardProps) {
+/**
+ * An added item and its tree of intermediates: a quantity to make typed plans the item again once the
+ * operator pauses, and a change in what the items above take of the stock plans it again at once.
+ */
+export function FreeItemCard({ item, reserved, onChange, onRemove }: FreeItemCardProps) {
   const { key, quantity, plan } = item;
+  const productSku = plan.product.sku;
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, string> | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   // The number of the latest ask: an answer to an older one arrives too late to be shown.
   const latestAsk = useRef(0);
+  // Compared by value: the reservation is worked out anew each time the page renders.
+  const reservedKey = JSON.stringify(reserved);
+  // What the items above took of the stock in the latest ask.
+  const askedAgainst = useRef(JSON.stringify(item.plannedAgainst));
 
-  useEffect(() => {
-    if (pending === null) return;
+  const ask = useCallback(
+    (produce: Record<string, string>, against: string) => {
+      const asking = ++latestAsk.current;
 
-    const timer = setTimeout(() => {
-      const ask = ++latestAsk.current;
-
-      planProductionItem({ productSku: plan.product.sku, quantity }, pending)
+      askedAgainst.current = against;
+      planProductionItem({ productSku, quantity }, produce, JSON.parse(against) as Reserved)
         .then((result) => {
-          if (ask !== latestAsk.current) return;
+          if (asking !== latestAsk.current) return;
           setPending(null);
 
           if (!result.ok) {
@@ -151,15 +157,31 @@ export function FreeItemCard({ item, onChange, onRemove }: FreeItemCardProps) {
           onChange(key, { plan: result.data, busy: false });
         })
         .catch((error: unknown) => {
-          if (ask !== latestAsk.current) return;
+          if (asking !== latestAsk.current) return;
           setPending(null);
           setFailure(messageForFailure(error));
           onChange(key, { busy: true });
         });
-    }, REPLAN_DELAY_MS);
+    },
+    [productSku, quantity, key, onChange],
+  );
+
+  useEffect(() => {
+    if (pending === null) return;
+
+    const timer = setTimeout(() => ask(pending, reservedKey), REPLAN_DELAY_MS);
 
     return () => clearTimeout(timer);
-  }, [pending, plan.product.sku, quantity, key, onChange]);
+  }, [pending, reservedKey, ask]);
+
+  // A quantity typed and waiting is asked with the new reservation when its pause ends; one that cannot
+  // be asked for holds the item back until it is fixed, and is asked with it then.
+  useEffect(() => {
+    if (askedAgainst.current === reservedKey || pending !== null || Object.keys(errors).length > 0) return;
+
+    onChange(key, { busy: true });
+    ask(produceOf(typed), reservedKey);
+  }, [reservedKey, pending, errors, typed, key, onChange, ask]);
 
   const produce: Produce = {
     typed: (sku) => typed[sku],

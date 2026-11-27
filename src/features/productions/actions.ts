@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { Permission } from "@prisma/client";
 import { can, requireUser } from "@/server/auth/current-user";
 import { fail, type Failure } from "@/server/lib/result";
-import { preWeighingPlanQuerySchema } from "@/server/modules/pre-weighings/pre-weighings.schemas";
+import { planReservedSchema, preWeighingPlanQuerySchema } from "@/server/modules/pre-weighings/pre-weighings.schemas";
 import { previewPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
 import {
   addProductionItemBodySchema,
@@ -160,10 +160,14 @@ export async function loadMoreProductions(
   return { ok: true, data: await productions.listProductionsPage(parsed.data) };
 }
 
-/** What an item produced without a pre-weighing will take, as the recipe plans it and the stock stands now. */
+/**
+ * What an item produced without a pre-weighing will take, as the recipe plans it and the stock stands now,
+ * less what the items before it in the same production take of each intermediate (`reserved`).
+ */
 export async function planProductionItem(
   target: { productSku: string; quantity: string },
   produce?: Record<string, string>,
+  reserved?: Record<string, string>,
 ): Promise<PlanResult> {
   const user = await requireUser();
 
@@ -173,10 +177,17 @@ export async function planProductionItem(
     ...target,
     produce: produce && Object.entries(produce).map(([sku, quantity]) => `${sku}:${quantity}`),
   });
+  const parsedReserved = planReservedSchema.optional().safeParse(reserved);
 
-  if (!parsed.success) return fail(400, INVALID_INPUT);
+  if (!parsed.success || !parsedReserved.success) return fail(400, INVALID_INPUT);
 
-  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity, undefined, parsed.data.produce);
+  return previewPreWeighing(
+    parsed.data.productSku,
+    parsed.data.quantity,
+    undefined,
+    parsed.data.produce,
+    parsedReserved.data && new Map(Object.entries(parsedReserved.data)),
+  );
 }
 
 /** An item went wrong before it finished: what it took leaves the stock as losses under the reason. */

@@ -12,13 +12,18 @@ export function finishableItems(items: Item[]): Item[] {
   );
 }
 
-/** Items whose stage can go wrong now: the same ones the form can finish. */
-export const canDamage = (item: Item, items: Item[]): boolean => finishableItems(items).includes(item);
+// Batches and extra weighings are what the operator really made: the server keeps them from a damage
+// or a substitution, which would throw them away.
+const hasBeenMade = (item: Item): boolean => item.batches.length > 0 || item.extraWeighings > 0;
+
+/** Items whose stage can go wrong now: the ones the form can finish, of which nothing was made yet. */
+export const canDamage = (item: Item, items: Item[]): boolean =>
+  !hasBeenMade(item) && finishableItems(items).includes(item);
 
 /** Whether another item of the production takes this one: an intermediate, not the main product. */
 export const isTakenByAnother = (item: Item, items: Item[]): boolean =>
   items.some(({ id, dependsOn }) => id !== item.id && dependsOn.includes(item.id));
 
-/** Pending items another item takes: the only ones stock of the same product can stand in for. */
+/** Pending items another item takes, of which nothing was made yet: the only ones stock of the same product can stand in for. */
 export const canSubstitute = (item: Item, items: Item[]): boolean =>
-  item.status === "PENDING" && isTakenByAnother(item, items);
+  item.status === "PENDING" && !hasBeenMade(item) && isTakenByAnother(item, items);

@@ -20,6 +20,7 @@ import { ShortageDialog } from "@/features/productions/ShortageDialog";
 import { quantityOf } from "@/features/stock/stock-format";
 import type { FinishConflict, LeftoversPreview, Production, ProductionItem } from "@/lib/api";
 import { messageForFailure } from "@/lib/form-errors";
+import { BATCH_EXPIRED } from "@/server/modules/productions/productions.schemas";
 
 const CONCLUDE_MESSAGES = {
   404: "Essa produção não existe mais.",
@@ -111,6 +112,12 @@ export function ConcludeItemForm({ production, item }: { production: Production;
           // Nothing changed meanwhile: the item stays, and more levas are what it takes.
           if (conflict?.missing?.length) {
             setFailure(missingMessageOf(conflict.missing));
+            return;
+          }
+
+          // Nothing changed meanwhile either: the leva with the wrong expiry is the operator's to fix.
+          if (result.status === 409 && result.message === BATCH_EXPIRED) {
+            setFailure("Uma leva está com a validade vencida. Remova e registre de novo com a validade certa.");
             return;
           }
 

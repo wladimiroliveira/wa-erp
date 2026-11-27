@@ -184,3 +184,48 @@ describe("preWeighingPlanQuerySchema tolerance", () => {
     expect(preWeighingPlanQuerySchema.safeParse({ ...target, tolerance }).success).toBe(false),
   );
 });
+
+describe("previewPreWeighing, with what earlier items reserve", () => {
+  // 25 bonbons take 0.5 kg of filling, 0.8 kg of it in stock; a kg of filling takes a kg of milk.
+  const product = (sku: string, kind: "MANUFACTURED" | "GOODS", stockQuantity: string) => ({
+    sku,
+    description: sku,
+    unit: "KILOGRAM",
+    kind,
+    isActive: true,
+    isStorableOnceOpened: true,
+    stock: { quantity: D(stockQuantity), averageCost: D("1") },
+  });
+  const recipes: Record<string, { yieldQuantity: Prisma.Decimal; ingredients: unknown[] }> = {
+    "sku-bonbon": {
+      yieldQuantity: D("10"),
+      ingredients: [{ quantity: D("0.2"), product: product("sku-filling", "MANUFACTURED", "0.8") }],
+    },
+    "sku-filling": {
+      yieldQuantity: D("1"),
+      ingredients: [{ quantity: D("1"), product: product("sku-milk", "GOODS", "10") }],
+    },
+  };
+
+  beforeEach(() => {
+    repository.findProductWithRecipe.mockImplementation(async (sku: string) => ({
+      ...product(sku, "MANUFACTURED", "0"),
+      recipe: recipes[sku] ?? null,
+    }));
+  });
+
+  it("plans an intermediate against the stock the earlier items leave of it", async () => {
+    const result = await previewPreWeighing("sku-bonbon", "25", 20, undefined, new Map([["sku-filling", "0.5"]]));
+
+    if (!result.ok) throw new Error(result.message);
+    expect(result.data.items[0]!.manufactured).toMatchObject({ needed: "0.5", inStock: "0.3", toProduce: "0.2" });
+    expect(result.data.items[0]!.manufactured!.stage).toMatchObject({ quantity: "0.2" });
+  });
+
+  it("plans against the whole stock when nothing is reserved", async () => {
+    const result = await previewPreWeighing("sku-bonbon", "25");
+
+    if (!result.ok) throw new Error(result.message);
+    expect(result.data.items[0]!.manufactured).toMatchObject({ inStock: "0.8", toProduce: "0", stage: null });
+  });
+});

@@ -27,6 +27,7 @@ import type { PlannedProductionItem, ProductionRecord } from "./productions.repo
 import type { startProductionBodySchema } from "./productions.schemas";
 import { asConcluded, isTakenByAnother } from "./production-batches";
 import { dependenciesOf, waitingFor, type DependencyItem } from "./production-dependencies";
+import { addReserved, reservedBy, type Reserved } from "@/shared/plan-reservation";
 
 export type ProductionFailure = Failure<404 | 409>;
 export type ProductionResult = Result<PresentedProduction, 404 | 409>;
@@ -92,6 +93,7 @@ export const presentProduction = (production: ProductionRecord) => {
         createdAt: createdAt.toISOString(),
       })),
       extraWeighings: item.extraWeighings.length,
+      extraWeighedAt: item.extraWeighings.map(({ createdAt }) => createdAt.toISOString()),
       damages: item.damages.map(({ id, reason, note, createdAt, preWeighingId }) => ({
         id,
         reason,
@@ -204,16 +206,18 @@ async function guidedItems(rootId: string): Promise<Result<PlannedProductionItem
 }
 
 // A free item brings in, as items of its own, the intermediates its plan makes: the root first, then
-// every stage depth-first, each with the inputs its recipe plans.
-async function freeItems(request: {
-  productSku: string;
-  quantity: string;
-  produce?: { productSku: string; quantity: string }[];
-}): Promise<Result<PlannedProductionItem[], 404 | 409>> {
-  const produce = new Map(
-    (request.produce ?? []).map(({ productSku, quantity }) => [productSku.toLowerCase(), new Prisma.Decimal(quantity)]),
-  );
-  const result = await planPreWeighing(request.productSku, request.quantity, produce);
+// every stage depth-first, each with the inputs its recipe plans. It is planned against the stock that
+// the items before it leave, `reserved`, and answers what it takes of it too.
+async function freeItems(
+  request: { productSku: string; quantity: string; produce?: { productSku: string; quantity: string }[] },
+  reserved: Reserved,
+): Promise<Result<{ items: PlannedProductionItem[]; reserved: Reserved }, 404 | 409>> {
+  const decimals = (entries: [string, string][]) =>
+    new Map(entries.map(([productSku, quantity]) => [productSku.toLowerCase(), new Prisma.Decimal(quantity)]));
+  const produce = decimals((request.produce ?? []).map(({ productSku, quantity }) => [productSku, quantity]));
+  const result = await planPreWeighing(request.productSku, request.quantity, produce, {
+    reserved: decimals(Object.entries(reserved)),
+  });
 
   if (!result.ok) return result;
 
@@ -234,7 +238,7 @@ async function freeItems(request: {
 
   visit(result.data);
 
-  return succeed(items);
+  return succeed({ items, reserved: addReserved(reserved, reservedBy(result.data)) });
 }
 
 export async function startProduction(
@@ -249,12 +253,15 @@ export async function startProduction(
 
     items.push(...guided.data);
   } else {
+    let reserved: Reserved = {};
+
     for (const request of input.items) {
-      const result = await freeItems(request);
+      const result = await freeItems(request, reserved);
 
       if (!result.ok) return result;
 
-      items.push(...result.data);
+      items.push(...result.data.items);
+      reserved = result.data.reserved;
     }
   }
 

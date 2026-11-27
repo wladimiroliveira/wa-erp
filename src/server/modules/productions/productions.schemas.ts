@@ -31,6 +31,9 @@ export const startProductionBodySchema = z.union([
 // Concluding an item takes what its batches add up to. Below its target it must be meant; and
 // whether what is discarded of the opened packagings goes into the cost produced is asked for at
 // the end, after the production happened.
+/** The 409 a conclusion answers when a batch would come in as a lot already expired. */
+export const BATCH_EXPIRED = "A batch's expiry has passed.";
+
 export const concludeItemBodySchema = z.object({
   belowTarget: z.boolean().default(false),
   hasLeftoversInCost: z.boolean().default(true),
@@ -126,8 +129,9 @@ export const productionSchema = z.object({
           createdAt: z.iso.datetime(),
         }),
       ),
-      // How many weighings the item took beyond the one that guides it.
+      // How many weighings the item took beyond the one that guides it, and when each was recorded, the oldest first.
       extraWeighings: z.number().int(),
+      extraWeighedAt: z.array(z.iso.datetime()),
       // Each time the item went wrong, the oldest first; the pre-weighing is the one it let go of.
       damages: z.array(
         z.object({

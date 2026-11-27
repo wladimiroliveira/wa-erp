@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { planProductionItem, startProduction } from "@/features/productions/actions";
-import { FreeItemCard, PLAN_MESSAGES, produceOfPlan, type FreeItem } from "@/features/productions/FreeItemCard";
+import { PLAN_MESSAGES } from "@/features/pre-weighings/produce";
+import { FreeItemCard, produceOfPlan, type FreeItem } from "@/features/productions/FreeItemCard";
 import { quantityOf } from "@/features/stock/stock-format";
 import type { PreWeighingPlan, Product, StartCandidate, StartProductionBody } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
@@ -20,6 +21,7 @@ import { messageForFailure } from "@/lib/form-errors";
 import { positiveDecimal } from "@/lib/form-schemas";
 import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
+import { addReserved, reservedBy, type Reserved } from "@/shared/plan-reservation";
 
 const itemFormSchema = z.object({
   productSku: z.string().min(1, "Escolha o produto."),
@@ -65,6 +67,10 @@ function StageList({ stages }: { stages: StartCandidate[] }) {
   );
 }
 
+/** What the items before `index` take of the stock of each intermediate, as their plans on screen stand. */
+const reservedBefore = (items: FreeItem[], index: number): Reserved =>
+  items.slice(0, index).reduce<Reserved>((sum, { plan }) => addReserved(sum, reservedBy(plan)), {});
+
 export function StartProductionPage({ products, candidates }: StartProductionPageProps) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode | null>(null);
@@ -99,11 +105,13 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
 
   function add(values: ItemForm): void {
     const quantity = toApiDecimal(values.quantity);
+    // A new item goes below every other: it is planned against what all of them take of the stock.
+    const reserved = reservedBefore(freeItems, freeItems.length);
 
     setPlanFailure(null);
     startPlanning(async () => {
       try {
-        const result = await planProductionItem({ productSku: values.productSku, quantity });
+        const result = await planProductionItem({ productSku: values.productSku, quantity }, undefined, reserved);
 
         if (!result.ok) {
           setPlanFailure(messageForFailure(result, PLAN_MESSAGES));
@@ -112,7 +120,13 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
 
         setFreeItems((current) => [
           ...current,
-          { key: Math.max(0, ...current.map((item) => item.key)) + 1, quantity, plan: result.data, busy: false },
+          {
+            key: Math.max(0, ...current.map((item) => item.key)) + 1,
+            quantity,
+            plan: result.data,
+            plannedAgainst: reserved,
+            busy: false,
+          },
         ]);
         form.reset(EMPTY_ITEM);
       } catch (error) {
@@ -250,10 +264,11 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
           ) : null}
 
           <ul className="flex flex-col gap-3">
-            {freeItems.map((item) => (
+            {freeItems.map((item, index) => (
               <FreeItemCard
                 key={item.key}
                 item={item}
+                reserved={reservedBefore(freeItems, index)}
                 onChange={changeItem}
                 onRemove={(key) => setFreeItems((current) => current.filter((other) => other.key !== key))}
               />

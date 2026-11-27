@@ -29,6 +29,7 @@ import {
   releasePreWeighings,
   type ProductionRecord,
 } from "./productions.repository";
+import { BATCH_EXPIRED } from "./productions.schemas";
 import {
   awaitsNewWeighing,
   awaitsWeighing,
@@ -203,6 +204,7 @@ export function addShortageItem(input: {
 const ZERO = new Prisma.Decimal(0);
 
 const noBatch = fail(409, "The item has no batch.");
+const batchExpired = fail(409, BATCH_EXPIRED);
 const belowItsTarget = fail(409, "The item is below its target.");
 const costOutOfRange = fail(409, "Produced quantity is out of range for the cost of the inputs.");
 
@@ -215,17 +217,24 @@ const balancesMovedBy = (items: ProductionItemRecord[]) =>
 const balanceOf = (balances: HeldBalance[], productSku: string) =>
   balances.find((balance) => balance.productSku.toLowerCase() === productSku.toLowerCase())?.quantity ?? ZERO;
 
-// An intermediate concluded below its target: what it made, added to what the stock has of it, must
-// still cover what the pending items that take it need, or the gap is closed where it happens.
+// An intermediate concluded below its target: what it made, added to what the stock has of it and to
+// what the other pending items of the same product are to make, must still cover what the pending
+// items that take it need, or the gap is closed where it happens.
 function takersShortage(production: ProductionRecord, item: ProductionItemRecord, balances: HeldBalance[]) {
+  const others = production.items.filter(
+    (other) => other.id !== item.id && other.status === ProductionItemStatus.PENDING,
+  );
   const needed = Prisma.Decimal.sum(
     0,
-    ...production.items
-      .filter((other) => other.id !== item.id && other.status === ProductionItemStatus.PENDING)
+    ...others
       .flatMap(({ inputs }) => inputs.filter(({ product }) => product.sku === item.product.sku))
       .map(({ quantity }) => quantity),
   );
-  const available = balanceOf(balances, item.product.sku).add(producedOf(item.batches));
+  const toMake = Prisma.Decimal.sum(
+    0,
+    ...others.filter(({ product }) => product.sku === item.product.sku).map(({ expectedQuantity }) => expectedQuantity),
+  );
+  const available = balanceOf(balances, item.product.sku).add(producedOf(item.batches)).add(toMake);
 
   if (needed.lte(available)) return null;
 
@@ -368,23 +377,32 @@ async function takeInputs(
 // Concluding is where the stock moves: what the item took leaves the stock for what was made now,
 // and its batches come in as lots, one per expiry. What was made costs everything that left spread
 // over it; what already existed comes in at what the product costs on average, nothing when it never
-// had a cost. Run with the production held, after whatever refusal applies.
+// had a cost. A cost of what was made that the stock cannot hold is refused, or, where nothing may be
+// refused, taken as the average cost too. Run with the production held, after whatever refusal applies.
 async function concludeHeld(
   tx: Prisma.TransactionClient,
   production: ProductionRecord,
   item: ProductionItemRecord,
-  options: { hasLeftoversInCost: boolean; createdById: string; today: string },
+  options: {
+    hasLeftoversInCost: boolean;
+    createdById: string;
+    today: string;
+    costOutOfRange: "refuse" | "averageCost";
+  },
 ) {
   const { hasLeftoversInCost, createdById } = options;
   const cost = await takeInputs(tx, asConcluded(production.items, item), options);
   const made = madeOf(item.batches);
-  const madeCost = made.gt(0) ? toStoredDecimal(cost.div(made)) : null;
+  const fitting = made.gt(0) ? toStoredDecimal(cost.div(made)) : null;
 
-  if (made.gt(0) && madeCost === null) throw new ProductionAborted(costOutOfRange);
+  if (made.gt(0) && fitting === null && options.costOutOfRange === "refuse") {
+    throw new ProductionAborted(costOutOfRange);
+  }
 
   // Read once what was made is costed, before anything of the product comes in.
   const [balance] = await holdStockBalances(tx, [item.product.sku]);
   const averageCost = balance?.averageCost ?? ZERO;
+  const madeCost = made.gt(0) ? (fitting ?? averageCost) : null;
   const batches = item.batches.map(({ quantity, expiresAt, source }) => ({
     quantity,
     source,
@@ -409,8 +427,8 @@ async function concludeHeld(
   });
 }
 
-// An item is concluded with what its batches add up to, refused where recording a batch is. Below its
-// target it must be meant, and an intermediate must still cover the items that take it; what it takes
+// An item is concluded with what its batches add up to, refused where recording a batch is and while
+// a batch's expiry has passed. Below its target it must be meant, and an intermediate must still cover the items that take it; what it takes
 // must be in stock if it is an intermediate. The production ends with its last pending item.
 export function concludeItem(input: {
   productionId: string;
@@ -434,6 +452,10 @@ export function concludeItem(input: {
 
     if (waiting !== null) throw new ProductionAborted(waiting);
     if (item.batches.length === 0) throw new ProductionAborted(noBatch);
+    // A lot never comes in already expired; the operator fixes the batch's expiry first.
+    if (item.batches.some(({ expiresAt }) => (toOptionalDateString(expiresAt) ?? today) < today)) {
+      throw new ProductionAborted(batchExpired);
+    }
 
     const below = producedOf(item.batches).lt(item.expectedQuantity);
 
@@ -448,7 +470,7 @@ export function concludeItem(input: {
 
     if (short !== null) throw new ProductionAborted(short);
 
-    await concludeHeld(tx, production, item, { hasLeftoversInCost, createdById, today });
+    await concludeHeld(tx, production, item, { hasLeftoversInCost, createdById, today, costOutOfRange: "refuse" });
     await closeIfResolved(tx, productionId);
   });
 }
@@ -473,7 +495,8 @@ function inDependencyOrder(items: ProductionItemRecord[]) {
 
 // Giving up a production keeps what was already made of it: each pending item with batches is
 // concluded with them, never refused, since it happened at the bench (no target, no shortage, an
-// intermediate's balance may go negative, an expiry already past is taken), its leftovers in the cost.
+// intermediate's balance may go negative, an expiry already past is taken, a cost the stock cannot hold
+// is the average cost), its leftovers in the cost.
 // The items not made let go of their pre-weighings: what was weighed waits for another production.
 export function cancelProduction(input: { id: string; createdById: string }): Promise<ProductionResult> {
   const { id, createdById } = input;
@@ -488,7 +511,14 @@ export function cancelProduction(input: { id: string; createdById: string }): Pr
     // Every balance the conclusions move is held before any moves, in the order a conclusion holds them.
     await holdStockBalances(tx, balancesMovedBy(made));
 
-    for (const item of made) await concludeHeld(tx, production, item, { hasLeftoversInCost: true, createdById, today });
+    for (const item of made) {
+      await concludeHeld(tx, production, item, {
+        hasLeftoversInCost: true,
+        createdById,
+        today,
+        costOutOfRange: "averageCost",
+      });
+    }
 
     await markProductionCanceled(tx, id);
     await releasePreWeighings(tx, id);

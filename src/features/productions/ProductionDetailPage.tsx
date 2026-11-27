@@ -229,6 +229,10 @@ export function ProductionDetailPage({
         <CancelProductionDialog
           productionId={production.id}
           hasFinishedItems={production.items.some(({ status }) => status === "FINISHED")}
+          concludesBatches={production.items.some(({ status, batches }) => status === "PENDING" && batches.length > 0)}
+          releasesPreWeighings={production.items.some(
+            ({ status, batches }) => status === "PENDING" && batches.length === 0,
+          )}
         />
       ) : null}
     </div>

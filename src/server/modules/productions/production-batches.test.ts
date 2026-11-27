@@ -40,6 +40,16 @@ describe("consumptionOf", () => {
     ]);
   });
 
+  it("takes for what was made now when what existed already reaches the target: 50 existing and 10 made of 50", () => {
+    // A fifth of every input went into the 10 made, so their lot carries a cost.
+    const item = bonbons([existing("50"), produced("10")], "50");
+
+    expect(shown(consumptionOf(item, { mainBelowTarget: false }))).toEqual([
+      ["filling", "0.4"],
+      ["sprinkles", "0.1"],
+    ]);
+  });
+
   it("takes nothing when everything already existed, even beyond the target", () => {
     expect(consumptionOf(bonbons([existing("100")]), { mainBelowTarget: false })).toEqual([]);
     expect(consumptionOf(bonbons([existing("60"), existing("60")]), { mainBelowTarget: false })).toEqual([]);

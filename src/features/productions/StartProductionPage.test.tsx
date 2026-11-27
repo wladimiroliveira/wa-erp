@@ -6,7 +6,15 @@ import { StartProductionPage } from "@/features/productions/StartProductionPage"
 import type { Product, StartCandidate } from "@/lib/api";
 import { navigation } from "@/tests/navigation";
 import { renderWithProviders } from "@/tests/render";
-import { aCurrentUser, aPreWeighingPlan, aProduct, aProduction, aStartCandidate } from "@/tests/samples";
+import {
+  aCurrentUser,
+  aPlanIngredient,
+  aPreWeighingPlan,
+  aProduct,
+  aProductSummary,
+  aProduction,
+  aStartCandidate,
+} from "@/tests/samples";
 
 vi.mock("@/features/productions/actions", () => ({
   startProduction: vi.fn(),
@@ -138,7 +146,7 @@ describe("StartProductionPage", () => {
 
     await chooseFree();
     await addItem();
-    expect(planProductionItem).toHaveBeenCalledWith({ productSku: BREAD.sku, quantity: "10.5" });
+    expect(planProductionItem).toHaveBeenCalledWith({ productSku: BREAD.sku, quantity: "10.5" }, undefined, {});
     await screen.findByRole("button", { name: "Remover Pão francês" });
     await userEvent.click(screen.getByRole("button", { name: "Iniciar produção" }));
 
@@ -217,22 +225,14 @@ describe("StartProductionPage", () => {
 });
 
 describe("StartProductionPage, intermediates of a free item", () => {
-  const product = (sku: string, description: string, unit: "KILOGRAM" | "UNIT" = "KILOGRAM") => ({
-    sku,
-    description,
-    unit,
+  const FILLING = aProductSummary({ sku: "018f0000-0000-7000-8000-0000000000f1", description: "Recheio" });
+  const SHELL = aProductSummary({
+    sku: "018f0000-0000-7000-8000-0000000000f2",
+    description: "Casquinha",
+    unit: "UNIT",
   });
-  const FILLING = product("018f0000-0000-7000-8000-0000000000f1", "Recheio");
-  const SHELL = product("018f0000-0000-7000-8000-0000000000f2", "Casquinha", "UNIT");
-  const TEMPERED = product("018f0000-0000-7000-8000-0000000000f3", "Chocolate temperado");
-  const MILK = product("018f0000-0000-7000-8000-0000000000f4", "Leite condensado");
-  const bought = (item: ReturnType<typeof product>, plannedQuantity: string, shortfall = "0") => ({
-    product: item,
-    plannedQuantity,
-    lots: [],
-    shortfall,
-    manufactured: null,
-  });
+  const TEMPERED = aProductSummary({ sku: "018f0000-0000-7000-8000-0000000000f3", description: "Chocolate temperado" });
+  const MILK = aProductSummary({ sku: "018f0000-0000-7000-8000-0000000000f4", description: "Leite condensado" });
 
   const planWith = (fillingToProduce: string) =>
     aPreWeighingPlan({
@@ -240,7 +240,7 @@ describe("StartProductionPage, intermediates of a free item", () => {
       quantity: "10.5",
       items: [
         {
-          ...bought(FILLING, "1"),
+          ...aPlanIngredient({ product: FILLING, plannedQuantity: "1" }),
           shortfall: "0.7",
           manufactured: {
             needed: "1",
@@ -249,12 +249,12 @@ describe("StartProductionPage, intermediates of a free item", () => {
             stage: aPreWeighingPlan({
               product: FILLING,
               quantity: fillingToProduce,
-              items: [bought(MILK, fillingToProduce, "0.2")],
+              items: [aPlanIngredient({ product: MILK, plannedQuantity: fillingToProduce, shortfall: "0.2" })],
             }),
           },
         },
         {
-          ...bought(SHELL, "50"),
+          ...aPlanIngredient({ product: SHELL, plannedQuantity: "50" }),
           shortfall: "50",
           manufactured: {
             needed: "50",
@@ -265,7 +265,7 @@ describe("StartProductionPage, intermediates of a free item", () => {
               quantity: "50",
               items: [
                 {
-                  ...bought(TEMPERED, "0.5"),
+                  ...aPlanIngredient({ product: TEMPERED, plannedQuantity: "0.5" }),
                   shortfall: "0.5",
                   manufactured: { needed: "0.5", inStock: "0", toProduce: "0.5", stage: null },
                 },
@@ -304,6 +304,7 @@ describe("StartProductionPage, intermediates of a free item", () => {
         expect(planProductionItem).toHaveBeenLastCalledWith(
           { productSku: BREAD.sku, quantity: "10.5" },
           { [FILLING.sku]: "1" },
+          {},
         ),
       { timeout: 2000 },
     );
@@ -332,6 +333,7 @@ describe("StartProductionPage, intermediates of a free item", () => {
         expect(planProductionItem).toHaveBeenLastCalledWith(
           { productSku: BREAD.sku, quantity: "10.5" },
           { [SHELL.sku]: "0", [FILLING.sku]: "1" },
+          {},
         ),
       { timeout: 2000 },
     );
@@ -387,6 +389,57 @@ describe("StartProductionPage, intermediates of a free item", () => {
     expect(await screen.findByRole("alert", {}, { timeout: 2000 })).toHaveTextContent(/^Não foi possível calcular/);
     expect(screen.getByLabelText("A fabricar de Casquinha")).toHaveValue("50");
     expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeDisabled();
+  });
+
+  // The bombom on screen needs 1 kg of filling and makes 0.7 of it: it takes 0.3 of the stock.
+  const RESERVED_BY_FIRST = { [FILLING.sku]: "0.3", [SHELL.sku]: "0", [TEMPERED.sku]: "0" };
+
+  async function addTwoBombons() {
+    await addBombom();
+    await addItem();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Remover Pão francês" })).toHaveLength(2));
+  }
+
+  it("plans a second item against the stock the first one takes", async () => {
+    await addTwoBombons();
+
+    expect(planProductionItem).toHaveBeenLastCalledWith(
+      { productSku: BREAD.sku, quantity: "10.5" },
+      undefined,
+      RESERVED_BY_FIRST,
+    );
+  });
+
+  it("plans the items below again when the plan of one above changes", async () => {
+    await addTwoBombons();
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: planWith("1") });
+
+    const [first] = screen.getAllByLabelText("A fabricar de Recheio");
+    await userEvent.clear(first!);
+    await userEvent.type(first!, "1");
+
+    // Making 1 of the 1 it needs, the first takes nothing of the filling in stock.
+    await waitFor(
+      () =>
+        expect(planProductionItem).toHaveBeenLastCalledWith(
+          { productSku: BREAD.sku, quantity: "10.5" },
+          {},
+          { [FILLING.sku]: "0", [SHELL.sku]: "0", [TEMPERED.sku]: "0" },
+        ),
+      { timeout: 2000 },
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeEnabled());
+  });
+
+  it("plans the items below again when one above is removed", async () => {
+    await addTwoBombons();
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Remover Pão francês" })[0]!);
+
+    await waitFor(() =>
+      expect(planProductionItem).toHaveBeenLastCalledWith({ productSku: BREAD.sku, quantity: "10.5" }, {}, {}),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeEnabled());
   });
 
   it("warns of what the stock lacks of a bought ingredient inside a stage", async () => {

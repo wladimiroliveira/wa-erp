@@ -21,7 +21,7 @@ export const madeOf = (batches: Batch[]) => sumOf(batches, "PRODUCED");
 /**
  * What of each input leaves the stock when an item is concluded. The part of the target covered by
  * batches that already existed was not made now, so every input leaves scaled by what was left to
- * make of the target (never above the whole). Nothing leaves when nothing was made now: no lot made
+ * make of the target, or by what was made now when that is more (never above the whole). Nothing leaves when nothing was made now: no lot made
  * would carry its cost. On the main product concluded below its target, the lines taken from stock
  * without weighing leave only for what was made of all its inputs were for, the target and what the
  * extra weighings planned: the rest stayed on the bench. A weighed line leaves as weighed. Kept to
@@ -42,7 +42,8 @@ export function consumptionOf(
 
   if (made.lte(0)) return [];
 
-  const toMake = Prisma.Decimal.max(expected.sub(sumOf(item.batches, "EXISTING")), 0);
+  // Never less than what was made now: a lot made beyond what existed still took its inputs.
+  const toMake = Prisma.Decimal.max(expected.sub(sumOf(item.batches, "EXISTING")), made);
   const share = Prisma.Decimal.min(toMake.div(expected), 1);
   const madeShare = made.div(expected.add(item.extraPlanned));
 

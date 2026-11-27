@@ -21,7 +21,7 @@ import {
 } from "@/features/pre-weighings/weighing-units";
 import { WasteSection } from "@/features/pre-weighings/WasteSection";
 import { createBodyOf, weighingRowsOf } from "@/features/pre-weighings/plan-tree";
-import { produceOf, produceProblem, REPLAN_DELAY_MS } from "@/features/pre-weighings/produce";
+import { PLAN_MESSAGES, produceOf, produceProblem, REPLAN_DELAY_MS } from "@/features/pre-weighings/produce";
 import {
   PreWeighingStage,
   rowKeyOf,
@@ -59,12 +59,6 @@ const weighingSchemaOf = (keys: string[]) =>
   z.object({ weighed: z.object(Object.fromEntries(keys.map((key) => [key, weighedSchema]))) });
 
 type WeighingFormValues = { weighed: Record<string, string> };
-
-// Every refusal of the plan is the server having decided, so none of them is worth trying again as it is.
-const PLAN_MESSAGES = {
-  404: "Esse produto não existe mais. Atualize a página.",
-  409: "Não foi possível calcular: o produto não tem receita, a receita usa um produto inativo ou a quantidade está fora do que a receita alcança.",
-};
 
 const SAVE_MESSAGES = {
   404: "Esse produto não existe mais. Atualize a página.",

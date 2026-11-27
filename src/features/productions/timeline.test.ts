@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aProduction, aProductionItem } from "@/tests/samples";
+import { aProduction, aProductionBatch, aProductionItem } from "@/tests/samples";
 
 import { timelineOf } from "./timeline";
 
@@ -128,6 +128,22 @@ describe("timelineOf", () => {
     const timeline = timelineOf(aProduction({ items: [item] }));
 
     expect(timeline.done.map(({ text }) => text)).toEqual(["Produção iniciada", "Pesagem adicional de Recheio"]);
+  });
+
+  it("shows each extra leva weighed for an item, when it was weighed", () => {
+    const item = recheio({
+      extraWeighings: 2,
+      extraWeighedAt: ["2026-10-14T14:00:00.000Z", "2026-10-14T15:00:00.000Z"],
+      batches: [aProductionBatch({ quantity: "1", createdAt: "2026-10-14T14:30:00.000Z" })],
+    });
+    const timeline = timelineOf(aProduction({ items: [item] }));
+
+    expect(timeline.done.map(({ text, ends }) => [text, ends])).toEqual([
+      ["Produção iniciada", false],
+      ["Mais uma leva pesada de Recheio", false],
+      ["Leva de Recheio registrada · 1 kg", false],
+      ["Mais uma leva pesada de Recheio", false],
+    ]);
   });
 
   it("does not show an additional weighing for an item weighed before the production", () => {

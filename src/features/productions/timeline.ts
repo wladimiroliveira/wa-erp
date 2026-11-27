@@ -43,6 +43,10 @@ function eventsOf(production: Production): TimelineEvent[] {
       });
     }
 
+    for (const at of item.extraWeighedAt) {
+      events.push({ at, text: `Mais uma leva pesada de ${name}`, item, ends: false });
+    }
+
     for (const damage of item.damages) {
       events.push({ at: damage.createdAt, text: `${name} avariado · ${damage.reason.name}`, item, ends: false });
     }

@@ -42,8 +42,11 @@ const productionSelect = {
         select: { id: true, quantity: true, expiresAt: true, source: true, createdAt: true },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
-      // The weighings the item took beyond the one that guides it, with what each planned to make.
-      extraWeighings: { select: { preWeighing: { select: { quantity: true } } } },
+      // The weighings the item took beyond the one that guides it, the oldest first, with what each planned to make.
+      extraWeighings: {
+        select: { createdAt: true, preWeighing: { select: { quantity: true } } },
+        orderBy: { createdAt: "asc" },
+      },
       // A damage that names a pre-weighing took it from the item, which waits for a new one.
       damages: {
         select: {

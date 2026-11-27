@@ -193,6 +193,17 @@ export function aLoss(over: Partial<Loss> = {}): Loss {
   };
 }
 
+type PlanIngredient = PreWeighingPlan["items"][number];
+
+export function aProductSummary(over: Partial<PlanIngredient["product"]> = {}): PlanIngredient["product"] {
+  return { sku: "018f0000-0000-7000-8000-000000000020", description: "Farinha de trigo", unit: "KILOGRAM", ...over };
+}
+
+/** A line of a plan: a bought ingredient with no lot to weigh it from, unless told otherwise. */
+export function aPlanIngredient(over: Partial<PlanIngredient> = {}): PlanIngredient {
+  return { product: aProductSummary(), plannedQuantity: "6", lots: [], shortfall: "0", manufactured: null, ...over };
+}
+
 export function aPreWeighingPlan(over: Partial<PreWeighingPlan> = {}): PreWeighingPlan {
   return {
     product: { sku: "018f0000-0000-7000-8000-000000000090", description: "Pão francês", unit: "KILOGRAM" },
@@ -263,6 +274,7 @@ export function aProductionItem(over: Partial<ProductionItem> = {}): ProductionI
     awaitsWeighing: false,
     batches: [],
     extraWeighings: 0,
+    extraWeighedAt: [],
     damages: [],
     inputs: [
       {

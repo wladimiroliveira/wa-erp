@@ -61,6 +61,15 @@ function catalog(): (sku: string) => Promise<ProductWithRecipe | null> {
   };
 }
 
+// What the stock holds of an intermediate for this plan: what earlier items of the same production
+// take of it is not there for this one, and what they make beyond their need is.
+type Available = (product: { sku: string; stock: { quantity: Prisma.Decimal } | null }) => Prisma.Decimal;
+
+const availableAfter =
+  (reserved?: ReadonlyMap<string, Prisma.Decimal>): Available =>
+  ({ sku, stock }) =>
+    (stock?.quantity ?? new Prisma.Decimal(0)).minus(reserved?.get(sku) ?? 0);
+
 // Whether the plan of a product can be built from its recipe.
 const canBeProduced = (product: ProductWithRecipe) =>
   product.isActive &&
@@ -73,6 +82,7 @@ const canBeProduced = (product: ProductWithRecipe) =>
 // decided before the ones it takes; recipes are acyclic, which makes that order exist.
 async function decideToProduce(
   read: ReturnType<typeof catalog>,
+  available: Available,
   productSku: string,
   quantity: Prisma.Decimal,
   produce?: ReadonlyMap<string, Prisma.Decimal>,
@@ -92,7 +102,7 @@ async function decideToProduce(
     for (const ingredient of product.recipe?.ingredients ?? []) {
       if (ingredient.product.kind !== ProductKind.MANUFACTURED) continue;
 
-      stockOf.set(ingredient.product.sku, ingredient.product.stock?.quantity ?? new Prisma.Decimal(0));
+      stockOf.set(ingredient.product.sku, available(ingredient.product));
       await visit(ingredient.product.sku);
     }
 
@@ -147,6 +157,7 @@ async function decideToProduce(
 // order; its other places take it from the stock that stage replenishes.
 async function planStage(
   read: ReturnType<typeof catalog>,
+  available: Available,
   productSku: string,
   quantity: string | Prisma.Decimal,
   decided: ReadonlyMap<string, Prisma.Decimal> | null,
@@ -174,7 +185,7 @@ async function planStage(
     let manufactured: PreWeighingPlan["items"][number]["manufactured"] = null;
 
     if (decided !== null && ingredient.product.kind === ProductKind.MANUFACTURED) {
-      const inStock = ingredient.product.stock?.quantity ?? new Prisma.Decimal(0);
+      const inStock = available(ingredient.product);
       const toProduce = decided.get(ingredient.product.sku) ?? new Prisma.Decimal(0);
       let stage: PreWeighingPlan | null = null;
 
@@ -182,7 +193,7 @@ async function planStage(
 
       if (toProduce.gt(0) && !staged.has(ingredient.product.sku)) {
         staged.add(ingredient.product.sku);
-        const planned = await planStage(read, ingredient.product.sku, toProduce, decided, staged);
+        const planned = await planStage(read, available, ingredient.product.sku, toProduce, decided, staged);
 
         if (!planned.ok) return planned;
 
@@ -210,17 +221,22 @@ async function planStage(
 // what gets recorded as planned.
 // `produce` says how much to produce of an intermediate, by lower-case sku, at any depth of the plan;
 // the shortfall of its stock is produced otherwise, or nothing of one that cannot be produced.
+// `reserved` is what earlier items of the same production take of each intermediate's stock, by
+// lower-case sku (negative for what they make beyond their need): the stock is planned without it.
 export async function planPreWeighing(
   productSku: string,
   quantity: string | Prisma.Decimal,
   produce?: ReadonlyMap<string, Prisma.Decimal>,
   // A free production plans its own stage only; the stages of its intermediates are left out.
-  { stages = true }: { stages?: boolean } = {},
+  { stages = true, reserved }: { stages?: boolean; reserved?: ReadonlyMap<string, Prisma.Decimal> } = {},
 ): Promise<Result<PreWeighingPlan, PlanFailure>> {
   const read = catalog();
-  const decided = stages ? await decideToProduce(read, productSku, new Prisma.Decimal(quantity), produce) : null;
+  const available = availableAfter(reserved);
+  const decided = stages
+    ? await decideToProduce(read, available, productSku, new Prisma.Decimal(quantity), produce)
+    : null;
 
-  return planStage(read, productSku, quantity, decided, new Set());
+  return planStage(read, available, productSku, quantity, decided, new Set());
 }
 
 /** A pre-weighing as the screens and the mobile app read it: every amount as a decimal string. */
@@ -346,9 +362,11 @@ export async function previewPreWeighing(
   quantity: string,
   tolerance = 20,
   produce?: ReadonlyMap<string, string>,
+  reserved?: ReadonlyMap<string, string>,
 ) {
-  const toProduce = produce && new Map([...produce].map(([sku, amount]) => [sku, new Prisma.Decimal(amount)]));
-  const result = await planPreWeighing(productSku, quantity, toProduce);
+  const decimals = (amounts?: ReadonlyMap<string, string>) =>
+    amounts && new Map([...amounts].map(([sku, amount]) => [sku.toLowerCase(), new Prisma.Decimal(amount)]));
+  const result = await planPreWeighing(productSku, quantity, decimals(produce), { reserved: decimals(reserved) });
 
   if (!result.ok) return result;
 

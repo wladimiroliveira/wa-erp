@@ -17,6 +17,7 @@ import {
 } from "@/features/pre-weighings/weighing-units";
 import type { MeasurementUnit, PreWeighingPlan, Production, ProductionItem } from "@/lib/api";
 import { formatDecimal, toApiDecimal } from "@/lib/decimal";
+import { PLAN_MESSAGES } from "@/features/pre-weighings/produce";
 import { messageForFailure } from "@/lib/form-errors";
 import { fitsPlacesOf } from "@/lib/form-schemas";
 import { unitLabel } from "@/lib/units";
@@ -25,10 +26,6 @@ import { pickPlacesOf } from "@/shared/units";
 
 type PlanItem = PreWeighingPlan["items"][number];
 
-const PLAN_MESSAGES = {
-  404: "Esse produto não existe mais. Atualize a página.",
-  409: "Não foi possível calcular: o produto não tem receita, a receita usa um produto inativo ou a quantidade está fora do que a receita alcança.",
-};
 const WEIGH_MESSAGES = {
   404: "Essa produção não existe mais.",
   409: "Um item mudou enquanto isso. A página foi atualizada.",

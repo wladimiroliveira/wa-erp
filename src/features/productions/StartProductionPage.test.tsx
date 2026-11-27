@@ -142,7 +142,9 @@ describe("StartProductionPage", () => {
     await screen.findByRole("button", { name: "Remover Pão francês" });
     await userEvent.click(screen.getByRole("button", { name: "Iniciar produção" }));
 
-    expect(startProduction).toHaveBeenCalledWith({ items: [{ productSku: BREAD.sku, quantity: "10.5" }] });
+    expect(startProduction).toHaveBeenCalledWith({
+      items: [{ productSku: BREAD.sku, quantity: "10.5", produce: [] }],
+    });
   });
 
   it("does not start a free production with nothing in it", async () => {
@@ -211,5 +213,185 @@ describe("StartProductionPage", () => {
     await chooseGuided();
 
     expect(screen.getByText("Nenhuma pré-pesagem pendente.")).toBeInTheDocument();
+  });
+});
+
+describe("StartProductionPage, intermediates of a free item", () => {
+  const product = (sku: string, description: string, unit: "KILOGRAM" | "UNIT" = "KILOGRAM") => ({
+    sku,
+    description,
+    unit,
+  });
+  const FILLING = product("018f0000-0000-7000-8000-0000000000f1", "Recheio");
+  const SHELL = product("018f0000-0000-7000-8000-0000000000f2", "Casquinha", "UNIT");
+  const TEMPERED = product("018f0000-0000-7000-8000-0000000000f3", "Chocolate temperado");
+  const MILK = product("018f0000-0000-7000-8000-0000000000f4", "Leite condensado");
+  const bought = (item: ReturnType<typeof product>, plannedQuantity: string, shortfall = "0") => ({
+    product: item,
+    plannedQuantity,
+    lots: [],
+    shortfall,
+    manufactured: null,
+  });
+
+  const planWith = (fillingToProduce: string) =>
+    aPreWeighingPlan({
+      product: { sku: BREAD.sku, description: BREAD.description, unit: BREAD.unit },
+      quantity: "10.5",
+      items: [
+        {
+          ...bought(FILLING, "1"),
+          shortfall: "0.7",
+          manufactured: {
+            needed: "1",
+            inStock: "0.3",
+            toProduce: fillingToProduce,
+            stage: aPreWeighingPlan({
+              product: FILLING,
+              quantity: fillingToProduce,
+              items: [bought(MILK, fillingToProduce, "0.2")],
+            }),
+          },
+        },
+        {
+          ...bought(SHELL, "50"),
+          shortfall: "50",
+          manufactured: {
+            needed: "50",
+            inStock: "0",
+            toProduce: "50",
+            stage: aPreWeighingPlan({
+              product: SHELL,
+              quantity: "50",
+              items: [
+                {
+                  ...bought(TEMPERED, "0.5"),
+                  shortfall: "0.5",
+                  manufactured: { needed: "0.5", inStock: "0", toProduce: "0.5", stage: null },
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+
+  async function addBombom() {
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: planWith("0.7") });
+    open();
+    await chooseFree();
+    await addItem();
+    return screen.findByLabelText("A fabricar de Recheio");
+  }
+
+  it("shows each intermediate with what is needed, in stock and to make", async () => {
+    const field = await addBombom();
+
+    expect(field).toHaveValue("0,7");
+    expect(screen.getByLabelText("A fabricar de Casquinha")).toHaveValue("50");
+    expect(screen.getByLabelText("A fabricar de Chocolate temperado")).toHaveValue("0,5");
+  });
+
+  it("plans the item again with the quantity to make typed", async () => {
+    const field = await addBombom();
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: planWith("1") });
+
+    await userEvent.clear(field);
+    await userEvent.type(field, "1");
+
+    await waitFor(
+      () =>
+        expect(planProductionItem).toHaveBeenLastCalledWith(
+          { productSku: BREAD.sku, quantity: "10.5" },
+          { [FILLING.sku]: "1" },
+        ),
+      { timeout: 2000 },
+    );
+  });
+
+  it("keeps an earlier quantity to make when another one is typed", async () => {
+    await addBombom();
+    const shellAtZero = planWith("0.7");
+    shellAtZero.items[1] = {
+      ...shellAtZero.items[1]!,
+      manufactured: { ...shellAtZero.items[1]!.manufactured!, toProduce: "0", stage: null },
+    };
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: true, data: shellAtZero });
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Casquinha"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Casquinha"), "0");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeEnabled(), {
+      timeout: 2000,
+    });
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Recheio"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Recheio"), "1");
+
+    await waitFor(
+      () =>
+        expect(planProductionItem).toHaveBeenLastCalledWith(
+          { productSku: BREAD.sku, quantity: "10.5" },
+          { [SHELL.sku]: "0", [FILLING.sku]: "1" },
+        ),
+      { timeout: 2000 },
+    );
+  });
+
+  it("does not start while a quantity to make waits to be planned", async () => {
+    const field = await addBombom();
+
+    await userEvent.clear(field);
+    await userEvent.type(field, "1");
+
+    expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeDisabled();
+  });
+
+  it("does not start with a quantity to make the unit does not allow", async () => {
+    await addBombom();
+
+    await userEvent.clear(screen.getByLabelText("A fabricar de Casquinha"));
+    await userEvent.type(screen.getByLabelText("A fabricar de Casquinha"), "2,5");
+
+    expect(await screen.findByText("Informe uma quantidade inteira.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeDisabled();
+  });
+
+  it("starts with what the plan on screen makes of each intermediate, at any depth", async () => {
+    vi.mocked(startProduction).mockResolvedValue({ ok: true, data: aProduction() });
+    await addBombom();
+
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar produção" }));
+
+    expect(startProduction).toHaveBeenCalledWith({
+      items: [
+        {
+          productSku: BREAD.sku,
+          quantity: "10.5",
+          produce: [
+            { productSku: FILLING.sku, quantity: "0.7" },
+            { productSku: SHELL.sku, quantity: "50" },
+            { productSku: TEMPERED.sku, quantity: "0.5" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("keeps the plan and holds the start back when planning a quantity to make is refused", async () => {
+    const field = await addBombom();
+    vi.mocked(planProductionItem).mockResolvedValue({ ok: false, status: 409, message: "Out of range." });
+
+    await userEvent.clear(field);
+    await userEvent.type(field, "1");
+
+    expect(await screen.findByRole("alert", {}, { timeout: 2000 })).toHaveTextContent(/^Não foi possível calcular/);
+    expect(screen.getByLabelText("A fabricar de Casquinha")).toHaveValue("50");
+    expect(screen.getByRole("button", { name: "Iniciar produção" })).toBeDisabled();
+  });
+
+  it("warns of what the stock lacks of a bought ingredient inside a stage", async () => {
+    await addBombom();
+
+    expect(screen.getByText("Estoque insuficiente: falta 0,2 kg de Leite condensado")).toBeInTheDocument();
   });
 });

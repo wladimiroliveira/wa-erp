@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { lotExpirySchema } from "@/server/modules/stock/stock.schemas";
-import { positiveDecimalSchema } from "@/shared/decimal";
+import { decimalSchema, positiveDecimalSchema } from "@/shared/decimal";
 import { productionBatchSourceSchema, productionItemStatusSchema, productionStatusSchema } from "@/shared/enums";
 import { pageQuerySchema, pageSchema } from "@/server/lib/pagination";
 import { messageSchema } from "@/server/modules/auth/auth.schemas";
@@ -12,9 +12,20 @@ import { productSummarySchema } from "@/server/modules/products/products.schemas
 // the ones the recipe plans.
 const freeItemSchema = z.strictObject({ productSku: z.uuid(), quantity: positiveDecimalSchema });
 
+// A free item may say how much to make of each intermediate its recipe reaches, at any depth; an
+// intermediate it does not name is made for what the stock lacks. Zero takes it all from stock.
+const freeStartItemSchema = freeItemSchema.extend({
+  produce: z
+    .array(z.strictObject({ productSku: z.uuid(), quantity: decimalSchema }))
+    .refine((entries) => new Set(entries.map(({ productSku }) => productSku.toLowerCase())).size === entries.length, {
+      message: "An intermediate is listed more than once.",
+    })
+    .optional(),
+});
+
 export const startProductionBodySchema = z.union([
   z.strictObject({ preWeighingId: z.uuid() }),
-  z.strictObject({ items: z.array(freeItemSchema).min(1) }),
+  z.strictObject({ items: z.array(freeStartItemSchema).min(1) }),
 ]);
 
 // Concluding an item takes what its batches add up to. Below its target it must be meant; and

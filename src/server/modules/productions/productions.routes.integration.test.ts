@@ -3254,3 +3254,115 @@ describe("leftovers of opened packagings", () => {
     expect((await preview()).statusCode).toBe(409);
   });
 });
+
+describe("POST /v1/productions without a pre-weighing, with intermediates", () => {
+  // 50 bonbons take 1 kg of filling (0.3 in stock) and 50 shells (none in stock); the shell is made
+  // of tempered chocolate, itself made of cocoa, so the tree has two levels under the shell.
+  async function bonbonRecipes() {
+    const [bonbon, filling, shell, tempered, cocoa, milk] = await Promise.all([
+      createProduct("Bonbon", { kind: "MANUFACTURED", unit: "UNIT" }),
+      createProduct("Filling", { kind: "MANUFACTURED" }),
+      createProduct("Shell", { kind: "MANUFACTURED", unit: "UNIT" }),
+      createProduct("Tempered chocolate", { kind: "MANUFACTURED" }),
+      createProduct("Cocoa"),
+      createProduct("Condensed milk"),
+    ]);
+    const recipe = (
+      productSku: string,
+      yieldQuantity: string,
+      ingredients: { productSku: string; quantity: string }[],
+    ) => testPrisma.recipe.create({ data: { productSku, yieldQuantity, ingredients: { create: ingredients } } });
+
+    await recipe(bonbon.sku, "10", [
+      { productSku: filling.sku, quantity: "0.2" },
+      { productSku: shell.sku, quantity: "10" },
+    ]);
+    await recipe(filling.sku, "1", [{ productSku: milk.sku, quantity: "1" }]);
+    await recipe(shell.sku, "100", [{ productSku: tempered.sku, quantity: "1" }]);
+    await recipe(tempered.sku, "1", [{ productSku: cocoa.sku, quantity: "2" }]);
+    await stock(filling.sku, "0.3", "1");
+
+    return { bonbon, filling, shell, tempered, cocoa, milk };
+  }
+
+  type StartedItem = { id: string; product: { sku: string }; expectedQuantity: string; dependsOn: string[] };
+  const itemOf = (items: StartedItem[], sku: string) => items.find((item) => item.product.sku === sku);
+
+  it("brings in, as items, the intermediates the stock does not cover", async () => {
+    const { headers } = await canCreate();
+    const { bonbon, filling, shell, tempered } = await bonbonRecipes();
+
+    const response = await postProduction(headers, { items: [{ productSku: bonbon.sku, quantity: "50" }] });
+
+    expect(response.statusCode).toBe(201);
+    const items: StartedItem[] = response.json().items;
+    expect(items).toHaveLength(4);
+    expect(itemOf(items, filling.sku)?.expectedQuantity).toBe("0.7");
+    expect(itemOf(items, shell.sku)?.expectedQuantity).toBe("50");
+    expect(itemOf(items, tempered.sku)?.expectedQuantity).toBe("0.5");
+    expect(itemOf(items, bonbon.sku)?.dependsOn).toEqual(
+      expect.arrayContaining([itemOf(items, filling.sku)!.id, itemOf(items, shell.sku)!.id]),
+    );
+    expect(itemOf(items, shell.sku)?.dependsOn).toEqual([itemOf(items, tempered.sku)!.id]);
+  });
+
+  it("makes as much of an intermediate as the operator asked for", async () => {
+    const { headers } = await canCreate();
+    const { bonbon, filling } = await bonbonRecipes();
+
+    const response = await postProduction(headers, {
+      items: [{ productSku: bonbon.sku, quantity: "50", produce: [{ productSku: filling.sku, quantity: "1" }] }],
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(itemOf(response.json().items, filling.sku)?.expectedQuantity).toBe("1");
+  });
+
+  it("takes an intermediate set to zero from stock, with no item for it", async () => {
+    const { headers } = await canCreate();
+    const { bonbon, filling } = await bonbonRecipes();
+
+    const response = await postProduction(headers, {
+      items: [{ productSku: bonbon.sku, quantity: "50", produce: [{ productSku: filling.sku, quantity: "0" }] }],
+    });
+
+    expect(response.statusCode).toBe(201);
+    const items: StartedItem[] = response.json().items;
+    expect(itemOf(items, filling.sku)).toBeUndefined();
+    expect(items).toHaveLength(3);
+    expect(itemOf(items, bonbon.sku)?.dependsOn).toHaveLength(1);
+  });
+
+  it("refuses a quantity to make with more places than the intermediate's unit allows", async () => {
+    const { headers } = await canCreate();
+    const { bonbon, shell } = await bonbonRecipes();
+
+    const response = await postProduction(headers, {
+      items: [{ productSku: bonbon.sku, quantity: "50", produce: [{ productSku: shell.sku, quantity: "2.5" }] }],
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("The quantity has more decimal places than the unit allows.");
+    expect(await testPrisma.production.count()).toBe(0);
+  });
+
+  it("refuses an intermediate named twice", async () => {
+    const { headers } = await canCreate();
+    const { bonbon, filling } = await bonbonRecipes();
+
+    const response = await postProduction(headers, {
+      items: [
+        {
+          productSku: bonbon.sku,
+          quantity: "50",
+          produce: [
+            { productSku: filling.sku, quantity: "1" },
+            { productSku: filling.sku.toUpperCase(), quantity: "2" },
+          ],
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+});

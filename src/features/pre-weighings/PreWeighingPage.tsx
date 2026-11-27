@@ -21,6 +21,7 @@ import {
 } from "@/features/pre-weighings/weighing-units";
 import { WasteSection } from "@/features/pre-weighings/WasteSection";
 import { createBodyOf, weighingRowsOf } from "@/features/pre-weighings/plan-tree";
+import { produceOf, produceProblem, REPLAN_DELAY_MS } from "@/features/pre-weighings/produce";
 import {
   PreWeighingStage,
   rowKeyOf,
@@ -30,10 +31,9 @@ import {
 import type { CreatePreWeighingBody, MeasurementUnit, PreWeighing, PreWeighingPlan, Product } from "@/lib/api";
 import { formatDecimal, isDecimalInput, toApiDecimal } from "@/lib/decimal";
 import { messageForFailure } from "@/lib/form-errors";
-import { fitsPlacesOf, positiveDecimal } from "@/lib/form-schemas";
+import { positiveDecimal } from "@/lib/form-schemas";
 import { unitLabel } from "@/lib/units";
 import { PageTitle } from "@/components/layout/PageTitle";
-import { pickPlacesOf } from "@/shared/units";
 
 const targetFormSchema = z.object({
   productSku: z.string().min(1, "Escolha o produto."),
@@ -59,18 +59,6 @@ const weighingSchemaOf = (keys: string[]) =>
   z.object({ weighed: z.object(Object.fromEntries(keys.map((key) => [key, weighedSchema]))) });
 
 type WeighingFormValues = { weighed: Record<string, string> };
-
-// How long the operator may pause in the quantity to make before the plan is asked again.
-const REPLAN_DELAY_MS = 500;
-
-/** Why a quantity to make cannot be asked for: zero is fine, it takes it all from stock. */
-function produceProblem(typed: string, unit: MeasurementUnit): string | undefined {
-  const places = pickPlacesOf(unit);
-  const message =
-    places === 0 ? "Informe uma quantidade inteira." : `Informe a quantidade, com até ${places} casas decimais.`;
-
-  return fitsPlacesOf(typed, unit) ? undefined : message;
-}
 
 // Every refusal of the plan is the server having decided, so none of them is worth trying again as it is.
 const PLAN_MESSAGES = {
@@ -234,13 +222,6 @@ const targetOf = (complement?: PreWeighingComplement): TargetForm =>
     : EMPTY_TARGET;
 
 /** The quantities to make the operator typed, as the API takes them; those not yet a quantity are left to the server. */
-const produceOf = (typed: Record<string, string>): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(typed)
-      .filter(([, quantity]) => isDecimalInput(quantity))
-      .map(([sku, quantity]) => [sku, toApiDecimal(quantity)]),
-  );
-
 /**
  * The active products that are manufactured: only those have a recipe to pre-weigh. The server page narrows the
  * catalog to them. With `complement`, the target is the one asked for and the record goes under the parent.

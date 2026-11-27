@@ -161,16 +161,22 @@ export async function loadMoreProductions(
 }
 
 /** What an item produced without a pre-weighing will take, as the recipe plans it and the stock stands now. */
-export async function planProductionItem(target: { productSku: string; quantity: string }): Promise<PlanResult> {
+export async function planProductionItem(
+  target: { productSku: string; quantity: string },
+  produce?: Record<string, string>,
+): Promise<PlanResult> {
   const user = await requireUser();
 
   if (!can(user, Permission.PRODUCTION_READ)) return fail(403, DENIED);
 
-  const parsed = preWeighingPlanQuerySchema.safeParse(target);
+  const parsed = preWeighingPlanQuerySchema.safeParse({
+    ...target,
+    produce: produce && Object.entries(produce).map(([sku, quantity]) => `${sku}:${quantity}`),
+  });
 
   if (!parsed.success) return fail(400, INVALID_INPUT);
 
-  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity);
+  return previewPreWeighing(parsed.data.productSku, parsed.data.quantity, undefined, parsed.data.produce);
 }
 
 /** An item went wrong before it finished: what it took leaves the stock as losses under the reason. */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { planProductionItem, startProduction } from "@/features/productions/actions";
+import { FreeItemCard, PLAN_MESSAGES, produceOfPlan, type FreeItem } from "@/features/productions/FreeItemCard";
 import { quantityOf } from "@/features/stock/stock-format";
 import type { PreWeighingPlan, Product, StartCandidate, StartProductionBody } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
@@ -29,23 +30,10 @@ type ItemForm = z.infer<typeof itemFormSchema>;
 
 const EMPTY_ITEM: ItemForm = { productSku: "", quantity: "" };
 
-// Every refusal of the plan is the server having decided, so none of them is worth trying again as it is.
-const PLAN_MESSAGES = {
-  404: "Esse produto não existe mais. Atualize a página.",
-  409: "Não foi possível calcular: o produto não tem receita, a receita usa um produto inativo ou a quantidade está fora do que a receita alcança.",
-};
-
 const START_MESSAGES = {
   404: "Uma pré-pesagem ou produto não existe mais. A lista foi atualizada.",
   409: "A pré-pesagem já foi usada em outra produção ou a receita mudou. A lista foi atualizada.",
 };
-
-/** An item produced without a pre-weighing: what was asked, and what the recipe plans for it. */
-interface FreeItem {
-  key: number;
-  quantity: string;
-  plan: PreWeighingPlan;
-}
 
 type Mode = "guided" | "free";
 
@@ -53,8 +41,6 @@ const MODES: { value: Mode; label: string }[] = [
   { value: "guided", label: "Com pré-pesagem" },
   { value: "free", label: "Sem pré-pesagem" },
 ];
-
-const lacks = (shortfall: string) => Number(shortfall) > 0;
 
 interface StartProductionPageProps {
   /** The active manufactured products: only those have a recipe to plan from. */
@@ -93,7 +79,17 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
   const { errors } = form.formState;
 
   // One root pre-weighing guides a production and free items make another one: each mode starts only its own.
-  const canStart = mode === "guided" ? chosen !== null : mode === "free" && freeItems.length > 0;
+  // A free item whose quantities to make are still being planned, or cannot be, holds the start back.
+  const canStart =
+    mode === "guided"
+      ? chosen !== null
+      : mode === "free" && freeItems.length > 0 && freeItems.every(({ busy }) => !busy);
+
+  const changeItem = useCallback((key: number, change: { plan?: PreWeighingPlan; busy: boolean }) => {
+    setFreeItems((current) =>
+      current.map((item) => (item.key === key ? { ...item, ...change, plan: change.plan ?? item.plan } : item)),
+    );
+  }, []);
 
   function choose(next: Mode): void {
     setMode(next);
@@ -116,7 +112,7 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
 
         setFreeItems((current) => [
           ...current,
-          { key: Math.max(0, ...current.map((item) => item.key)) + 1, quantity, plan: result.data },
+          { key: Math.max(0, ...current.map((item) => item.key)) + 1, quantity, plan: result.data, busy: false },
         ]);
         form.reset(EMPTY_ITEM);
       } catch (error) {
@@ -129,7 +125,14 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
     const body: StartProductionBody =
       mode === "guided" && chosen !== null
         ? { preWeighingId: chosen }
-        : { items: freeItems.map(({ plan, quantity }) => ({ productSku: plan.product.sku, quantity })) };
+        : {
+            // What starts is what was shown: every intermediate at the quantity the plan on screen makes.
+            items: freeItems.map(({ plan, quantity }) => ({
+              productSku: plan.product.sku,
+              quantity,
+              produce: produceOfPlan(plan),
+            })),
+          };
 
     setStartFailure(null);
     startStarting(async () => {
@@ -247,37 +250,13 @@ export function StartProductionPage({ products, candidates }: StartProductionPag
           ) : null}
 
           <ul className="flex flex-col gap-3">
-            {freeItems.map(({ key, quantity, plan }) => (
-              <li key={key} className="flex flex-col gap-2 rounded-md border p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-medium">
-                    {plan.product.description} — {quantityOf(quantity, plan.product.unit)}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`Remover ${plan.product.description}`}
-                    onClick={() => setFreeItems((current) => current.filter((item) => item.key !== key))}
-                  >
-                    Remover
-                  </Button>
-                </div>
-                <ul className="text-sm">
-                  {plan.items.map((input) => (
-                    <li key={input.product.sku}>
-                      {input.product.description}: {quantityOf(input.plannedQuantity, input.product.unit)}
-                    </li>
-                  ))}
-                </ul>
-                {plan.items
-                  .filter((input) => lacks(input.shortfall))
-                  .map((input) => (
-                    <p key={input.product.sku} className="text-sm text-destructive">
-                      Estoque insuficiente: falta {quantityOf(input.shortfall, input.product.unit)} de{" "}
-                      {input.product.description}
-                    </p>
-                  ))}
-              </li>
+            {freeItems.map((item) => (
+              <FreeItemCard
+                key={item.key}
+                item={item}
+                onChange={changeItem}
+                onRemove={(key) => setFreeItems((current) => current.filter((other) => other.key !== key))}
+              />
             ))}
           </ul>
         </section>

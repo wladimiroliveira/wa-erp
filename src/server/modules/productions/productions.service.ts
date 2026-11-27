@@ -7,7 +7,7 @@ import { fail, failWith, succeed, type Failure, type Result } from "@/server/lib
 import { findPreWeighingTree, isPendingStartRoot } from "@/server/modules/pre-weighings/pre-weighings.repository";
 import type { PreWeighingRecord } from "@/server/modules/pre-weighings/pre-weighings.repository";
 import { preWeighingStatusOf } from "@/server/modules/pre-weighings/pre-weighing-status";
-import { planPreWeighing } from "@/server/modules/pre-weighings/pre-weighings.service";
+import { planPreWeighing, type PreWeighingPlan } from "@/server/modules/pre-weighings/pre-weighings.service";
 import { holdReasonInUse, RefusedReason } from "@/server/modules/losses/losses.repository";
 import { REASON_FAILURES } from "@/server/modules/losses/losses.service";
 import { holdStockBalances, readStockBalance } from "@/server/modules/stock/stock.repository";
@@ -203,23 +203,38 @@ async function guidedItems(rootId: string): Promise<Result<PlannedProductionItem
   return succeed([root, ...descendants].filter(({ id }) => kept.has(id)).map(itemFromPreWeighing));
 }
 
-async function freeItem(request: {
+// A free item brings in, as items of its own, the intermediates its plan makes: the root first, then
+// every stage depth-first, each with the inputs its recipe plans.
+async function freeItems(request: {
   productSku: string;
   quantity: string;
-}): Promise<Result<PlannedProductionItem, 404 | 409>> {
-  const result = await planPreWeighing(request.productSku, request.quantity, undefined, { stages: false });
+  produce?: { productSku: string; quantity: string }[];
+}): Promise<Result<PlannedProductionItem[], 404 | 409>> {
+  const produce = new Map(
+    (request.produce ?? []).map(({ productSku, quantity }) => [productSku.toLowerCase(), new Prisma.Decimal(quantity)]),
+  );
+  const result = await planPreWeighing(request.productSku, request.quantity, produce);
 
   if (!result.ok) return result;
 
-  return succeed({
-    productSku: result.data.product.sku,
-    preWeighingId: null,
-    expectedQuantity: result.data.quantity,
-    inputs: result.data.items.map(({ product, plannedQuantity }) => ({
-      productSku: product.sku,
-      quantity: plannedQuantity,
-    })),
-  });
+  const items: PlannedProductionItem[] = [];
+  const visit = (plan: PreWeighingPlan) => {
+    items.push({
+      productSku: plan.product.sku,
+      preWeighingId: null,
+      expectedQuantity: plan.quantity,
+      inputs: plan.items.map(({ product, plannedQuantity }) => ({
+        productSku: product.sku,
+        quantity: plannedQuantity,
+      })),
+    });
+
+    for (const { manufactured } of plan.items) if (manufactured?.stage) visit(manufactured.stage);
+  };
+
+  visit(result.data);
+
+  return succeed(items);
 }
 
 export async function startProduction(
@@ -235,11 +250,11 @@ export async function startProduction(
     items.push(...guided.data);
   } else {
     for (const request of input.items) {
-      const result = await freeItem(request);
+      const result = await freeItems(request);
 
       if (!result.ok) return result;
 
-      items.push(result.data);
+      items.push(...result.data);
     }
   }
 
